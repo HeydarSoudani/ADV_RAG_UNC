@@ -13,7 +13,7 @@ from adaptive_generation import adaptive_generation
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='meta-llama/Llama-2-7b-chat-hf')
+    parser.add_argument('--model_name_or_path', type=str, default='meta-llama/Llama-2-7b-chat-hf')
     parser.add_argument('--dataset', type=str, default='nqgold', choices=[
         '2wikimultihopqa', 'hotpotqa', 'musique', 'iirc', 'multihop_rag',
         'nqgold', 'trivia', 'popqa',

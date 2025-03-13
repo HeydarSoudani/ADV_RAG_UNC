@@ -119,7 +119,8 @@ __MACOSX
 .locks
 ckpts
 
-datasets/
+data/processed_files/
+data/row_files/
 script_logging/
 test/
 wandb/

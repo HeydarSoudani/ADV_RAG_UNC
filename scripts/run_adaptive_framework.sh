@@ -15,10 +15,10 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 
 ### === Set variables ==========================
-model="meta-llama/Llama-3.1-8B-Instruct"
+model_name_or_path="meta-llama/Llama-3.1-8B-Instruct"
 dataset="2wikimultihopqa"
 subsec="test"
-rag_type="wo_rag"
+rag_type="no_retrieval"
 retriever="bm25"
 fraction_of_data_to_use=0.6    # nqgold 0.104 | trivia 0.034 | popqa 0.021 | 2wikimultihopqa 0.6
 accuracy_metric="exact_match"    # model_judge | exact_match
@@ -26,7 +26,7 @@ model_eval="gpt-3.5-turbo"
 run="run_1 (300s-EM)"          # run_0 (300s-G3.5) | run_1 (300s-EM)
 
 srun python $HOME/RAG_UNC/_truth_torch_framework/run/run_framework.py \
-    --model "$model" \
+    --model_name_or_path "$model" \
     --dataset "$dataset" \
     --subsec "$subsec" \
     --prompt_format "$prompt_format" \
@@ -44,8 +44,9 @@ srun python $HOME/RAG_UNC/_truth_torch_framework/run/run_framework.py \
     # 'rerank_retriever_top1', 'rerank_retriever_top5'
 
 # rag_type:
-    # 'wo_rag', 'sr_rag', 'fl_rag', 'fs_rag',       
-    # 'flare', 'dragin' 
+    # 'no_retrieval', 'single_retrieval',
+    # 'fix_length_retrieval', 'fix_sentence_retrieval',
+    # 'flare', 'dragin'
 
 # retriever:
     # 'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt'
