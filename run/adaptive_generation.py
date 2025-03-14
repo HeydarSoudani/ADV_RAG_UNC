@@ -66,13 +66,19 @@ def adaptive_generation(args):
         model = NoRAG(args)
     elif args.rag_method == "single_retrieval":
         model = SingleRAG(args)
-    elif args.method == "fix_length_retrieval" or args.method == "fix_sentence_retrieval":
-        model = FixLengthRAG(args)    
+    elif args.rag_method == "fix_length_retrieval" or args.rag_method == "fix_sentence_retrieval":
+        model = FixLengthRAG(args)
+    elif args.rag_method == 'flare':
+        model = FLARE_RAG(args)
+    elif args.rag_method == 'dragin':
+        model = DRAGIN_RAG(args)
+    else:
+        raise NotImplementedError
     
     # === Generation ============================
     for i in tqdm(range(len(dataset))):
         batch = dataset[i]
-        pred = model.inference(batch["question"], fewshot_examplers)
+        pred = model.inference(batch["question"], batch["qid"], fewshot_examplers)
         pred = pred.strip()
         ret = {
             "qid": batch["qid"], 
@@ -97,12 +103,12 @@ if __name__ == "__main__":
         'factscore'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--rag_method', type=str, default='no_retrieval', choices=[
+    parser.add_argument('--rag_method', type=str, default='dragin', choices=[
         'no_retrieval', 'single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'flare', 'dragin'
     ])
-    parser.add_argument('--retriever', type=str, default='bm25', choices=[
+    parser.add_argument('--retriever_model', type=str, default='bm25', choices=[
         'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt' # https://github.com/Muennighoff/sgpt
     ])
     parser.add_argument('--accuracy_metric', type=str, default="exact_match", choices=[
@@ -110,17 +116,31 @@ if __name__ == "__main__":
     ])
     parser.add_argument('--model_eval', type=str, default='gpt-3.5-turbo') # meta-llama/Llama-3.1-8B-Instruct
     
-    parser.add_argument('--use_counter', action='store_false')
-    parser.add_argument('--fewshot', type=int, default=8)
-    parser.add_argument('--generate_max_length', type=int, default=128)
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.01)
     parser.add_argument("--roc_auc_threshold", type=float, default=0.8)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.006)
+    parser.add_argument('--use_counter', action='store_false')
+    parser.add_argument('--fewshot', type=int, default=6)
+    parser.add_argument('--generate_max_length', type=int, default=100)
     parser.add_argument('--num_generations', type=int, default=10)
-    parser.add_argument('--max_new_tokens', type=int, default=32)
     parser.add_argument('--decoding_method', type=str, default='beam_search')
     parser.add_argument('--temperature', type=float, default='1.0')
     parser.add_argument('--num_beams', type=int, default='1')
     parser.add_argument('--top_p', type=float, default=1.0)
+    parser.add_argument("--bm25_k1", type=float, default=0.9)
+    parser.add_argument("--bm25_b", type=float, default=0.4)
+    parser.add_argument('--retrieve_topk', type=int, default=3)
+    parser.add_argument('--retrieve_max_query_length', type=int, default=64)
+    parser.add_argument('--generate_fix_length', type=int, default=32)
+    
+    parser.add_argument('--modifier_method', type=str, default='token', choices=['token', 'entity'])          # for FLARE
+    parser.add_argument('--query_formulation', type=str, default='real_words', choices=[                      # for FLARE & DRAGIN
+        'direct', 'forward_all',
+        'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens', 'real_words',
+    ])
+    parser.add_argument('--sentence_solver', type=str, default='avg', choices=['avg', 'max', 'min'])          # for FLARE
+    parser.add_argument('--hallucination_threshold', type=float, default=0.08, choices=['avg', 'max', 'min']) # for FLARE
+    parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
+    
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--run', type=str, default='run_0')
     parser.add_argument("--seed", type=int, default=10)

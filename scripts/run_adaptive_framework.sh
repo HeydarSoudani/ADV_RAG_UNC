@@ -4,7 +4,7 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu
-#SBATCH --time=0:45:00
+#SBATCH --time=1:20:00
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -13,27 +13,29 @@ module load Python/3.12.3-GCCcore-13.3.0
 # pip install --upgrade transformers
 
 
+python -m pyserini.index -collection JsonCollection -generator DefaultLuceneDocumentGenerator -threads 20 -input "data/row_files/corpus" -index "data/row_files/corpus/bm25_index" -storePositions -storeDocvectors -storeRaw
 
-### === Set variables ==========================
-model_name_or_path="meta-llama/Llama-3.1-8B-Instruct"
-dataset="2wikimultihopqa"
-subsec="test"
-rag_type="no_retrieval"
-retriever="bm25"
-fraction_of_data_to_use=0.6    # nqgold 0.104 | trivia 0.034 | popqa 0.021 | 2wikimultihopqa 0.6
-accuracy_metric="exact_match"    # model_judge | exact_match
-model_eval="gpt-3.5-turbo"
-run="run_1 (300s-EM)"          # run_0 (300s-G3.5) | run_1 (300s-EM)
 
-srun python $HOME/RAG_UNC/_truth_torch_framework/run/run_framework.py \
-    --model_name_or_path "$model" \
-    --dataset "$dataset" \
-    --subsec "$subsec" \
-    --prompt_format "$prompt_format" \
-    --fraction_of_data_to_use "$fraction_of_data_to_use"\
-    --accuracy_metric "$accuracy_metric" \
-    --model_eval "$model_eval" \
-    --run "$run" \
+# ### === Set variables ==========================
+# model_name_or_path="meta-llama/Llama-3.1-8B-Instruct"
+# dataset="2wikimultihopqa"
+# subsec="test"
+# rag_type="no_retrieval"
+# retriever="bm25"
+# fraction_of_data_to_use=0.6    # nqgold 0.104 | trivia 0.034 | popqa 0.021 | 2wikimultihopqa 0.6
+# accuracy_metric="exact_match"    # model_judge | exact_match
+# model_eval="gpt-3.5-turbo"
+# run="run_1 (300s-EM)"          # run_0 (300s-G3.5) | run_1 (300s-EM)
+
+# srun python $HOME/RAG_UNC/_truth_torch_framework/run/run_framework.py \
+#     --model_name_or_path "$model" \
+#     --dataset "$dataset" \
+#     --subsec "$subsec" \
+#     --prompt_format "$prompt_format" \
+#     --fraction_of_data_to_use "$fraction_of_data_to_use"\
+#     --accuracy_metric "$accuracy_metric" \
+#     --model_eval "$model_eval" \
+#     --run "$run" \
 
 
 
