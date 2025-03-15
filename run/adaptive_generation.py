@@ -4,6 +4,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import json
 import torch
 import argparse
 from tqdm import tqdm
@@ -13,6 +14,7 @@ import TruthTorchLM as ttlm
 from utils.utils import set_seed
 from src.dataset import BaseDataset
 from src.generate import *
+from src.evaluate import CorrectnessEval
 
 
 def adaptive_generation(args):
@@ -28,27 +30,12 @@ def adaptive_generation(args):
     # === Output files ==========================
     model_ = args.model_name_or_path.split('/')[-1]
     
-    # === Generation Model ======================
-    # model = "gpt-4o"
-    # model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.bfloat16).to(args.device)
-    
-    
-    # === Correctness Evaluator =================
-    # if args.accuracy_metric == "exact_match":
-    #     correctness_evaluator = ttlm.evaluators.ExactMatch()    
-    
-    # elif args.accuracy_metric == "model_judge":
-    #     if 'gpt' in args.model_eval:
-    #         correctness_evaluator = ttlm.evaluators.ModelJudge(model=args.model_eval, num_retries=3)
-    #     else:
-    #         # correctness_evaluator = ttlm.evaluators.ModelJudge(model=model, tokenizer=tokenizer, num_retries=3)
-    #         # model_eval = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.bfloat16).to(args.device)
-    #         model_eval = AutoModelForCausalLM.from_pretrained(args.model_eval, torch_dtype=torch.bfloat16, device_map='auto')
-    #         tokenizer_eval = AutoTokenizer.from_pretrained(args.model_eval, use_fast=False)
-    #         correctness_evaluator = ttlm.evaluators.ModelJudge(model=model_eval, tokenizer=tokenizer_eval, num_retries=3)
+    rag_method_ = args.rag_method if args.rag_method == 'no_retrieval' else f"{args.rag_method}_{args.retriever_model}"
+    generations_output_file = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{rag_method_}_generations.jsonl'
     
 
-    # === Dataset Setup =========================
+    # === Dataset & Metric Setup ================
+    correctness = CorrectnessEval()
     dataset_ = BaseDataset(args.dataset, args.subsec, args.fraction_of_data_to_use)
     dataset = dataset_.dataset
     fewshot_examplers = dataset_.examplers[:args.fewshot] if len(dataset_.examplers) > 0 else []
@@ -75,20 +62,32 @@ def adaptive_generation(args):
     else:
         raise NotImplementedError
     
+    
+    def get_answer(text):
+        parts = text.split("So, the answer is", 1)  # Split at the first occurrence
+        return parts[1].strip() if len(parts) > 1 else ""
+    
     # === Generation ============================
-    for i in tqdm(range(len(dataset))):
-        batch = dataset[i]
-        pred = model.inference(batch["question"], batch["qid"], fewshot_examplers)
-        pred = pred.strip()
-        ret = {
-            "qid": batch["qid"], 
-            "prediction": pred,
-            "gold_answer": batch["ground_truths"]
-        }
-        print(f"{ret}\n")
-    
-    
     # === Save results ==========================
+    os.makedirs(os.path.dirname(generations_output_file), exist_ok=True)
+    with open(generations_output_file, 'w', encoding='utf-8') as file:
+        for i in tqdm(range(len(dataset))):
+            batch = dataset[i]
+            cot = model.inference(batch["question"], batch["qid"], fewshot_examplers).strip()
+            final_ans = model.regenerate(batch["question"], fewshot_examplers, cot).strip() if "So, the answer is" not in cot else get_answer(cot)
+            em_socre = correctness.exact_match_score(final_ans, batch["ground_truths"])
+            f1_score = correctness.f1_score(final_ans, batch["ground_truths"])
+            
+            item = {
+                "qid": batch["qid"],
+                "question": batch["question"],
+                "em_score": em_socre['correct'],
+                "f1_score": f1_score,
+                "gold_answer": batch["ground_truths"],
+                "cot": cot,
+                "pred": final_ans,
+            }
+            file.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 
 
@@ -97,18 +96,18 @@ def adaptive_generation(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name_or_path', type=str, default='meta-llama/Llama-3.1-8B-Instruct')
-    parser.add_argument('--dataset', type=str, default='wikimultihopqa', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'wikimultihopqa', 'hotpotqa', 'musique', 'iirc', 'multihop_rag',
         'nqgold', 'trivia', 'popqa',
         'factscore'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--rag_method', type=str, default='dragin', choices=[
+    parser.add_argument('--rag_method', type=str, default='single_retrieval', choices=[
         'no_retrieval', 'single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'flare', 'dragin'
     ])
-    parser.add_argument('--retriever_model', type=str, default='bm25', choices=[
+    parser.add_argument('--retriever_model', type=str, default='rerank', choices=[
         'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt' # https://github.com/Muennighoff/sgpt
     ])
     parser.add_argument('--accuracy_metric', type=str, default="exact_match", choices=[
@@ -117,7 +116,7 @@ if __name__ == "__main__":
     parser.add_argument('--model_eval', type=str, default='gpt-3.5-turbo') # meta-llama/Llama-3.1-8B-Instruct
     
     parser.add_argument("--roc_auc_threshold", type=float, default=0.8)
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.006)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.05)
     parser.add_argument('--use_counter', action='store_false')
     parser.add_argument('--fewshot', type=int, default=6)
     parser.add_argument('--generate_max_length', type=int, default=100)

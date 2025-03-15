@@ -58,7 +58,6 @@ class Rerank:
         scores = self.cross_encoder.predict(query_doc_pairs)
         reranked_docs = sorted(zip(docids, scores, documents), key=lambda x: x[1], reverse=True)[:self.args.retrieve_topk]
         # return [{'docid': docid, 'context': doc, 'score': float(score)} for docid, score, doc in reranked_docs]
-        
         docids, scores, docs = zip(*reranked_docs)
         return list(docs), list(docids), list(scores)
     

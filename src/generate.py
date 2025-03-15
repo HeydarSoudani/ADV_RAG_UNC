@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.retrieve import BM25, Rerank
 from utils.common_utils import fix_tokenizer_chat
-from src.templetes import DEFAULT_SYSTEM_PROMPT
+from src.templetes import DEFAULT_SYSTEM_PROMPT, DEFAULT_REGENERATE_SYSTEM_PROMPT
 
 nlp = spacy.load("en_core_web_sm")
 
@@ -49,12 +49,53 @@ class BasicGenerator:
         
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+    
+    
+    # Ths original DRAGIN code
+    # def generate(self, input_text, max_new_tokens, return_logprobs=False):
+    #     input_ids = self.tokenizer.encode(input_text, return_tensors="pt")
+    #     input_ids = input_ids.to(self.generator.device)
+    #     input_length = input_ids.shape[1]
+    #     attention_mask = torch.ones_like(input_ids)
+
+    #     if return_logprobs:
+    #         outputs = self.generator.generate(
+    #             input_ids = input_ids, 
+    #             attention_mask = attention_mask,
+    #             max_new_tokens = max_new_tokens, 
+    #             return_dict_in_generate = True, 
+    #             output_scores = True,
+    #         )
+    #         transition_scores = self.generator.compute_transition_scores(
+    #             outputs.sequences, outputs.scores, normalize_logits=True
+    #         )
+
+    #         generated_tokens = outputs.sequences[:, input_length:]
+    #         text = self.tokenizer.decode(generated_tokens[0]) # text = "".join(tokens)
+    #         tokens = [self.tokenizer.decode(t) for t in generated_tokens[0]]
+    #         logprobs = transition_scores[0]
+    #         logprobs = [p.cpu().numpy() for p in logprobs]
+    #         assert len(tokens) == len(logprobs)
+    #         return text, tokens, logprobs
         
+    #     else:
+    #         outputs = self.generator.generate(
+    #             input_ids = input_ids, 
+    #             max_new_tokens = max_new_tokens, 
+    #             attention_mask = attention_mask,
+    #         )
+    #         generated_tokens = outputs[:, input_length:]
+    #         text = self.tokenizer.decode(generated_tokens[0])
+    #         return text, None, None
+    
+    
+    # My code adopted with chat template
     def generate(self, input_text, max_new_tokens,
-        return_text=True, return_logprobs=True, return_attentions=False,
+        system_prompt:str = DEFAULT_SYSTEM_PROMPT,
+        return_logprobs=True, return_text=True,
         add_generation_prompt=True, continue_final_message=False
     ):
-        messages = [{'role': 'system', 'content': DEFAULT_SYSTEM_PROMPT}]
+        messages = [{'role': 'system', 'content': system_prompt}]
         messages.append({'role': 'user', 'content': input_text})
         tokenizer, messages = fix_tokenizer_chat(self.tokenizer, messages)
         text = tokenizer.apply_chat_template(
@@ -76,9 +117,6 @@ class BasicGenerator:
                 output_scores = True,
                 eos_token_id=self.eos_token_id
             )
-            # tokens = model_output[0][len(input_ids[0]):]
-            # generated_text = self.tokenizer.decode(tokens, skip_special_tokens = False)
-            # generated_text_return = self.tokenizer.decode(tokens, skip_special_tokens = True)
 
             model_output.past_key_values=None
             model_output.sequences = model_output.sequences.cpu()
@@ -113,25 +151,6 @@ class BasicGenerator:
                 logprobs = logprobs.squeeze(-1).tolist()#convert to list
                 logprobs = [logprobs[i][:indices[i]+1] for i in range(len(logprobs))]
         
-        
-            # # ----------------------------
-            # if return_attentions:
-            #     number_of_generations=1
-            #     attentions_list = model_output.attentions
-            #     for i in range(number_of_generations): #generation id
-            #         atts = []
-            #         for j in range(indices[i]+1): #token id 
-            #             att = []
-            #             for k in range(len(model_output.attentions[0])): #layer id
-            #                 att.append(model_output.attentions[j][k][i].cpu())
-            #             atts.append(att)
-            #         attentions_list.append(atts)
-            #     model_output.attentions = None
-        
-        # print(tokens[0])
-        # print(logprobs[0])  
-        # print(generated_texts[0])
-          
         assert len(tokens_text[0]) == len(logprobs[0])
         return generated_texts[0], tokens_text[0], logprobs[0]
     
@@ -152,7 +171,6 @@ class BasicGenerator:
         )
         
         with torch.no_grad():
-            
             input_ids = self.tokenizer.encode(text, return_tensors="pt")
             input_ids = input_ids.to(self.generator.device)
             input_length = input_ids.shape[1]
@@ -237,9 +255,7 @@ class BasicGenerator:
         
         return text, seqlist, attns, seqlogprobs, seqentropies
     
-    # TODO: ...
-    def regenerate_answer(self):
-        pass
+        
 
 class BasicRAG:
     def __init__(self, args):
@@ -288,6 +304,14 @@ class BasicRAG:
         
         return prompt
      
+    def regenerate(self, question, fewshot_examplers, pred, generate_max_length=10):
+        prompt = self.format(question, fewshot_examplers, [])
+        prompt += pred
+        prompt += "So, the answer is"
+        text, _, _ = self.generator.generate(prompt, generate_max_length, system_prompt=DEFAULT_REGENERATE_SYSTEM_PROMPT)
+        return text
+    
+    
 class NoRAG(BasicRAG):
     def __init__(self, args):
         super().__init__(args)
@@ -298,6 +322,7 @@ class NoRAG(BasicRAG):
         # if self.args.use_counter == True:
         #     self.counter.add_generate(text, self.generator.tokenizer)
         return text
+    
     
 class SingleRAG(BasicRAG):
     def __init__(self, args):
@@ -701,4 +726,6 @@ class DRAGIN_RAG(BasicRAG):
                 break
         
         return text
+    
+    
         

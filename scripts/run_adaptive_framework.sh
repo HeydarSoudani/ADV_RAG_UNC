@@ -12,30 +12,29 @@ module load Python/3.12.3-GCCcore-13.3.0
 # module load Java/21.0.2
 # pip install --upgrade transformers
 
+# python -m pyserini.index -collection JsonCollection -generator DefaultLuceneDocumentGenerator -threads 20 -input "data/row_files/corpus" -index "data/row_files/corpus/bm25_index" -storePositions -storeDocvectors -storeRaw
 
-python -m pyserini.index -collection JsonCollection -generator DefaultLuceneDocumentGenerator -threads 20 -input "data/row_files/corpus" -index "data/row_files/corpus/bm25_index" -storePositions -storeDocvectors -storeRaw
 
+### === Set variables ==========================
+model_name_or_path="meta-llama/Llama-3.1-8B-Instruct"
+dataset="2wikimultihopqa"
+subsec="test"
+rag_type="no_retrieval"
+retriever="bm25"
+fraction_of_data_to_use=0.6    # nqgold 0.104 | trivia 0.034 | popqa 0.021 | 2wikimultihopqa 0.6
+accuracy_metric="exact_match"    # model_judge | exact_match
+model_eval="gpt-3.5-turbo"
+run="run_0"          # run_0 (300s-G3.5) | run_1 (300s-EM)
 
-# ### === Set variables ==========================
-# model_name_or_path="meta-llama/Llama-3.1-8B-Instruct"
-# dataset="2wikimultihopqa"
-# subsec="test"
-# rag_type="no_retrieval"
-# retriever="bm25"
-# fraction_of_data_to_use=0.6    # nqgold 0.104 | trivia 0.034 | popqa 0.021 | 2wikimultihopqa 0.6
-# accuracy_metric="exact_match"    # model_judge | exact_match
-# model_eval="gpt-3.5-turbo"
-# run="run_1 (300s-EM)"          # run_0 (300s-G3.5) | run_1 (300s-EM)
-
-# srun python $HOME/RAG_UNC/_truth_torch_framework/run/run_framework.py \
-#     --model_name_or_path "$model" \
-#     --dataset "$dataset" \
-#     --subsec "$subsec" \
-#     --prompt_format "$prompt_format" \
-#     --fraction_of_data_to_use "$fraction_of_data_to_use"\
-#     --accuracy_metric "$accuracy_metric" \
-#     --model_eval "$model_eval" \
-#     --run "$run" \
+srun python $HOME/RAG_UNC/_truth_torch_framework/run/run_framework.py \
+    --model_name_or_path "$model" \
+    --dataset "$dataset" \
+    --subsec "$subsec" \
+    --prompt_format "$prompt_format" \
+    --fraction_of_data_to_use "$fraction_of_data_to_use"\
+    --accuracy_metric "$accuracy_metric" \
+    --model_eval "$model_eval" \
+    --run "$run"
 
 
 
