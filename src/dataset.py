@@ -26,7 +26,8 @@ class BaseDataset:
                     "qid": item["id"],
                     "question": item["question"],
                     "ground_truths": item["answers"],
-                    "gold_contexts": item['positive_ctxs']
+                    "positive_ctxs": item['positive_ctxs'],
+                    "negative_ctxs": item['negative_ctxs'],
                 })
         
         if fraction_of_data_to_use < 1.0:
@@ -52,7 +53,8 @@ def get_dataset(dataset_name, split, fraction_of_data_to_use):
                 "qid": item["id"],
                 "question": item["question"],
                 "ground_truths": item["answers"],
-                "gold_contexts": item['positive_ctxs']
+                "positive_ctxs": item['positive_ctxs'],
+                "negative_ctxs": item['negative_ctxs'],
             })
     
     if fraction_of_data_to_use < 1.0:

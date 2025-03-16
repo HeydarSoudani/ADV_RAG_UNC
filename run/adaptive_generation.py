@@ -27,11 +27,13 @@ def adaptive_generation(args):
         Seed:        {args.seed}
     """.replace('        ', ''))
     
+    
     # === Output files ==========================
     model_ = args.model_name_or_path.split('/')[-1]
     
     rag_method_ = args.rag_method if args.rag_method == 'no_retrieval' else f"{args.rag_method}_{args.retriever_model}"
     generations_output_file = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{rag_method_}_generations.jsonl'
+    results_output_file = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{rag_method_}_results.json'
     
 
     # === Dataset & Metric Setup ================
@@ -45,7 +47,7 @@ def adaptive_generation(args):
     print(f"Id:             {dataset[sample_index]['qid']}")
     print(f"Question:       {dataset[sample_index]['question']}")
     print(f"Answers:        {dataset[sample_index]['ground_truths']}")
-    print(f"Gold Context: \n{dataset[sample_index]['gold_contexts'][0]}")
+    print(f"Gold Context: \n{dataset[sample_index]['positive_ctxs'][0]}")
  
  
     # === Select RAG Method =====================
@@ -63,21 +65,28 @@ def adaptive_generation(args):
         raise NotImplementedError
     
     
+    # === Generation ============================
     def get_answer(text):
         parts = text.split("So, the answer is", 1)  # Split at the first occurrence
         return parts[1].strip() if len(parts) > 1 else ""
     
-    # === Generation ============================
-    # === Save results ==========================
+    correctness_res = {
+        'EM': [],
+        'F1': [],
+        'Recall': [],
+        'Precision': [],
+    }
     os.makedirs(os.path.dirname(generations_output_file), exist_ok=True)
     with open(generations_output_file, 'w', encoding='utf-8') as file:
         for i in tqdm(range(len(dataset))):
             batch = dataset[i]
-            cot = model.inference(batch["question"], batch["qid"], fewshot_examplers).strip()
+            pos_contexts = batch["positive_ctxs"]
+            neg_contexts = batch["negative_ctxs"]
+            cot = model.inference(batch["question"], batch["qid"], fewshot_examplers, pos_contexts, neg_contexts).strip()
             final_ans = model.regenerate(batch["question"], fewshot_examplers, cot).strip() if "So, the answer is" not in cot else get_answer(cot)
             em_socre = correctness.exact_match_score(final_ans, batch["ground_truths"])
             f1_score = correctness.f1_score(final_ans, batch["ground_truths"])
-            
+                        
             item = {
                 "qid": batch["qid"],
                 "question": batch["question"],
@@ -88,26 +97,43 @@ def adaptive_generation(args):
                 "pred": final_ans,
             }
             file.write(json.dumps(item, ensure_ascii=False) + '\n')
+            correctness_res['EM'].append(em_socre['correct'])
+            correctness_res['F1'].append(f1_score['f1'])
+            correctness_res['Recall'].append(f1_score['recall'])
+            correctness_res['Precision'].append(f1_score['precision'])
 
 
-
+    # === Save results ==========================
+    reuslts_dict = {
+        'EM': np.mean(correctness_res['EM'])*100,
+        'F1': np.mean(correctness_res['F1'])*100,
+        'Recall': np.mean(correctness_res['Recall'])*100,
+        'Precision': np.mean(correctness_res['Precision'])*100,
+        'retrieve_count': model.counter.retrieve / len(dataset),
+        'generate_count': model.counter.generate / len(dataset),
+        'hallucinated_count': model.counter.hallucinated / len(dataset),
+        'token_count': model.counter.token / len(dataset),
+        'sentence_count': model.counter.sentence / len(dataset),
+    }
+    with open(results_output_file, 'w') as file:
+        json.dump(reuslts_dict, file, indent=4)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name_or_path', type=str, default='meta-llama/Llama-3.1-8B-Instruct')
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='wikimultihopqa', choices=[
         'wikimultihopqa', 'hotpotqa', 'musique', 'iirc', 'multihop_rag',
         'nqgold', 'trivia', 'popqa',
         'factscore'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--rag_method', type=str, default='single_retrieval', choices=[
+    parser.add_argument('--rag_method', type=str, default='no_retrieval', choices=[
         'no_retrieval', 'single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'flare', 'dragin'
     ])
-    parser.add_argument('--retriever_model', type=str, default='rerank', choices=[
+    parser.add_argument('--retriever_model', type=str, default='positive', choices=[
         'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt' # https://github.com/Muennighoff/sgpt
     ])
     parser.add_argument('--accuracy_metric', type=str, default="exact_match", choices=[
@@ -116,7 +142,7 @@ if __name__ == "__main__":
     parser.add_argument('--model_eval', type=str, default='gpt-3.5-turbo') # meta-llama/Llama-3.1-8B-Instruct
     
     parser.add_argument("--roc_auc_threshold", type=float, default=0.8)
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.05)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.4)
     parser.add_argument('--use_counter', action='store_false')
     parser.add_argument('--fewshot', type=int, default=6)
     parser.add_argument('--generate_max_length', type=int, default=100)

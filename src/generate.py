@@ -9,7 +9,7 @@ from math import exp
 from scipy.special import softmax
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from src.retrieve import BM25, Rerank
+from src.retrieve import BM25, Rerank, PositiveRet, NegativeRet
 from utils.common_utils import fix_tokenizer_chat
 from src.templetes import DEFAULT_SYSTEM_PROMPT, DEFAULT_REGENERATE_SYSTEM_PROMPT
 
@@ -255,7 +255,6 @@ class BasicGenerator:
         
         return text, seqlist, attns, seqlogprobs, seqentropies
     
-        
 
 class BasicRAG:
     def __init__(self, args):
@@ -268,10 +267,18 @@ class BasicRAG:
             self.retriever = BM25(args)
         elif args.retriever_model == 'rerank':
             self.retriever = Rerank(args)
+        elif args.retriever_model == 'positive':
+            self.retriever = PositiveRet(args)
+        elif args.retriever_model == 'negative':
+            self.retriever = NegativeRet(args)
         
-    def retrieve(self, queries, qids, topk=1):
+    def retrieve(self, queries, qids, pos_contexts, neg_contexts, topk=1):
         self.counter.retrieve += 1
-        docs, docids, scores = self.retriever.retrieve(queries=queries, qids=qids, topk=topk)
+        docs, docids, scores = self.retriever.retrieve(
+            queries=queries, qids=qids,
+            pos_contexts=pos_contexts, neg_contexts=neg_contexts,
+            topk=topk
+        )
         return docs, docids, scores
         
     def get_top_sentence(self, text):
@@ -307,7 +314,7 @@ class BasicRAG:
     def regenerate(self, question, fewshot_examplers, pred, generate_max_length=10):
         prompt = self.format(question, fewshot_examplers, [])
         prompt += pred
-        prompt += "So, the answer is"
+        prompt += " So, the answer is"
         text, _, _ = self.generator.generate(prompt, generate_max_length, system_prompt=DEFAULT_REGENERATE_SYSTEM_PROMPT)
         return text
     
@@ -316,11 +323,11 @@ class NoRAG(BasicRAG):
     def __init__(self, args):
         super().__init__(args)
     
-    def inference(self, question, qid, fewshot_examplers):
+    def inference(self, question, qid, fewshot_examplers, pos_contexts, neg_contexts):
         prompt = self.format(question, fewshot_examplers, [])
         text, _, _ = self.generator.generate(prompt, self.args.generate_max_length)
-        # if self.args.use_counter == True:
-        #     self.counter.add_generate(text, self.generator.tokenizer)
+        if self.args.use_counter:
+            self.counter.add_generate(text, self.generator.tokenizer)
         return text
     
     
@@ -328,34 +335,39 @@ class SingleRAG(BasicRAG):
     def __init__(self, args):
         super().__init__(args)
     
-    def inference(self, question, qid, fewshot_examplers):
-        docs, _, _ = self.retrieve([question], [qid], topk=self.args.retrieve_topk)
+    def inference(self, question, qid, fewshot_examplers, pos_contexts, neg_contexts):
+        docs, _, _ = self.retrieve([question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
         prompt = self.format(question, fewshot_examplers, docs[0])
         text, _, _ = self.generator.generate(prompt, self.args.generate_max_length)
-        # if self.args.use_counter == True:
-        #     self.counter.add_generate(text, self.generator.tokenizer)
+        if self.args.use_counter == True:
+            self.counter.add_generate(text, self.generator.tokenizer)
         return text
+
 
 class FixLengthRAG(BasicRAG):
     def __init__(self, args):
         super().__init__(args)
     
-    def inference(self, question, qid, fewshot_examplers):
+    def inference(self, question, qid, fewshot_examplers, pos_contexts, neg_contexts):
         text = ""
         retrieve_question = question
         while True:
             old_len = len(text)
-            docs, _, _ = self.retrieve([retrieve_question], [qid], topk=self.args.retrieve_topk)
+            docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
             prompt = self.format(question, fewshot_examplers, docs[0])
             prompt += text
             
             if self.args.rag_method == "fix_length_retrieval":
                 new_text, _, _ = self.generator.generate(prompt, self.args.generate_fix_length)
+                if self.args.use_counter:
+                    self.counter.add_generate(new_text, self.generator.tokenizer)
                 text = text.strip() + " " + new_text.strip()
                 retrieve_question = new_text.strip()
                 
             elif self.args.rag_method == "fix_sentence_retrieval":
                 new_text, _, _ = self.generator.generate(prompt, self.args.generate_max_length)
+                if self.args.use_counter:
+                    self.counter.add_generate(new_text, self.generator.tokenizer)
                 new_text = new_text.strip()
                 sentences = list(nlp(new_text).sents)
                 sentences = [str(sent).strip() for sent in sentences]
@@ -372,6 +384,7 @@ class FixLengthRAG(BasicRAG):
                 break
         
         return text
+  
     
 class FLARE_RAG(BasicRAG):
     def __init__(self, args):
@@ -496,13 +509,14 @@ class FLARE_RAG(BasicRAG):
         # No hallucination
         return text, None, False
     
-    def inference(self, question, qid, fewshot_examplers):
+    def inference(self, question, qid, fewshot_examplers, pos_contexts, neg_contexts):
         text = ""
         while True:
             old_len = len(text)
             prompt = self.format(question, fewshot_examplers, [])
             new_text, tokens_text, logprobs = self.generator.generate(prompt, self.args.generate_max_length, return_logprobs=True)
-
+            if self.args.use_counter == True:
+                self.counter.add_generate(new_text, self.generator.tokenizer)
             ptext, curr, hallucination = self.modifier(new_text, tokens_text, logprobs)
             if not hallucination:
                 text = text.strip() + " " + new_text.strip()
@@ -515,10 +529,13 @@ class FLARE_RAG(BasicRAG):
                 else:
                     raise NotImplemented
 
-                docs = self.retrieve([retrieve_question], [qid], topk=self.args.retrieve_topk)
+                docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
                 prompt = self.format(question, fewshot_examplers, docs[0])
                 prompt += text + " " + ptext.strip()
                 new_text, _, _ = self.generator.generate(prompt, self.args.generate_max_length)
+                if self.args.use_counter == True:
+                    self.counter.add_generate(new_text, self.generator.tokenizer)
+                    self.counter.hallucinated += 1
                 text = text.strip() + " " + ptext.strip() + " " + new_text.strip()
         
             tokens_count = len(self.generator.tokenizer.encode(text))
@@ -526,6 +543,7 @@ class FLARE_RAG(BasicRAG):
                 break
         
         return text
+
 
 class DRAGIN_RAG(BasicRAG):
     def __init__(self, args):
@@ -668,7 +686,7 @@ class DRAGIN_RAG(BasicRAG):
         last_n_sentence = ' '.join(last_n_tokens)
         return last_n_sentence
     
-    def inference(self, question, qid, fewshot_examplers):
+    def inference(self, question, qid, fewshot_examplers, pos_contexts, neg_contexts):
         case = f"Question: {question}\nAnswer:"
         text = ""
         while True:
@@ -682,6 +700,8 @@ class DRAGIN_RAG(BasicRAG):
                 use_entropy = self.args.rag_method == "dragin",
                 # use_logprob = self.method == "attn_prob"
             )
+            if self.args.use_counter == True:
+                self.counter.add_generate(new_text, self.generator.tokenizer)
             weight = entropies if self.args.rag_method == "dragin" else [-v for v in logprobs]
             hallucination, ptext, curr_tokens, curr_hit =  self.modifier(new_text, tokens, attns, weight)
             
@@ -712,12 +732,15 @@ class DRAGIN_RAG(BasicRAG):
                 else:
                     raise NotImplemented
             
-                docs = self.retrieve([retrieve_question], [qid], topk=self.args.retrieve_topk)
+                docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
                 prompt = self.format(question, fewshot_examplers, docs[0], add_case=False)
                 tmp_li = [case, text, ptext.strip()]
                 prompt += " ".join(s for s in tmp_li if len(s) > 0)
                 
                 new_text, _, _ = self.generator.generate(prompt, self.args.generate_max_length)
+                if self.args.use_counter == True:
+                    self.counter.add_generate(new_text, self.generator.tokenizer)
+                    self.counter.hallucinated += 1
                 text = text.strip() + " " + ptext.strip() + " " + new_text.strip()
             
             

@@ -1,4 +1,5 @@
 
+import random
 import json
 from tqdm import tqdm
 from typing import List, Dict, Tuple
@@ -7,6 +8,48 @@ from pyserini.search.lucene import LuceneSearcher
 
 INDEX_DIR = "data/row_files/corpus"
 
+
+class PositiveRet:
+    def __init__(self, args):
+        self.args = args
+        
+    def retrieve(self, queries: List[str], qids: List[str], pos_contexts, neg_contexts, topk: int = 1):
+        docids, docs, scores = [], [], []
+        for i, qid in enumerate(qids):
+            docids_, docs_, scores_ = [], [], []
+            q_contexts = pos_contexts[i] 
+            if len(q_contexts) > 0:
+                for ctx in q_contexts:
+                    docs_.append(ctx['text']) 
+                    docids_.append('0')
+                    scores_.append(1)
+            docs.append(docs_)
+            docids.append(docids_)
+            scores.append(scores_)
+        return docs, docids, scores
+        
+        
+class NegativeRet:
+    def __init__(self, args):
+        self.args = args
+        
+    def retrieve(self, queries: List[str], qids: List[str], pos_contexts, neg_contexts, topk: int = 1):
+        docids, docs, scores = [], [], []
+        for i, qid in enumerate(qids):
+            docids_, docs_, scores_ = [], [], []
+            q_contexts = neg_contexts[i] 
+            if len(q_contexts) > 0:
+                q_contexts_topk = random.sample(q_contexts, min(self.args.retrieve_topk, len(q_contexts)))
+                for ctx in q_contexts_topk:
+                    docs_.append(ctx['text']) 
+                    docids_.append('0')
+                    scores_.append(1)
+            docs.append(docs_)
+            docids.append(docids_)
+            scores.append(scores_)
+        return docs, docids, scores
+
+
 class BM25:
     def __init__(self, args):
         self.args = args
@@ -14,7 +57,7 @@ class BM25:
         self.searcher = LuceneSearcher(index_dir)
         self.searcher.set_bm25(args.bm25_k1, args.bm25_b)
     
-    def retrieve(self, queries: List[str], qids: List[str], topk: int = 1):
+    def retrieve(self, queries: List[str], qids: List[str], pos_contexts, neg_contexts, topk: int = 1):
         bm25_hits = self.searcher.batch_search(queries, qids, k=1000, threads=20)
 
         docids, docs, scores = [], [], []
@@ -24,23 +67,18 @@ class BM25:
                 doc = self.searcher.doc(hit.docid)
                 if doc is not None:
                     raw_content = doc.raw()
-                    
                     try:
                         content_json = json.loads(raw_content)
                         contents = content_json.get("contents") 
                     except json.JSONDecodeError:
                         print(f"Error decoding JSON for document ID {hit.docid}")
-        
                     docs_.append(contents)
                     docids_.append(hit.score)
                     scores_.append(doc.docid())
-
             docs.append(docs_)
             docids.append(docids_)
             scores.append(scores_)
-            
         return docs, docids, scores
-    
     
 
 class Rerank:
@@ -61,7 +99,7 @@ class Rerank:
         docids, scores, docs = zip(*reranked_docs)
         return list(docs), list(docids), list(scores)
     
-    def retrieve(self, queries: List[str], qids: List[str], topk: int = 1):
+    def retrieve(self, queries: List[str], qids: List[str], pos_contexts, neg_contexts, topk: int = 1):
         bm25_hits = self.searcher.batch_search(queries, qids, k=1000, threads=20)
         
         docids, docs, scores = [], [], []
@@ -75,7 +113,6 @@ class Rerank:
                 content_json = json.loads(raw_content)
                 contents = content_json.get("contents") 
                 texts.append(contents)
-            
             docs_, docids_, scores_ = self.rerank_documents(query, docids, texts)
             docs.append(docs_)
             docids.append(docids_)
