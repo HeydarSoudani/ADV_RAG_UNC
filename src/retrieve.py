@@ -113,7 +113,14 @@ class Rerank:
                 content_json = json.loads(raw_content)
                 contents = content_json.get("contents") 
                 texts.append(contents)
-            docs_, docids_, scores_ = self.rerank_documents(query, docids, texts)
+            
+            if len(texts) > 0:
+                docs_, docids_, scores_ = self.rerank_documents(query, docids, texts)
+            else:
+                docs_ = ['' for _ in range(self.args.retrieve_topk)] 
+                docids_ = ['' for _ in range(self.args.retrieve_topk)] 
+                scores_ = [0 for _ in range(self.args.retrieve_topk)]
+            
             docs.append(docs_)
             docids.append(docids_)
             scores.append(scores_)

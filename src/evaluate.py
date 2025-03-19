@@ -27,8 +27,9 @@ class CorrectnessEval:
         ground_truth: Union[str, List[str]]
     ):
         ground_truths = {ground_truth} if isinstance(ground_truth, str) else set(ground_truth)
+        correct = int(any(self.normalize_answer(gt) in self.normalize_answer(prediction) for gt in ground_truths))
         # correct = np.max([int(self.normalize_answer(prediction) == self.normalize_answer(gt)) for gt in ground_truths])
-        correct = int(any(self.normalize_answer(prediction) in self.normalize_answer(gt) for gt in ground_truths))
+        # correct = correct.item()
         
         return {'correct': correct, 'incorrect': 1 - correct}
     

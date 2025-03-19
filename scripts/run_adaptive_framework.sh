@@ -4,7 +4,7 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu
-#SBATCH --time=1:20:00
+#SBATCH --time=0:30:00
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -16,59 +16,55 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 
 ### === Set variables ==========================
-model_name_or_path="meta-llama/Llama-3.1-8B-Instruct"
-dataset="2wikimultihopqa"
+model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
+dataset="wikimultihopqa"
 subsec="test"
-rag_type="no_retrieval"
-retriever="bm25"
-fraction_of_data_to_use=0.6    # nqgold 0.104 | trivia 0.034 | popqa 0.021 | 2wikimultihopqa 0.6
-accuracy_metric="exact_match"    # model_judge | exact_match
-model_eval="gpt-3.5-turbo"
-run="run_0"          # run_0 (300s-G3.5) | run_1 (300s-EM)
+fraction_of_data_to_use=0.6
+rag_method="dragin"
+retriever_model="bm25"
+query_formulation="real_words"
+hallucination_threshold=1.0
+run="run_1 (300s-ct)"
 
-srun python $HOME/RAG_UNC/_truth_torch_framework/run/run_framework.py \
-    --model_name_or_path "$model" \
+
+srun python $HOME/ADV_RAG_UNC/run/run_framework.py \
+    --model_name_or_path "$model_name_or_path" \
     --dataset "$dataset" \
     --subsec "$subsec" \
-    --prompt_format "$prompt_format" \
-    --fraction_of_data_to_use "$fraction_of_data_to_use"\
-    --accuracy_metric "$accuracy_metric" \
-    --model_eval "$model_eval" \
+    --rag_method "$rag_method" \
+    --retriever_model "$retriever_model" \
+    --fraction_of_data_to_use "$fraction_of_data_to_use" \
+    --query_formulation "$query_formulation" \
+    --hallucination_threshold "$hallucination_threshold" \
     --run "$run"
 
 
+### Datasets:
+    # 'wikimultihopqa', 'hotpotqa', 'musique', 'iirc'
 
-# prompt_format:
-    # 'only_q', 'q_negative', 'q_positive',
-    # 'bm25_retriever_top1', 'bm25_retriever_top5',
-    # 'contriever_retriever_top1', 'contriever_retriever_top5',
-    # 'rerank_retriever_top1', 'rerank_retriever_top5'
-
-# rag_type:
+### rag_method:
     # 'no_retrieval', 'single_retrieval',
     # 'fix_length_retrieval', 'fix_sentence_retrieval',
     # 'flare', 'dragin'
 
-# retriever:
-    # 'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt'
+### retriever_model:
+    # 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt', 'positive'
 
-# Datasets:
-    # '2wikimultihopqa', 'hotpotqa', 'musique', 'iirc',
-    # 'nqgold', 'trivia', 'popqa',
-    # 
-
-# Model name:
+### Model name:
     # GPT-4o:     "openai/gpt-4o"
     # GPT-3.5:    "openai/gpt-3.5-turbo-instruct"
     
     # llama3.2:   "meta-llama/Llama-3.2-3B-Instruct"
     # llama3.2:   "meta-llama/Llama-3.2-1B-Instruct"
     # llama3.1:   "meta-llama/Llama-3.1-8B-Instruct"
-    # llama2:     "meta-llama/Llama-2-7b-chat-hf"
+    # llama2(13B):"meta-llama/Llama-2-13b-chat-hf"
+    # llama2(7B): "meta-llama/Llama-2-7b-chat-hf"
+    
     # Qwen2.5:    "Qwen/Qwen2.5-7B-Instruct"
     # Gemma2:     "google/gemma-2-9b-it"
     # Phi4 (14B): "microsoft/phi-4"
     # Mistral:    "mistralai/Mistral-7B-Instruct-v0.3"
+    # Vicuna:     "lmsys/vicuna-13b-v1.5"
 
     # DS-7B: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
     # DS-8B: deepseek-ai/DeepSeek-R1-Distill-Llama-8B

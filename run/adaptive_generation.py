@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 
-
+import re
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
 import torch
+import random
 import argparse
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import TruthTorchLM as ttlm
 
-from utils.utils import set_seed
 from src.dataset import BaseDataset
-from src.generate import *
+from src.rag import *
 from src.evaluate import CorrectnessEval
+from utils.utils import set_seed
 
 
 def adaptive_generation(args):
@@ -23,31 +22,37 @@ def adaptive_generation(args):
         Model name:  {args.model_name_or_path}
         Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
         RAG Method:  {args.rag_method} 
-        Correctness: {args.accuracy_metric}
+        Retriever:   {args.retriever_model}
+        Hallu_thre:  {args.hallucination_threshold}
         Seed:        {args.seed}
     """.replace('        ', ''))
     
     
     # === Output files ==========================
     model_ = args.model_name_or_path.split('/')[-1]
-    
-    rag_method_ = args.rag_method if args.rag_method == 'no_retrieval' else f"{args.rag_method}_{args.retriever_model}"
-    generations_output_file = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{rag_method_}_generations.jsonl'
-    results_output_file = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{rag_method_}_results.json'
+    ret_method_ = '' if args.rag_method == 'no_retrieval' else f"{args.retriever_model}_"
+    generations_output_file = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}/{ret_method_}generations.jsonl'
+    generation_path_output_file = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}/{ret_method_}generation_path.jsonl'
+    results_output_file = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}/{ret_method_}results.json'
     
 
     # === Dataset & Metric Setup ================
     correctness = CorrectnessEval()
     dataset_ = BaseDataset(args.dataset, args.subsec, args.fraction_of_data_to_use)
     dataset = dataset_.dataset
-    fewshot_examplers = dataset_.examplers[:args.fewshot] if len(dataset_.examplers) > 0 else []
-
+    # fewshot_examplers = dataset_.examplers[:args.fewshot] if len(dataset_.examplers) > 0 else []
+    fewshot_examplers = (
+        random.sample(dataset_.examplers, args.fewshot)
+        if len(dataset_.examplers) >= args.fewshot
+        else dataset_.examplers
+    )
+    
     sample_index = 0
     print(f"Dataset example {sample_index}:")
     print(f"Id:             {dataset[sample_index]['qid']}")
     print(f"Question:       {dataset[sample_index]['question']}")
     print(f"Answers:        {dataset[sample_index]['ground_truths']}")
-    print(f"Gold Context: \n{dataset[sample_index]['positive_ctxs'][0]}")
+    print(f"Gold Context: \n{dataset[sample_index]['positive_ctxs'][0]}\n\n")
  
  
     # === Select RAG Method =====================
@@ -55,7 +60,7 @@ def adaptive_generation(args):
         model = NoRAG(args)
     elif args.rag_method == "single_retrieval":
         model = SingleRAG(args)
-    elif args.rag_method == "fix_length_retrieval" or args.rag_method == "fix_sentence_retrieval":
+    elif args.rag_method in ["fix_length_retrieval", "fix_sentence_retrieval"]:
         model = FixLengthRAG(args)
     elif args.rag_method == 'flare':
         model = FLARE_RAG(args)
@@ -67,8 +72,11 @@ def adaptive_generation(args):
     
     # === Generation ============================
     def get_answer(text):
-        parts = text.split("So, the answer is", 1)  # Split at the first occurrence
-        return parts[1].strip() if len(parts) > 1 else ""
+        parts = text.split("the answer is", 1)  # Split at the first occurrence
+        pred = parts[1].strip() if len(parts) > 1 else ""
+        pattern = r"\.?</s>"
+        pred = re.sub(pattern, "", pred)
+        return pred
     
     correctness_res = {
         'EM': [],
@@ -77,26 +85,47 @@ def adaptive_generation(args):
         'Precision': [],
     }
     os.makedirs(os.path.dirname(generations_output_file), exist_ok=True)
-    with open(generations_output_file, 'w', encoding='utf-8') as file:
+    with open(generations_output_file, 'w', encoding='utf-8') as g_file, open(generation_path_output_file, 'w', encoding='utf-8') as gp_file:
         for i in tqdm(range(len(dataset))):
             batch = dataset[i]
             pos_contexts = batch["positive_ctxs"]
             neg_contexts = batch["negative_ctxs"]
-            cot = model.inference(batch["question"], batch["qid"], fewshot_examplers, pos_contexts, neg_contexts).strip()
-            final_ans = model.regenerate(batch["question"], fewshot_examplers, cot).strip() if "So, the answer is" not in cot else get_answer(cot)
+            cot, n_halluc, gen_path = model.inference(batch["question"], batch["qid"], fewshot_examplers, pos_contexts, neg_contexts)
+            cot = cot.strip()
+            
+            final_ans = ""
+            if "the answer is" not in cot:
+                tmp = model.reinference(batch["question"], fewshot_examplers, cot).strip()  
+                final_ans = get_answer(tmp) if "the answer is" in tmp else tmp
+            else:
+                final_ans = get_answer(cot)
             em_socre = correctness.exact_match_score(final_ans, batch["ground_truths"])
             f1_score = correctness.f1_score(final_ans, batch["ground_truths"])
                         
-            item = {
+            g_item = {
                 "qid": batch["qid"],
                 "question": batch["question"],
                 "em_score": em_socre['correct'],
                 "f1_score": f1_score,
                 "gold_answer": batch["ground_truths"],
-                "cot": cot,
                 "pred": final_ans,
+                "cot": cot,
+                
             }
-            file.write(json.dumps(item, ensure_ascii=False) + '\n')
+            g_file.write(json.dumps(g_item, ensure_ascii=False) + '\n')
+            
+            if args.rag_method in ['flare', 'dragin']:
+                gp_item = {
+                    "qid": batch["qid"],
+                    "question": batch["question"],
+                    "gold_answer": batch["ground_truths"],
+                    "pred": final_ans,
+                    "n_hallucination": n_halluc,
+                    "generation_path": gen_path
+                    
+                }
+                gp_file.write(json.dumps(gp_item, ensure_ascii=False) + '\n')
+            
             correctness_res['EM'].append(em_socre['correct'])
             correctness_res['F1'].append(f1_score['f1'])
             correctness_res['Recall'].append(f1_score['recall'])
@@ -121,53 +150,42 @@ def adaptive_generation(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name_or_path', type=str, default='meta-llama/Llama-3.1-8B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--dataset', type=str, default='wikimultihopqa', choices=[
         'wikimultihopqa', 'hotpotqa', 'musique', 'iirc', 'multihop_rag',
         'nqgold', 'trivia', 'popqa',
         'factscore'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--rag_method', type=str, default='no_retrieval', choices=[
+    parser.add_argument('--rag_method', type=str, default='dragin', choices=[
         'no_retrieval', 'single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'flare', 'dragin'
     ])
-    parser.add_argument('--retriever_model', type=str, default='positive', choices=[
+    parser.add_argument('--retriever_model', type=str, default='bm25', choices=[
         'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt' # https://github.com/Muennighoff/sgpt
     ])
-    parser.add_argument('--accuracy_metric', type=str, default="exact_match", choices=[
-        'exact_match', 'model_judge', 'bem_score', 'bert_score', 'rouge_score'
-    ])
-    parser.add_argument('--model_eval', type=str, default='gpt-3.5-turbo') # meta-llama/Llama-3.1-8B-Instruct
-    
-    parser.add_argument("--roc_auc_threshold", type=float, default=0.8)
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.4)
-    parser.add_argument('--use_counter', action='store_false')
-    parser.add_argument('--fewshot', type=int, default=6)
-    parser.add_argument('--generate_max_length', type=int, default=100)
-    parser.add_argument('--num_generations', type=int, default=10)
-    parser.add_argument('--decoding_method', type=str, default='beam_search')
-    parser.add_argument('--temperature', type=float, default='1.0')
-    parser.add_argument('--num_beams', type=int, default='1')
-    parser.add_argument('--top_p', type=float, default=1.0)
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
+    parser.add_argument('--use_counter', action='store_false')
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.06)
+    parser.add_argument('--fewshot', type=int, default=6)
+    parser.add_argument('--generate_max_length', type=int, default=64)
     parser.add_argument('--retrieve_topk', type=int, default=3)
     parser.add_argument('--retrieve_max_query_length', type=int, default=64)
-    parser.add_argument('--generate_fix_length', type=int, default=32)
+    parser.add_argument('--generate_fix_length', type=int, default=25)
     
     parser.add_argument('--modifier_method', type=str, default='token', choices=['token', 'entity'])          # for FLARE
     parser.add_argument('--query_formulation', type=str, default='real_words', choices=[                      # for FLARE & DRAGIN
         'direct', 'forward_all',
-        'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens', 'real_words',
+        'real_words', 'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens',
     ])
     parser.add_argument('--sentence_solver', type=str, default='avg', choices=['avg', 'max', 'min'])          # for FLARE
-    parser.add_argument('--hallucination_threshold', type=float, default=0.08, choices=['avg', 'max', 'min']) # for FLARE
+    parser.add_argument('--hallucination_threshold', type=float, default=1.2)                                # for FLARE & DRAGIN
     parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
-    
+    parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_0')
+    parser.add_argument('--run', type=str, default='run_1 (300s-ct)')
     parser.add_argument("--seed", type=int, default=10)
     args = parser.parse_args()
     
