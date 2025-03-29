@@ -4,7 +4,7 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu
-#SBATCH --time=0:30:00
+#SBATCH --time=0:50:00
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -16,14 +16,14 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 
 ### === Set variables ==========================
-model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="wikimultihopqa"
+model_name_or_path="meta-llama/Llama-3.1-8B-Instruct"
+dataset="hotpotqa"
 subsec="test"
 fraction_of_data_to_use=0.6
 rag_method="dragin"
 retriever_model="bm25"
 query_formulation="real_words"
-hallucination_threshold=1.0
+hallucination_threshold=0.6
 run="run_1 (300s-ct)"
 
 

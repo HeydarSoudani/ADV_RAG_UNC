@@ -8,10 +8,10 @@ import torch
 import numpy as np
 from math import exp
 
-# from src.generate_dragin import BasicGenerator
-from src.generate_chat_template import BasicGenerator
-from src.retrieve import BM25, Rerank, PositiveRet, NegativeRet
-from src.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_REGENERATE, SYSTEM_PROMPT_SHORTFORM
+# from src_adaptive.generate_dragin import BasicGenerator
+from src_adaptive.generate_chat_template import BasicGenerator
+from src_adaptive.retrieve import BM25, Rerank, PositiveRet, NegativeRet
+from src_adaptive.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_REGENERATE, SYSTEM_PROMPT_SHORTFORM
 
 nlp = spacy.load("en_core_web_sm")
 

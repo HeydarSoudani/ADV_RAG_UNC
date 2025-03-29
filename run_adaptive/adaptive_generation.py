@@ -10,9 +10,9 @@ import random
 import argparse
 from tqdm import tqdm
 
-from src.dataset import BaseDataset
-from src.rag import *
-from src.evaluate import CorrectnessEval
+from src_adaptive.dataset import BaseDataset
+from src_adaptive.rag import *
+from src_adaptive.evaluate import CorrectnessEval
 from utils.utils import set_seed
 
 
@@ -150,8 +150,8 @@ def adaptive_generation(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--dataset', type=str, default='wikimultihopqa', choices=[
+    parser.add_argument('--model_name_or_path', type=str, default='meta-llama/Llama-3.1-8B-Instruct')
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'wikimultihopqa', 'hotpotqa', 'musique', 'iirc', 'multihop_rag',
         'nqgold', 'trivia', 'popqa',
         'factscore'
@@ -181,7 +181,7 @@ if __name__ == "__main__":
         'real_words', 'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens',
     ])
     parser.add_argument('--sentence_solver', type=str, default='avg', choices=['avg', 'max', 'min'])          # for FLARE
-    parser.add_argument('--hallucination_threshold', type=float, default=1.2)                                # for FLARE & DRAGIN
+    parser.add_argument('--hallucination_threshold', type=float, default=0.5)                                # for FLARE & DRAGIN
     parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
     parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
     parser.add_argument('--device', type=int, default=0)
