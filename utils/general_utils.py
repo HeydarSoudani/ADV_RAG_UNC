@@ -2,6 +2,7 @@ import torch
 import random, os
 import numpy as np
 
+
 def set_seed(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -12,3 +13,9 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     
+
+def read_txt(file_path):
+    assert str(file_path).endswith(".txt")
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = f.read()
+    return data

@@ -1,15 +1,14 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-import spacy
 import torch
 import numpy as np
 from math import exp
 from scipy.special import softmax
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 
-from utils.common_utils import fix_tokenizer_chat
-from src.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_SHORTFORM, SYSTEM_PROMPT_REGENERATE
+from utils.adaptive_utils import fix_tokenizer_chat
+from src_adaptive.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_SHORTFORM, SYSTEM_PROMPT_REGENERATE
 
 
 class BasicGenerator:

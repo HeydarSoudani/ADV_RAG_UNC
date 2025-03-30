@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import torch
 import argparse
 
-from utils.utils import set_seed
+from utils.general_utils import set_seed
 from mcts_generation import mcts_generation
 
 

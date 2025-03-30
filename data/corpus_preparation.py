@@ -8,7 +8,7 @@ import argparse
 import json, csv
 from tqdm import tqdm
 
-from utils.utils import set_seed
+from utils.general_utils import set_seed
 
 csv.field_size_limit(10**8)
 
