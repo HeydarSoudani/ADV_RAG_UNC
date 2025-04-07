@@ -130,7 +130,7 @@ if __name__ == "__main__":
     parser.add_argument('--retriever_model', type=str, default='bm25', choices=[
         'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt'
     ])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.002)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.004)
     parser.add_argument('--fewshot', type=int, default=6)
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
@@ -146,10 +146,10 @@ if __name__ == "__main__":
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
-    parser.add_argument("--num_rollouts", type=int, default=15)
+    parser.add_argument("--num_rollouts", type=int, default=12)
     parser.add_argument("--max_depth_allowed", type=int, default=5)
     parser.add_argument("--num_votes", type=int, default=1)
-    parser.add_argument("--mcts_num_last_votes", type=int, default=2)
+    parser.add_argument("--mcts_num_last_votes", type=int, default=10)
     parser.add_argument("--enable_potential_score", action="store_true")
     parser.add_argument("--num_subquestions", type=int, default=3, help="Number of trials for proposing the next subquestion")
     

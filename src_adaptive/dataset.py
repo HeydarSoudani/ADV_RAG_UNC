@@ -38,8 +38,6 @@ class BaseDataset:
             self.dataset = data
 
 
-
-
 def get_dataset(dataset_name, split, fraction_of_data_to_use):
     dataset_file = f"{BASE_DIR}/datasets/processed_files/{dataset_name}_{split}.jsonl"
     
@@ -47,7 +45,6 @@ def get_dataset(dataset_name, split, fraction_of_data_to_use):
     with open(dataset_file, 'r', encoding='utf-8') as file:
         for line in tqdm(file, desc="Converting dataset ..."):
             item = json.loads(line.strip())
-            
             # === 
             data.append({
                 "qid": item["id"],

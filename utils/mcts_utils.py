@@ -115,7 +115,7 @@ def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None,
         elif node.node_type is Node_Type.DIRECT_ANSWER:
             node_details += f"Ans: {node.direct_answer.replace("\n", " ")}"
         elif node.node_type is Node_Type.RAG_ANSWER:
-            node_details += f"Doc: ..." + "  " + f"Ans: {node.rag_answer.replace("\n", " ")}" + "\n" + space + " " * len(node_info) # {node.retrieved_document}
+            node_details += f"Ans: {node.rag_answer.replace("\n", " ")}" + f" Doc: ..." + "  " + "\n" + space + " " * len(node_info) # {node.retrieved_document}
         elif node.node_type is Node_Type.SUBQUESTIONS:
             node_details += f"Sub-Qs: {node.subquestions}" + "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.SUBQ_DIRECT_ANSWER:
