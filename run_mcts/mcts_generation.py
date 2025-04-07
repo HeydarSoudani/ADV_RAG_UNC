@@ -3,6 +3,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import json
 import torch
 import argparse
 from tqdm import tqdm, trange
@@ -17,7 +18,8 @@ from src_mcts.MCTS_backbone import MCTS_Searcher
 from src_mcts.MCTS_reasoning import Reasoning_MCTS_Node
 from utils.mcts_utils import (
     Node_Type,
-    stochastic_find_best_solution
+    stochastic_find_best_solution,
+    print_tree_from_root
 )
 
 
@@ -32,7 +34,9 @@ def mcts_generation(args):
     
     # === Output files ==========================
     model_ = args.model_name_or_path.split('/')[-1]
-    
+    answer_sheets_dir = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/trees'
+    os.makedirs(answer_sheets_dir, exist_ok=True)
+
     # === Dataset ===============================
     dataset_ = BaseDataset(args.dataset, args.subsec, args.fraction_of_data_to_use)
     dataset = dataset_.dataset
@@ -70,7 +74,7 @@ def mcts_generation(args):
             generator=node_generator,
             question_id=qid,
             user_question=user_query,
-            expected_answer=gt_answer,
+            gt_answer=gt_answer,
             max_depth_allowed=args.max_depth_allowed,
             enable_potential_score=args.enable_potential_score,
         )
@@ -79,34 +83,38 @@ def mcts_generation(args):
         model_all_solutions = []
         model_rollout_nodes = []
         for i in (pbar := trange(args.num_rollouts, disable=True, position=0)):
-            
-            
             rollout_node = mcts_searcher.do_rollout(root_node, i)
             model_rollout_nodes.append(rollout_node)
 
+            all_solution_nodes, all_solutions = stochastic_find_best_solution(
+                root_node, node_generator.evaluator, enable_potential_score=args.enable_potential_score
+            )
+            model_all_solutions.append(all_solutions)
 
-            print(f"Rollout {i} results")
-            print('\n\n')
-            print(root_node.solution_trace)
-            for ch_node in root_node.children:
-                print(ch_node.node_type)
-                print(ch_node.solution_trace)
-            
-            print('\n\n')
-            print(rollout_node.solution_trace)
-            for ch_node in rollout_node.children:
-                print(ch_node.node_type)
-                print(ch_node.solution_trace)
-            
-            
-            # print(root_node.children)
-            # print(rollout_node)
+            os.makedirs(f"{answer_sheets_dir}/{qid}", exist_ok=True)
+            with open(f"{answer_sheets_dir}/{qid}/rollout_{i}.tree", "w") as f:
+                print_tree_from_root(
+                    mcts_searcher=mcts_searcher,
+                    rollout_id=i,
+                    root_node=root_node,
+                    chosen_node=None,
+                    file=f,
+                )
 
-            # _, best_solution, _, chosen_node, all_solution_nodes, all_solutions = stochastic_find_best_solution(
-            #     root_node, node_generator.evaluator, enable_potential_score=args.enable_potential_score
-            # )
-            # model_solutions.append(best_solution)
-            # model_all_solutions.append(all_solutions)
+    #! record final traces
+    js = [{"trace": node.solution_trace, "rollout_id": node.rollout_id} for node in all_solution_nodes]
+    with open(f"{answer_sheets_dir}/{qid}/final_solutions.jsonl", "w") as f:
+        for item in js:
+            f.write(json.dumps(item) + "\n")
+    js2 = [{"trace": node.solution_trace, "rollout_id": i} for i, node in enumerate(model_rollout_nodes)]
+    with open(f"{answer_sheets_dir}/{qid}/rollout_solutions.jsonl", "w") as f:
+        for item in js2:
+            f.write(json.dumps(item) + "\n")
+
+    if args.enable_potential_score:
+        js = [node.potential_answers_history for node in all_solution_nodes]
+        with open(f"{answer_sheets_dir}/{qid}/potentials.json", "w") as f:
+            json.dump(js, f)
 
 
 
@@ -138,10 +146,10 @@ if __name__ == "__main__":
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
-    parser.add_argument("--num_rollouts", type=int, default=3)
+    parser.add_argument("--num_rollouts", type=int, default=15)
     parser.add_argument("--max_depth_allowed", type=int, default=5)
     parser.add_argument("--num_votes", type=int, default=1)
-    parser.add_argument("--mcts_num_last_votes", type=int, default=5)
+    parser.add_argument("--mcts_num_last_votes", type=int, default=2)
     parser.add_argument("--enable_potential_score", action="store_true")
     parser.add_argument("--num_subquestions", type=int, default=3, help="Number of trials for proposing the next subquestion")
     

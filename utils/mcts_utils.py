@@ -1,4 +1,5 @@
 from enum import Enum, unique
+from colorama import Fore, Style
 
 def verbose_print(s: str, verbose: bool):
     if verbose:
@@ -8,8 +9,10 @@ def verbose_print(s: str, verbose: bool):
 class Node_Type(Enum):
     USER_QUESTION = "USER_QUESTION"
     DIRECT_ANSWER = "DIRECT_ANSWER"
-    RETRIEVED_DOC = "RETRIEVED_DOC"
-    SUBQUESTION = "SUBQUESTION"
+    RAG_ANSWER = "RAG_ANSWER"
+    SUBQUESTIONS = "SUBQUESTIONS"
+    SUBQ_DIRECT_ANSWER = "SUBQ_DIRECT_ANSWER"
+    SUBQ_RAG_ANSWER = "SUBQ_RAG_ANSWER"
 
 def split_user_question(user_question: str):
     user_question = user_question.strip().rstrip(".")
@@ -68,31 +71,66 @@ def stochastic_find_best_solution(
             return None
 
     solutions = [extract_solution_from_node(node) for node in solution_nodes]
-    print(solutions)
+    return solution_nodes, solutions
 
-    def calculate_potential_score_for_solution_node(node):
-        model_answer = evaluator.extract_answer_from_model_completion(extract_solution_from_node(node))
-        potential_answers_history = node.potential_answers_history  # {depth -> [potential answers]}
-        assert potential_answers_history[node.depth] is None
+def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None, file=None):
+    color_print = False if file else True
 
-        potential_score = 1
-        for depth, depth_potential_answers in potential_answers_history.items():
-            if depth < node.depth:
-                depth_score = sum(
-                    evaluator.check_answers_equiv(dpa, model_answer) for dpa in depth_potential_answers
-                ) / len(depth_potential_answers)
-                potential_score *= depth_score
+    def my_print(text):
+        if file:
+            file.write(text + "\n")
+        else:
+            print(text)
 
-        node.set_potential_score(potential_score)
-        return potential_score
+    def print_tree(parent_node, node, file, rollout_id):
+        to_print = ""
 
-    prior_weights = (
-        [calculate_potential_score_for_solution_node(node) for node in solution_nodes]
-        if enable_potential_score
-        else None
-    )
-    top_answer, top_completion, top_completion_id, top_confidence = evaluator.stochastic_find_most_confident_answer(
-        completions=solutions, prior_weights=prior_weights
-    )
-    return top_answer, top_completion, top_confidence, solution_nodes[top_completion_id], solution_nodes, solutions
+        num_indent = 4
+        dash = "-" * num_indent * node.depth
+        space = " " * num_indent * node.depth
+
+        attributes = f"Q: {round(mcts_searcher.Q[node], 2)}" + "; " + f"N: {mcts_searcher.N[node]}" + "; "
+        attributes += f"V: {round(node.node_value, 2)}" if node.node_value is not None else "V: None"
+
+        uct_value = "UCT: " + str(
+            round(mcts_searcher._compute_uct(parent_node=parent_node, node=node, rollout_id=rollout_id), 2)
+        )
+        attributes += "; " + uct_value
+
+        solution_marker = "(T) " if node.is_valid_solution_node() else ""
+
+        node_info = "[" + solution_marker + node.__str__() + ": " + attributes + "]"
+        if chosen_node and node == chosen_node:
+            node_info = "[" + node_info + "]"
+        node_info += " "
+
+        if color_print and node.is_valid_solution_node():
+            node_details = Fore.RED + Style.BRIGHT + node_info + Fore.RESET + Style.RESET_ALL
+        else:
+            node_details = node_info
+
+        if node.node_type is Node_Type.USER_QUESTION:
+            gt = ", ".join(node.gt_answer)
+            node_details += f"User: {node.user_question}" + "  " + f"Ground truth: {gt}" +  "\n" + space + " " * len(node_info) 
+        elif node.node_type is Node_Type.DIRECT_ANSWER:
+            node_details += f"Ans: {node.direct_answer.replace("\n", " ")}"
+        elif node.node_type is Node_Type.RAG_ANSWER:
+            node_details += f"Doc: ..." + "  " + f"Ans: {node.rag_answer.replace("\n", " ")}" + "\n" + space + " " * len(node_info) # {node.retrieved_document}
+        elif node.node_type is Node_Type.SUBQUESTIONS:
+            node_details += f"Sub-Qs: {node.subquestions}" + "\n" + space + " " * len(node_info)
+        elif node.node_type is Node_Type.SUBQ_DIRECT_ANSWER:
+            node_details += f"Query: {node.subquestion}" + "  Ans: " + f"{node.subanswer.replace("\n", " ")}" + f"  Pointer: {node.subquestion_pointer}" + "\n" + space + " " * len(node_info)
+        elif node.node_type is Node_Type.SUBQ_RAG_ANSWER:
+            node_details += f"Query: {node.subquestion}" + "  Ans: " + f"{node.subanswer.replace("\n", " ")}" + f"  Pointer: {node.subquestion_pointer}" + f"  Docs: ..." +  "\n" + space + " " * len(node_info) # {node.subq_retrieved_documents}
+    
+    
+        to_print += dash + node_details
+        my_print(to_print)
+
+        for child in node.children:
+            print_tree(node, child, file, rollout_id)
+        if node.depth == 0:
+            my_print("\n" + "=" * 50 + "\n")
+
+    print_tree(parent_node=None, node=root_node, file=file, rollout_id=rollout_id)
 

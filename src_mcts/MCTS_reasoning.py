@@ -20,15 +20,22 @@ class Reasoning_MCTS_Node(MCTS_Node):
         # --- For instantiating root node ---
         question_id: str = None,
         user_question: str = None,
-        expected_answer: str = None,
+        gt_answer: List[str] = None,
         generator: Generator = None,
         node_value: float = None,
         max_depth_allowed: int = None,
         
         # --- My Actions ---------------------
         direct_answer: str = None,
-        retrieved_document: str = None,
+        rag_answer: str = None,
+        retrieved_documents: List[str] = None,
+        subquestions: List[str] = None,
+        
         subquestion: str = None,
+        subq_retrieved_documents: List[str] = None,
+        subanswer: str = None,
+        subquestion_pointer: int = None,
+        len_subqs: int = None,
         
         # --- For node selection (not in sanity checks yet) ---
         enable_potential_score: bool = None,
@@ -55,10 +62,16 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     attr is None
                     for attr in [
                         parent,
-                        direct_answer,
-                        retrieved_document,
                         node_value,
+                        direct_answer,
+                        rag_answer,
+                        retrieved_documents,
+                        subquestions,
                         subquestion,
+                        subanswer,
+                        subq_retrieved_documents,
+                        subquestion_pointer,
+                        len_subqs
                     ]
                 )
                 assert all(
@@ -67,9 +80,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         generator,
                         question_id,
                         user_question,
-                        expected_answer,
+                        gt_answer,
                         max_depth_allowed,
-                        
                     ]
                 )
                 
@@ -81,10 +93,16 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         generator,
                         question_id,
                         user_question,
-                        expected_answer,
+                        gt_answer,
                         max_depth_allowed,
-                        retrieved_document,
+                        rag_answer,
+                        retrieved_documents,
+                        subquestions,
                         subquestion,
+                        subanswer,
+                        subq_retrieved_documents,
+                        subquestion_pointer,
+                        len_subqs
                     ]
                 )
                 assert all(
@@ -96,7 +114,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     ]
                 )
                 
-            elif node_type is Node_Type.RETRIEVED_DOC:
+            elif node_type is Node_Type.RAG_ANSWER:
                 assert depth > 0
                 assert all(
                     attr is None
@@ -104,22 +122,28 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         generator,
                         question_id,
                         user_question,
-                        expected_answer,
+                        gt_answer,
                         max_depth_allowed,
-                        node_value,
                         direct_answer,
+                        subquestions,
                         subquestion,
+                        subanswer,
+                        subq_retrieved_documents,
+                        subquestion_pointer,
+                        len_subqs
                     ]
                 )
                 assert all(
                     attr is not None
                     for attr in [
                         parent,
-                        retrieved_document,
+                        node_value,
+                        rag_answer,
+                        retrieved_documents,
                     ]
                 )
 
-            elif node_type is Node_Type.SUBQUESTION:
+            elif node_type is Node_Type.SUBQUESTIONS:
                 assert depth > 0
                 assert all(
                     attr is None
@@ -127,11 +151,41 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         generator,
                         question_id,
                         user_question,
-                        expected_answer,
+                        gt_answer,
                         max_depth_allowed,
                         node_value,
                         direct_answer,
-                        retrieved_document
+                        retrieved_documents,
+                        subquestion,
+                        subanswer,
+                        subq_retrieved_documents,
+                        subquestion_pointer,
+                        len_subqs
+                    ]
+                )
+                assert all(
+                    attr is not None
+                    for attr in [
+                        parent,
+                        subquestions,   
+                    ]
+                )
+            
+            elif node_type is Node_Type.SUBQ_DIRECT_ANSWER:
+                assert depth > 0
+                assert all(
+                    attr is None
+                    for attr in [
+                        generator,
+                        question_id,
+                        user_question,
+                        gt_answer,
+                        max_depth_allowed,
+                        node_value,
+                        direct_answer,
+                        retrieved_documents,
+                        subq_retrieved_documents,
+                        subquestions,
                     ]
                 )
                 assert all(
@@ -139,6 +193,37 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     for attr in [
                         parent,
                         subquestion,
+                        subanswer,
+                        subquestion_pointer,
+                        len_subqs
+                    ]
+                )
+                
+            elif node_type is Node_Type.SUBQ_RAG_ANSWER:
+                assert depth > 0
+                assert all(
+                    attr is None
+                    for attr in [
+                        generator,
+                        question_id,
+                        user_question,
+                        gt_answer,
+                        max_depth_allowed,
+                        node_value,
+                        direct_answer,
+                        retrieved_documents,
+                        subquestions
+                    ]
+                )
+                assert all(
+                    attr is not None
+                    for attr in [
+                        parent,
+                        subquestion,
+                        subanswer,
+                        subq_retrieved_documents,
+                        subquestion_pointer,
+                        len_subqs
                     ]
                 )
     
@@ -154,15 +239,20 @@ class Reasoning_MCTS_Node(MCTS_Node):
         self.node_type = node_type
         self.node_value = node_value
         self.direct_answer = direct_answer
-        self.retrieved_document = retrieved_document
+        self.retrieved_documents = retrieved_documents
+        self.rag_answer = rag_answer
+        self.subquestions = subquestions
+        self.subanswer = subanswer
         self.subquestion = subquestion
+        self.subq_retrieved_documents = subq_retrieved_documents
+        self.subquestion_pointer = subquestion_pointer
+        self.len_subqs = len_subqs
         
         if parent is None:  # root
             self.verbose = verbose
             self.question_id = question_id
             self.user_question = user_question
-            self.expected_answer = expected_answer
-            self.expected_answer = expected_answer
+            self.gt_answer = gt_answer
             self.generator = generator
             self.max_depth_allowed = max_depth_allowed
             self.enable_potential_score = enable_potential_score
@@ -170,7 +260,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
             self.verbose = parent.verbose
             self.question_id = parent.question_id
             self.user_question = parent.user_question
-            self.expected_answer = parent.expected_answer
+            self.gt_answer = parent.gt_answer
             self.generator = parent.generator
             self.max_depth_allowed = parent.max_depth_allowed
             self.enable_potential_score = parent.enable_potential_score
@@ -182,18 +272,46 @@ class Reasoning_MCTS_Node(MCTS_Node):
         #! record solution trace from root to the current node. key: subquestion id
         if parent is None:  # root
             assert self.node_type is Node_Type.USER_QUESTION
-            self.solution_trace: Dict[int, Dict[str, str]] = {0: {"user_question": user_question, "qid": question_id}}
+            self.solution_trace: Dict[int, Dict[str, str]] = {
+                0: {"user_question": user_question, "qid": question_id, "ground_truth": gt_answer}
+            }
         else:
             assert self.node_type is not Node_Type.USER_QUESTION
             self.solution_trace = deepcopy(parent.solution_trace)
             
-            if node_type is Node_Type.RETRIEVED_DOC:
-                self.solution_trace[max(self.solution_trace.keys())+1] = {"document": retrieved_document}
-            elif node_type is Node_Type.SUBQUESTION:
-                self.solution_trace[max(self.solution_trace.keys())+1] = {"subquestion": subquestion}
-            elif node_type is Node_Type.DIRECT_ANSWER:
-                self.solution_trace[max(self.solution_trace.keys())+1] = {"answer": direct_answer, "value": node_value}
+            if node_type is Node_Type.DIRECT_ANSWER:
+                self.solution_trace[max(self.solution_trace.keys())+1] = {
+                    "direct_answer": {"text": direct_answer, "value": node_value}
+                }
+                
+            elif node_type is Node_Type.RAG_ANSWER:
+                self.solution_trace[max(self.solution_trace.keys())+1]= {
+                    "rag_answer": {"text": rag_answer, "documents": retrieved_documents, "value": node_value}
+                }
             
+            elif node_type is Node_Type.SUBQUESTIONS:
+                self.solution_trace[max(self.solution_trace.keys())+1] = {
+                    "subquestions": subquestions,
+                }
+            
+            elif node_type is Node_Type.SUBQ_DIRECT_ANSWER:
+                self.solution_trace[max(self.solution_trace.keys())+1] = {
+                    "subq_direct_answer": {
+                        "subq_pointer": subquestion_pointer,
+                        "subquestion": subquestion,
+                        "subanswer": subanswer,
+                    }
+                }
+            
+            elif node_type is Node_Type.SUBQ_RAG_ANSWER:
+                self.solution_trace[max(self.solution_trace.keys())+1] = {
+                    "subq_rag_answer": {
+                        "subq_pointer": subquestion_pointer,
+                        "subquestion": subquestion,
+                        "documents": retrieved_documents,
+                        "subanswer": subanswer,
+                    }
+                }
             
         #! potential_score for intermediate nodes (only used for node selection)
         if self.enable_potential_score:
@@ -211,17 +329,18 @@ class Reasoning_MCTS_Node(MCTS_Node):
         type2str = {
             Node_Type.USER_QUESTION: "UQ",
             Node_Type.DIRECT_ANSWER: "DA",
-            Node_Type.RETRIEVED_DOC: "RD",
-            Node_Type.SUBQUESTION: "SQ"
+            Node_Type.RAG_ANSWER: "RA",
+            Node_Type.SUBQUESTIONS: "SQ",
+            Node_Type.SUBQ_DIRECT_ANSWER: "SQDA",
+            Node_Type.SUBQ_RAG_ANSWER: "SQRA"
         }
         return f"{type2str[self.node_type]}-{self.id}"
 
     def _create_children(self):
-        
         #! Action Functions
-        def do_action_generate_direct_answers():
-            print(f"---- Generating direct answers for node {self.id}...")
-            direct_answer, value = self.generator.generate_direct_answers(solution_trace=self.solution_trace)
+        def do_action_generate_direct_answer():
+            print(f"---- Generating direct answer for node {self.id}...")
+            direct_answer, value = self.generator.generate_direct_answer(solution_trace=self.solution_trace)
             self.children.append(
                 Reasoning_MCTS_Node(
                     parent=self,
@@ -232,15 +351,17 @@ class Reasoning_MCTS_Node(MCTS_Node):
                 )
             )
         
-        def do_action_document_retrieval():
+        def do_action_generate_rag_answer():
             print(f"---- Retrieving documents for node {self.id}...")
-            doc = self.generator.generate_retrieve_docs(solution_trace=self.solution_trace)
+            docs, rag_answer, value = self.generator.generate_rag_answer(solution_trace=self.solution_trace)
             self.children.append(
                 Reasoning_MCTS_Node(
                     parent=self,
                     depth=self.depth + 1,
-                    node_type=Node_Type.RETRIEVED_DOC,
-                    retrieved_document=doc,
+                    node_type=Node_Type.RAG_ANSWER,
+                    retrieved_documents=docs,
+                    rag_answer=rag_answer,
+                    node_value=value
                 )
             )
 
@@ -248,54 +369,98 @@ class Reasoning_MCTS_Node(MCTS_Node):
             print(f"---- Generating subquestions for node {self.id}...")
             if self.node_type is Node_Type.USER_QUESTION:
                 query = self.user_question
-            elif self.node_type is Node_Type.SUBQUESTION:
+            elif self.node_type is Node_Type.SUBQUESTIONS:
                 query = self.subquestion
             
-            subquery_list = self.generator.generate_query_decomposition(query=query)
-            for sq in subquery_list:
-                self.children.append(
-                    Reasoning_MCTS_Node(
-                        parent=self,
-                        depth=self.depth + 1,
-                        node_type=Node_Type.SUBQUESTION,
-                        subquestion=sq,
-                    )
+            subquestions = self.generator.generate_query_decomposition(query=query)
+            # for sq in subquery_list:
+            self.children.append(
+                Reasoning_MCTS_Node(
+                    parent=self,
+                    depth=self.depth + 1,
+                    node_type=Node_Type.SUBQUESTIONS,
+                    subquestions=subquestions,
                 )
+            )
+        
+        def do_action_generate_subq_direct_answer():
+            print(f"---- Generating subq direct answer for node {self.id}...")
+            subquestion, subanswer, subquestion_pointer, len_subqs = self.generator.generate_subq_direct_answer(solution_trace=self.solution_trace)
+            self.children.append(
+                Reasoning_MCTS_Node(
+                    parent=self,
+                    depth=self.depth + 1,
+                    node_type=Node_Type.SUBQ_DIRECT_ANSWER,
+                    subquestion=subquestion,
+                    subanswer=subanswer,
+                    subquestion_pointer=subquestion_pointer,
+                    len_subqs=len_subqs
+                )
+            )
+        
+        def do_action_generate_subq_rag_answer():
+            print(f"---- Generating subq rag answer for node {self.id}...")
+            subq_retrieved_documents, subquestion, subanswer, subquestion_pointer, len_subqs = self.generator.generate_subq_rag_answer(solution_trace=self.solution_trace)
+            self.children.append(
+                Reasoning_MCTS_Node(
+                    parent=self,
+                    depth=self.depth + 1,
+                    node_type=Node_Type.SUBQ_RAG_ANSWER,
+                    subq_retrieved_documents=subq_retrieved_documents,
+                    subquestion=subquestion,
+                    subanswer=subanswer,
+                    subquestion_pointer=subquestion_pointer,
+                    len_subqs=len_subqs
+                )
+            )
         
         #! create children
         if self.node_type is Node_Type.USER_QUESTION:
-            do_action_generate_direct_answers() # A1
-            do_action_document_retrieval()  # A2
+            do_action_generate_direct_answer() # A1
+            do_action_generate_rag_answer()  # A2
             do_action_generate_subquestions() # A3
 
         elif self.node_type is Node_Type.DIRECT_ANSWER:
             raise ValueError("DIRECT_ANSWER node cannot create children!!")
 
-        elif self.node_type is Node_Type.RETRIEVED_DOC:
-            do_action_generate_direct_answers() # A1
+        elif self.node_type is Node_Type.RAG_ANSWER:
+            raise ValueError("RAG_ANSWER node cannot create children!!")
 
-        elif self.node_type is Node_Type.SUBQUESTION:
-            do_action_generate_direct_answers() # A1
-            do_action_document_retrieval()  # A2
+        elif self.node_type is Node_Type.SUBQUESTIONS:
+            do_action_generate_subq_direct_answer() # A4
+            do_action_generate_subq_rag_answer() # A5
+        
+        elif self.node_type is Node_Type.SUBQ_DIRECT_ANSWER:
+            # print('aa')
+            # print(self.subquestion_pointer)
+            # print(self.len_subqs)
+            if self.subquestion_pointer == self.len_subqs:
+                do_action_generate_direct_answer() # A1
+            else:
+                do_action_generate_subq_direct_answer() # A4
+                do_action_generate_subq_rag_answer() # A5
+                
             
+        elif self.node_type is Node_Type.SUBQ_RAG_ANSWER:
+            # print('bb')
+            # print(self.subquestion_pointer)
+            # print(self.len_subqs)
+            if self.subquestion_pointer == self.len_subqs:
+                do_action_generate_direct_answer() # A1
+            else:
+                do_action_generate_subq_direct_answer() # A4
+                do_action_generate_subq_rag_answer() # A5
+        
         assert self.children
         return self.children
 
     def is_valid_leaf_node(self):
         #! a valid solution can only be in SUBQUESTION type or DIRECT_ANSWER type
-        return (
-            self.node_type is Node_Type.SUBQUESTION and reach_terminal_subquestion(self.subquestion, self.user_question)
-        ) or self.node_type is Node_Type.DIRECT_ANSWER
+        return self.node_type is Node_Type.RAG_ANSWER or self.node_type is Node_Type.DIRECT_ANSWER
 
     def is_valid_solution_node(self):
         #! a valid solution can only be in SUBQUESTION type or DIRECT_ANSWER type
-        return (
-            (
-                self.node_type is Node_Type.SUBQUESTION
-                and reach_terminal_subquestion(self.subquestion, self.user_question)
-            )
-            or self.node_type is Node_Type.DIRECT_ANSWER
-        )
+        return self.node_type is Node_Type.RAG_ANSWER or self.node_type is Node_Type.DIRECT_ANSWER
 
     def set_potential_score(self, score: float):
         self.potential_score = score

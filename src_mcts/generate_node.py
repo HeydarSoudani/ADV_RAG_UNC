@@ -11,6 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from utils.general_utils import read_txt
 from utils.adaptive_utils import fix_tokenizer_chat
 
+from src_adaptive.templetes import SYSTEM_PROMPT_SHORTFORM
 
 class Generator:
     """Generator generates children nodes"""
@@ -45,6 +46,31 @@ class Generator:
         # EoS tokens
         self.stop_tokens_direct_answer = ['\n</Answer>']
         self.stop_tokens_query_decomposition = ['\n4.', '\n</Subquestions>']
+    
+    def get_prompt_text(self, node_type, question, docs, subqs):
+        input_text = ''        
+        
+        if (node_type == 'direct_answer') and (len(subqs) == 0):
+            input_text += "Answer the question.\n"
+            input_text += f"Question: {question}\n Answer:"
+             
+        elif (node_type == 'direct_answer') and (len(subqs) != 0):     
+            input_text += "The following original question is decomposed to subquestions.\n"
+            input_text += "The subquestions are answered.\n"
+            input_text += "Considering the subquestions and their answers, answer to the original question.\n"
+            input_text += f"Original Question: {question}\n"
+            for i, sub in enumerate(subqs):
+                input_text += f"Subquestion ({i+1}): {sub[0]} Subanswer: {sub[1]}\n"
+            input_text += "\nThe answer is: "
+           
+        elif node_type == 'rag_answer':
+            input_text += "Given the following documents, answer the question.\n\n"
+            for i, doc in enumerate(docs):
+                input_text += f"Document ({i+1}): {doc}\n"
+            input_text += f"\nQuestion: {question}\n"
+            input_text += "\nThe answer is: "
+        
+        return input_text
         
     def generate(self, input_text, max_new_tokens, num_return:int = 1):
         messages = [{'role': 'system', 'content': ''}]
@@ -63,7 +89,9 @@ class Generator:
                     return_dict_in_generate=True,
                     output_logits=True,
                     output_scores = True,
-                    eos_token_id=self.eos_token_ids
+                    eos_token_id=self.eos_token_ids,
+                    pad_token_id=tokenizer.eos_token_id,
+                    return_legacy_cache=True
                 )
                 
                 model_output.past_key_values=None
@@ -95,7 +123,7 @@ class Generator:
                 generated_texts.append(generated_text)
                 
         return generated_texts
-    
+
     def _get_most_likely_answer(self, user_query: str, output_list: List[str]):
         assert len(output_list) > 0
 
@@ -142,70 +170,41 @@ class Generator:
 
         return most_confident_answer, confidence
 
-    def generate_direct_answers(self, solution_trace: Dict[int, Dict[str, str]]):
-        # Following RASPberry ....
-        input_text = ''
-        node_type_trace = []
-        retrieve_count = 0
+    def generate_direct_answer(self, solution_trace: Dict[int, Dict[str, str]]):
+        subs = []
+        for _, cur_node in solution_trace.items():
+            node_key = list(cur_node.keys())[0]
+            if node_key in ['subq_direct_answer', 'subq_rag_answer']:
+                subquestion = cur_node[node_key]['subquestion']
+                subanswer = cur_node[node_key]['subanswer']
+                subs.append((subquestion, subanswer))
         
-        for _, parent_state in solution_trace.items():
-            node_type = list(parent_state.keys())[0]
-            node_type_trace.append(node_type)
-            parent_gen = parent_state[node_type]
-        
-            if node_type == 'document':
-                retrieve_count += 1
-
-            if node_type == 'user_question':
-                user_query = parent_gen
-                input_text += f'Given the question: \n{parent_gen}\n'
-            elif node_type == 'subquery':
-                input_text += f'We then decompose the question into several sub-questions, namely: \n{parent_gen}\n'
-
-            elif node_type == 'document':
-                if retrieve_count == 1:
-                    input_text += f'For this type of question, we retrieve a series of relevant documents, referred to as: \n{parent_gen}\n'
-                else:
-                    node_type_trace = node_type_trace[:-1]
-                    node_type_trace.append(f'document-{retrieve_count}')
-                    input_text += f'After further retrieving more relevant documents, we obtain: \n{parent_gen}\n'
-            
-        assert 'answer' not in node_type_trace
-        node_type_trace.append('answer')
-        
-        input_text += 'Summarizing the information above, now we extract the answer, the answer is: ' #\n<Answer>\n
-
-        # Get final answer with confidence
+        # = Do generation
+        user_question = solution_trace[0]['user_question']
+        input_prompt_text = self.get_prompt_text('direct_answer', user_question, [], subs)
         output_list = self.generate(
-            input_text,
+            input_prompt_text,
             max_new_tokens=32,
-            # eos_tokens=['\n</Answer>'],
             num_return=self.mcts_num_last_votes,
         )
-
-        answer, value = self._get_most_likely_answer(user_query=user_query, output_list=output_list)
+        answer, value = self._get_most_likely_answer(user_query=user_question, output_list=output_list)
         return answer, value
 
-    def generate_retrieve_docs(self, solution_trace: Dict[int, Dict[str, str]]):
-        query = ''
-        for _, parent_state in solution_trace.items():
-            node_type = list(parent_state.keys())[0]
-            parent_gen = parent_state[node_type]
-
-            if node_type == 'user_question':
-                qid = parent_state['qid']
-                query += f'Given the question: \n{parent_gen}\n'
-            elif node_type == 'subquery':
-                query += f'We then decompose the question into several sub-questions, namely: \n{parent_gen}\n'
-
-        docs, _, _ = self.retriever.retrieve([query], [qid], [], [])
+    def generate_rag_answer(self, solution_trace: Dict[int, Dict[str, str]]):
+        # = Do retrieval
+        user_question = solution_trace[0]['user_question']
+        qid = solution_trace[0]['qid']
+        docs, _, _ = self.retriever.retrieve([user_question], [qid], [], [])
         
-        document = ''
-        for i, doc in enumerate(docs[0]):
-            document += f'\n\n<doc {i+1}>\n{doc}\n</doc {i+1}>\n\n'
-        document = f'<document>{document}</document>'
-
-        return document
+        # = Do generation
+        input_prompt_text = self.get_prompt_text('rag_answer', user_question, docs, [])
+        output_list = self.generate(
+            input_prompt_text,
+            max_new_tokens=32,
+            num_return=self.mcts_num_last_votes,
+        )
+        answer, value = self._get_most_likely_answer(user_query=user_question, output_list=output_list)
+        return docs, answer, value
         
     def generate_query_decomposition(self, query):
         input_text = self.query_decomposition_prompt
@@ -216,7 +215,6 @@ class Generator:
             input_text,
             max_new_tokens=128,
             num_return=1,
-            # stop_tokens=['\n4.', '\n</Subquestions>'],
         )[0]
         
         match = re.search(r"<Subquestions>\n(.*?)\n</Subquestions>", output, re.DOTALL)
@@ -228,7 +226,65 @@ class Generator:
         else:
             print("No subquestions found.")
             return []
+       
+    def generate_subq_direct_answer(self, solution_trace: Dict[int, Dict[str, str]]):
+        # Get subquestion
+        last_node = solution_trace[list(solution_trace.keys())[-1]]
+        node_type = list(last_node.keys())[0]
+        if node_type == "subquestions":
+            subquestion = last_node[node_type][0]
+            subquestion_pointer = 1
+            len_subqs = len(last_node["subquestions"])
         
-
-
+        elif node_type in ["subq_direct_answer", "subq_rag_answer"]:
+            cur_pointer = last_node[node_type]["subq_pointer"]
+            subquestion_pointer = cur_pointer + 1
+            
+            for id, node in solution_trace.items():
+                if list(node.keys())[0] == "subquestions":
+                    len_subqs = len(node["subquestions"])
+                    subquestion = node["subquestions"][cur_pointer]
+            
+        # Do generation
+        input_prompt_text = self.get_prompt_text('direct_answer', subquestion, [], [])
+        output_list = self.generate(
+            input_prompt_text,
+            max_new_tokens=32,
+            num_return=self.mcts_num_last_votes,
+        )
+        subanswer, _ = self._get_most_likely_answer(user_query=subquestion, output_list=output_list)
         
+        return subquestion, subanswer, subquestion_pointer, len_subqs
+        
+    def generate_subq_rag_answer(self, solution_trace: Dict[int, Dict[str, str]]):
+        # Get subquestion
+        last_node = solution_trace[list(solution_trace.keys())[-1]]
+        node_type = list(last_node.keys())[0]
+        if node_type == "subquestions":
+            subquestion = last_node[node_type][0]
+            subquestion_pointer = 1
+            len_subqs = len(last_node["subquestions"])
+        
+        elif node_type in ["subq_direct_answer", "subq_rag_answer"]:
+            cur_pointer = last_node[node_type]["subq_pointer"]
+            subquestion_pointer = cur_pointer + 1
+            
+            for id, node in solution_trace.items():
+                if list(node.keys())[0] == "subquestions":
+                    len_subqs = len(node["subquestions"])
+                    subquestion = node["subquestions"][cur_pointer]
+
+        # Do retrieval
+        qid = solution_trace[0]['qid']
+        docs, _, _ = self.retriever.retrieve([subquestion], [qid], [], [])
+        
+        # Do generation
+        input_prompt_text = self.get_prompt_text('direct_answer', subquestion, docs, [])
+        output_list = self.generate(
+            input_prompt_text,
+            max_new_tokens=32,
+            num_return=self.mcts_num_last_votes,
+        )
+        subanswer, _ = self._get_most_likely_answer(user_query=subquestion, output_list=output_list)
+        
+        return docs, subquestion, subanswer, subquestion_pointer, len_subqs
