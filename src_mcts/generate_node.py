@@ -45,7 +45,8 @@ class Generator:
         self.semantic_equivalence_prompt = read_txt(self.args.semantic_equivalence_prompt_file)
         
         try:
-            self.fewshot_examplers = getattr(examplers, f'{args.dataset}_exps')
+            self.fewshot_examplers = getattr(examplers, f'{args.dataset}_query_exps')
+            self.fewshot_rephrased_examplers = getattr(examplers, 'rephrased_exps')
         except AttributeError:
             raise ValueError(f"The dataset '{args.dataset}' does not exist in the 'examplers' module.")
         
@@ -80,7 +81,6 @@ class Generator:
             input_text += "DO NOT add any introductory phrases, explanations, or extra text.\n\n"
             input_text += f"Question: {question}\nAnswer:"
         
-             
         elif node_type == 'subquestions':
             input_text += "Given an input question, decompose it into multiple smaller and indivisible sub-questions. The original question will be enclosed in <Original Question> and </Original Question>. Corresponding sub-questions should be enclosed in <Subquestions> and </Subquestions> tags."
             for exp in self.fewshot_examplers:
@@ -92,6 +92,15 @@ class Generator:
 
             input_text += f'<Question>\n{question}\n</Question>\n\n'
             input_text += f'<Subquestions>\n'
+        
+        elif node_type == 'rephrased_query':
+            input_text += "Given an input question, rephrase it into a more intuitive and easier-to-understand version. The original question is enclosed within <Original Question> </Original Question> tags, and the corresponding rephrased question is enclosed within <Rephrased Question> </Rephrased Question> tags."
+            for exp in self.fewshot_rephrased_examplers:
+                input_text += f"<Original Question>\n{exp['question']}\n</Original Question>\n"
+                input_text += f"<Rephrased Question>\n{exp['Rephrased']}\n</Rephrased Question>\n\n"
+                
+            input_text += f'<Original Question>\n{question}\n</Original Question>\n'
+            input_text += f'<Rephrased Question>\n'
         
         return input_text
         
@@ -197,17 +206,38 @@ class Generator:
 
         return most_confident_answer, confidence
 
+    def generate_rephrased_question(self, query):
+        input_prompt_text = self.get_prompt_text('rephrased_query', query, [], [])
+        output = self.generate(
+            input_prompt_text,
+            max_new_tokens=128,
+            num_return=1,
+        )[0]
+        
+        match = re.search(r"<Rephrased Question>\n(.*?)\n</Rephrased Question>", output, re.DOTALL)
+        if match:
+            rephrased_question_text = match.group(1)
+            return rephrased_question_text
+        else:
+            print("No rephrased question found.")
+            return []
+    
     def generate_direct_answer(self, solution_trace: Dict[int, Dict[str, str]]):
         subs = []
+        user_question = solution_trace[0]['user_question']
+        
         for _, cur_node in solution_trace.items():
             node_key = list(cur_node.keys())[0]
             if node_key in ['subq_direct_answer', 'subq_rag_answer']:
                 subquestion = cur_node[node_key]['subquestion']
                 subanswer = cur_node[node_key]['subanswer']
                 subs.append((subquestion, subanswer))
+            
+            if node_key is "rephrased_query":
+                user_question = cur_node[node_key]
+            
         
         # = Do generation
-        user_question = solution_trace[0]['user_question']
         input_prompt_text = self.get_prompt_text('direct_answer', user_question, [], subs)
         output_list = self.generate(
             input_prompt_text,
@@ -218,8 +248,15 @@ class Generator:
         return answer, value
 
     def generate_rag_answer(self, solution_trace: Dict[int, Dict[str, str]]):
-        # = Do retrieval
+        # = Get query
         user_question = solution_trace[0]['user_question']
+        for _, cur_node in solution_trace.items():
+            node_key = list(cur_node.keys())[0]
+            if node_key is "rephrased_query":
+                user_question = cur_node[node_key]
+        
+        print(user_question)
+        # = Do retrieval
         qid = solution_trace[0]['qid']
         docs, _, _ = self.retriever.retrieve([user_question], [qid], [], [])
         
@@ -234,10 +271,6 @@ class Generator:
         return docs, answer, value
         
     def generate_query_decomposition(self, query):
-        # input_text = self.query_decomposition_prompt
-        # input_text += f'\n\n<Original Question>\n{query}\n</Original Question>\n\n'
-        # input_text += f'<Subquestions>\n'
-        
         input_prompt_text = self.get_prompt_text('subquestions', query, [], [])
         output = self.generate(
             input_prompt_text,

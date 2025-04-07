@@ -26,10 +26,12 @@ class Reasoning_MCTS_Node(MCTS_Node):
         max_depth_allowed: int = None,
         
         # --- My Actions ---------------------
+        rephrased_query: str = None,
         direct_answer: str = None,
         rag_answer: str = None,
         retrieved_documents: List[str] = None,
         subquestions: List[str] = None,
+        
         
         subquestion: str = None,
         subq_retrieved_documents: List[str] = None,
@@ -63,6 +65,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     for attr in [
                         parent,
                         node_value,
+                        rephrased_query,
                         direct_answer,
                         rag_answer,
                         retrieved_documents,
@@ -85,6 +88,36 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     ]
                 )
                 
+            elif node_type is Node_Type.REPHRASED_QUERY:
+                assert depth > 0
+                assert all(
+                    attr is None
+                    for attr in [
+                        generator,
+                        question_id,
+                        user_question,
+                        gt_answer,
+                        max_depth_allowed,
+                        node_value,
+                        direct_answer,
+                        rag_answer,
+                        retrieved_documents,
+                        subquestions,
+                        subquestion,
+                        subanswer,
+                        subq_retrieved_documents,
+                        subquestion_pointer,
+                        len_subqs
+                    ]
+                )
+                assert all(
+                    attr is not None
+                    for attr in [
+                        parent,
+                        rephrased_query,
+                    ]
+                )
+
             elif node_type is Node_Type.DIRECT_ANSWER:
                 assert depth > 0
                 assert all(
@@ -95,6 +128,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         user_question,
                         gt_answer,
                         max_depth_allowed,
+                        rephrased_query,
                         rag_answer,
                         retrieved_documents,
                         subquestions,
@@ -124,6 +158,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         user_question,
                         gt_answer,
                         max_depth_allowed,
+                        rephrased_query,
                         direct_answer,
                         subquestions,
                         subquestion,
@@ -154,6 +189,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         gt_answer,
                         max_depth_allowed,
                         node_value,
+                        rephrased_query,
                         direct_answer,
                         retrieved_documents,
                         subquestion,
@@ -182,6 +218,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         gt_answer,
                         max_depth_allowed,
                         node_value,
+                        rephrased_query,
                         direct_answer,
                         retrieved_documents,
                         subq_retrieved_documents,
@@ -210,6 +247,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         gt_answer,
                         max_depth_allowed,
                         node_value,
+                        rephrased_query,
                         direct_answer,
                         retrieved_documents,
                         subquestions
@@ -238,6 +276,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
         self.depth = depth
         self.node_type = node_type
         self.node_value = node_value
+        self.rephrased_query = rephrased_query
         self.direct_answer = direct_answer
         self.retrieved_documents = retrieved_documents
         self.rag_answer = rag_answer
@@ -289,6 +328,11 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     "rag_answer": {"text": rag_answer, "documents": retrieved_documents, "value": node_value}
                 }
             
+            elif node_type is Node_Type.REPHRASED_QUERY:
+                self.solution_trace[max(self.solution_trace.keys())+1] = {
+                    "rephrased_query": rephrased_query,
+                }
+                
             elif node_type is Node_Type.SUBQUESTIONS:
                 self.solution_trace[max(self.solution_trace.keys())+1] = {
                     "subquestions": subquestions,
@@ -328,6 +372,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
     def __str__(self) -> str:
         type2str = {
             Node_Type.USER_QUESTION: "UQ",
+            Node_Type.REPHRASED_QUERY: "RQ",
             Node_Type.DIRECT_ANSWER: "DA",
             Node_Type.RAG_ANSWER: "RA",
             Node_Type.SUBQUESTIONS: "SQ",
@@ -338,6 +383,22 @@ class Reasoning_MCTS_Node(MCTS_Node):
 
     def _create_children(self):
         #! Action Functions
+        def do_action_generate_rephrased_question():
+            print(f"---- Generating rephrased question for node {self.id}...")
+            if self.node_type is Node_Type.USER_QUESTION:
+                query = self.user_question
+            elif self.node_type is Node_Type.SUBQUESTIONS:
+                query = self.subquestion
+            rephrased_query = self.generator.generate_rephrased_question(query=query)
+            self.children.append(
+                Reasoning_MCTS_Node(
+                    parent=self,
+                    depth=self.depth + 1,
+                    node_type=Node_Type.REPHRASED_QUERY,
+                    rephrased_query=rephrased_query
+                )
+            )
+        
         def do_action_generate_direct_answer():
             print(f"---- Generating direct answer for node {self.id}...")
             direct_answer, value = self.generator.generate_direct_answer(solution_trace=self.solution_trace)
@@ -371,6 +432,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                 query = self.user_question
             elif self.node_type is Node_Type.SUBQUESTIONS:
                 query = self.subquestion
+            elif self.node_type is Node_Type.REPHRASED_QUERY:
+                query = self.rephrased_query
             
             subquestions = self.generator.generate_query_decomposition(query=query)
             # for sq in subquery_list:
@@ -419,6 +482,12 @@ class Reasoning_MCTS_Node(MCTS_Node):
             do_action_generate_direct_answer() # A1
             do_action_generate_rag_answer()  # A2
             do_action_generate_subquestions() # A3
+            do_action_generate_rephrased_question()
+
+        elif self.node_type is Node_Type.REPHRASED_QUERY:
+            do_action_generate_direct_answer() # A1
+            do_action_generate_rag_answer()  # A2
+            do_action_generate_subquestions() # A3
 
         elif self.node_type is Node_Type.DIRECT_ANSWER:
             raise ValueError("DIRECT_ANSWER node cannot create children!!")
@@ -431,20 +500,13 @@ class Reasoning_MCTS_Node(MCTS_Node):
             do_action_generate_subq_rag_answer() # A5
         
         elif self.node_type is Node_Type.SUBQ_DIRECT_ANSWER:
-            # print('aa')
-            # print(self.subquestion_pointer)
-            # print(self.len_subqs)
             if self.subquestion_pointer == self.len_subqs:
                 do_action_generate_direct_answer() # A1
             else:
                 do_action_generate_subq_direct_answer() # A4
                 do_action_generate_subq_rag_answer() # A5
                 
-            
         elif self.node_type is Node_Type.SUBQ_RAG_ANSWER:
-            # print('bb')
-            # print(self.subquestion_pointer)
-            # print(self.len_subqs)
             if self.subquestion_pointer == self.len_subqs:
                 do_action_generate_direct_answer() # A1
             else:

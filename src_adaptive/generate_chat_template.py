@@ -53,7 +53,6 @@ class BasicGenerator:
             add_generation_prompt=add_generation_prompt,
             continue_final_message=continue_final_message
         )
-        # print(f"{text}\n")
         
         with torch.no_grad():
             inputs = tokenizer(text, return_tensors="pt").to(self.generator.device)

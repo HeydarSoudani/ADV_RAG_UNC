@@ -117,7 +117,6 @@ def mcts_generation(args):
             json.dump(js, f)
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name_or_path', type=str, default='meta-llama/Llama-3.1-8B-Instruct')
@@ -130,7 +129,7 @@ if __name__ == "__main__":
     parser.add_argument('--retriever_model', type=str, default='bm25', choices=[
         'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt'
     ])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.004)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.002)
     parser.add_argument('--fewshot', type=int, default=6)
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
