@@ -1,11 +1,73 @@
+import torch
 import random
 from collections import defaultdict
 from typing import List, Dict, Tuple
+from utils.adaptive_utils import fix_tokenizer_chat
 
 
 class Evaluator:
     def __init__(self) -> None:
         self.answer_marker = "answer is"
+        self.model = None
+        self.tokenizer = None
+        self.equiv_prompt = None
+        self.question = None
+
+    def generate(self, input_text, max_new_tokens, num_return:int = 1):
+        messages = [{'role': 'system', 'content': ''}]
+        messages.append({'role': 'user', 'content': input_text})
+        tokenizer, messages = fix_tokenizer_chat(self.tokenizer, messages)
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize = False,
+            add_generation_prompt=True,
+            continue_final_message=False
+        )
+        generated_texts = []
+        for i in range(num_return):
+            with torch.no_grad():
+                inputs = tokenizer(text, return_tensors="pt").to(self.model.device)
+                input_ids = inputs['input_ids']
+                model_output = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    return_dict_in_generate=True,
+                    output_logits=True,
+                    output_scores = True,
+                    eos_token_id=self.eos_token_ids,
+                    pad_token_id=tokenizer.eos_token_id,
+                    return_legacy_cache=True
+                )
+                
+                model_output.past_key_values=None
+                model_output.sequences = model_output.sequences.cpu()
+                if type(self.eos_token_ids) == list:
+                    temp = torch.stack([
+                        torch.argmax((model_output.sequences[:, len(input_ids[0]):] == eos).to(dtype=torch.int), dim=-1) 
+                        for eos in self.eos_token_ids
+                    ]).T
+                    # indices = [torch.min(temp[i][temp[i]>0]).item() for i in range(len(temp))]
+                    # ------------------------------
+                    # Mine: Llama 3 generates error
+                    # ------------------------------
+                    indices = []
+                    for i in range(len(temp)):
+                        non_zero_elements = temp[i][temp[i] > 0]
+                        if non_zero_elements.numel() > 0:
+                            indices.append(torch.min(non_zero_elements).item())
+                        else:
+                            indices.append(0)  # Handle the case where no EOS token is found
+                    # ------------------------------
+                else:
+                    indices = torch.argmax((model_output.sequences[:, len(input_ids[0]):] == self.eos_token_ids).to(dtype=torch.int), dim=-1)
+                indices[indices==0] = model_output.sequences.shape[1] - len(input_ids[0]) -1
+                
+                tokens = [seq[len(input_ids[0]):indices[i] + len(input_ids[0])+1].tolist() for i, seq in enumerate(model_output.sequences)]
+                tokens_text = [[tokenizer.decode(token) for token in tokens_] for tokens_ in tokens]
+                generated_text = tokenizer.batch_decode(tokens, skip_special_tokens=True)[0]
+                generated_texts.append(generated_text)
+                
+        return generated_texts
 
     def _is_number(self, s) -> Tuple[bool, str]:
         try:
@@ -193,7 +255,30 @@ class Evaluator:
         return most_confident_answer, sampled_completion, id_of_most_confident, confidence
 
     def check_answers_equiv(self, answer_a: str, answer_b: str):
-        raise NotImplementedError
+        # raise NotImplementedError
+        if answer_a is None or answer_b is None:
+            return False
+        assert isinstance(answer_a, str) and isinstance(answer_b, str)
+        assert self.model is not None and self.equiv_prompt is not None and self.question is not None
+
+        equiv_prompt = self.equiv_prompt
+
+        # return answer_a == answer_a or fuzz.token_sort_ratio(answer_a, answer_b) >= 90
+        equiv_prompt += f'\n\nWe are evaluating answers to the question: {self.question}\n'
+        equiv_prompt += 'Here are two possible answers:\n'
+
+        equiv_prompt += f'Possible Answer 1: {answer_a}'
+        equiv_prompt += f'Possible Answer 2: {answer_b}'
+        equiv_prompt += 'For this question, is Possible Answer 1 semantically equivalent to Possible Answer 2? Respond with Yes or No.\n'
+        equiv_prompt += 'Response: '
+        response = self.generate(
+            equiv_prompt,
+            max_new_tokens=1,
+            num_return=1,
+            # temperature=0.01,
+        )[0]
+
+        return True if 'Yes' in response else False
 
     def extract_answer_from_gold_solution(self, solution: str) -> str:
         raise NotImplementedError

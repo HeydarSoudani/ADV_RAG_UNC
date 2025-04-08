@@ -55,8 +55,7 @@ class Generator:
         self.stop_tokens_query_decomposition = ['\n4.', '\n</Subquestions>']
     
     def get_prompt_text(self, node_type, question, docs, subqs):
-        input_text = ''        
-        
+        input_text = ''
         if node_type in ['direct_answer', 'rag_answer', 'subq_direct_answer', 'subq_rag_answer']:
             if len(self.fewshot_examplers) > 0:
                 input_text += "Here are several examples of how to answer similar questions:\n\n"
@@ -220,7 +219,7 @@ class Generator:
             return rephrased_question_text
         else:
             print("No rephrased question found.")
-            return []
+            return query
     
     def generate_direct_answer(self, solution_trace: Dict[int, Dict[str, str]]):
         subs = []
@@ -249,15 +248,14 @@ class Generator:
 
     def generate_rag_answer(self, solution_trace: Dict[int, Dict[str, str]]):
         # = Get query
+        qid = solution_trace[0]['qid']
         user_question = solution_trace[0]['user_question']
         for _, cur_node in solution_trace.items():
             node_key = list(cur_node.keys())[0]
             if node_key is "rephrased_query":
                 user_question = cur_node[node_key]
-        
-        print(user_question)
+
         # = Do retrieval
-        qid = solution_trace[0]['qid']
         docs, _, _ = self.retriever.retrieve([user_question], [qid], [], [])
         
         # = Do generation
@@ -326,6 +324,7 @@ class Generator:
         
     def generate_subq_rag_answer(self, solution_trace: Dict[int, Dict[str, str]]):
         # Get subquestion
+        qid = solution_trace[0]['qid']
         last_node = solution_trace[list(solution_trace.keys())[-1]]
         node_type = list(last_node.keys())[0]
         subs = []
@@ -349,14 +348,14 @@ class Generator:
                     subq = node[node_key]['subquestion']
                     suba = node[node_key]['subanswer']
                     subs.append((subq, suba))    
-                
 
         # Do retrieval
-        qid = solution_trace[0]['qid']
-        docs, _, _ = self.retriever.retrieve([subquestion], [qid], [], [])
+        ret_query = ', '.join([f"{sub[0]} {sub[1]}" for sub in subs])
+        ret_query += f", {subquestion}"
+        docs, _, _ = self.retriever.retrieve([ret_query], [qid], [], [])
         
         # Do generation
-        input_prompt_text = self.get_prompt_text('direct_answer', subquestion, docs[0], subs)
+        input_prompt_text = self.get_prompt_text('rag_answer', subquestion, docs[0], subs)
         output_list = self.generate(
             input_prompt_text,
             max_new_tokens=32,

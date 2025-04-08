@@ -352,7 +352,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     "subq_rag_answer": {
                         "subq_pointer": subquestion_pointer,
                         "subquestion": subquestion,
-                        "documents": retrieved_documents,
+                        "documents": subq_retrieved_documents,
                         "subanswer": subanswer,
                     }
                 }

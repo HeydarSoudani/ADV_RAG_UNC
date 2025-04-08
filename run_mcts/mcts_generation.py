@@ -101,20 +101,20 @@ def mcts_generation(args):
                     file=f,
                 )
 
-    #! record final traces
-    js = [{"trace": node.solution_trace, "rollout_id": node.rollout_id} for node in all_solution_nodes]
-    with open(f"{answer_sheets_dir}/{qid}/final_solutions.jsonl", "w") as f:
-        for item in js:
-            f.write(json.dumps(item) + "\n")
-    js2 = [{"trace": node.solution_trace, "rollout_id": i} for i, node in enumerate(model_rollout_nodes)]
-    with open(f"{answer_sheets_dir}/{qid}/rollout_solutions.jsonl", "w") as f:
-        for item in js2:
-            f.write(json.dumps(item) + "\n")
+        #! record final traces
+        js = [{"trace": node.solution_trace, "rollout_id": node.rollout_id} for node in all_solution_nodes]
+        with open(f"{answer_sheets_dir}/{qid}/final_solutions.jsonl", "w") as f:
+            for item in js:
+                f.write(json.dumps(item) + "\n")
+        js2 = [{"trace": node.solution_trace, "rollout_id": i} for i, node in enumerate(model_rollout_nodes)]
+        with open(f"{answer_sheets_dir}/{qid}/rollout_solutions.jsonl", "w") as f:
+            for item in js2:
+                f.write(json.dumps(item) + "\n")
 
-    if args.enable_potential_score:
-        js = [node.potential_answers_history for node in all_solution_nodes]
-        with open(f"{answer_sheets_dir}/{qid}/potentials.json", "w") as f:
-            json.dump(js, f)
+        if args.enable_potential_score:
+            js = [node.potential_answers_history for node in all_solution_nodes]
+            with open(f"{answer_sheets_dir}/{qid}/potentials.json", "w") as f:
+                json.dump(js, f)
 
 
 if __name__ == "__main__":
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     parser.add_argument('--retriever_model', type=str, default='bm25', choices=[
         'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt'
     ])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.002)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.04)
     parser.add_argument('--fewshot', type=int, default=6)
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
