@@ -10,9 +10,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from utils.general_utils import read_txt
 from utils.adaptive_utils import fix_tokenizer_chat
-
 from src_adaptive.templetes import SYSTEM_PROMPT_SHORTFORM
 from src_mcts import examplers
+
 
 class Generator:
     """Generator generates children nodes"""
@@ -54,9 +54,45 @@ class Generator:
         self.stop_tokens_direct_answer = ['\n</Answer>']
         self.stop_tokens_query_decomposition = ['\n4.', '\n</Subquestions>']
     
-    def get_prompt_text(self, node_type, question, docs, subqs):
+    def get_prompt_text(self, cur_node_type, solution_trace: Dict[int, Dict[str, str]], docs, prev_subqs=None, cur_subq=None):
         input_text = ''
-        if node_type in ['direct_answer', 'rag_answer', 'subq_direct_answer', 'subq_rag_answer']:
+        user_quesry = solution_trace[0]['user_question']
+        
+        # Generate Answer or Subanswer
+        if cur_node_type in ['direct_answer', 'rag_answer']:
+            sub_docs = []
+            # Path
+            for item_idx in solution_trace:
+                solution_item = solution_trace[item_idx]
+                node_keys = list(solution_item.keys())
+                node_type = node_keys[0]
+                if node_type == 'user_question':
+                    user_quesry = solution_item[node_type]
+                elif node_type == 'rephrased_query':
+                    input_text += f'Given the question: {user_quesry}\n'
+                    input_text += f'We rephrase the question, which can also be expressed as: \n{solution_item[node_type]}\n'
+                elif node_type == 'subquestions':
+                    input_text += f'We then decompose the question into several sub-questions with their corresponding answers:\n'
+                elif node_type == 'subq_direct_answer':
+                    input_text += f"{solution_item[node_type]['subquestion']} {solution_item[node_type]['subanswer']}\n"
+                elif node_type == 'subq_rag_answer':
+                    input_text += f"{solution_item[node_type]['subquestion']} {solution_item[node_type]['subanswer']}\n"
+                    sub_docs.extend(solution_item[node_type]['documents'])
+                elif node_type == 'rag_answer':
+                    sub_docs.extend(solution_item[node_type]['documents'])
+                
+            # Docs
+            if len(docs) > 0:
+                input_text += "Below are some relevant documents that may help answer the question:\n"
+                for i, doc in enumerate(docs):
+                    input_text += f"[{i+1}] {doc}\n"
+                input_text += "\n"
+            if len(sub_docs) > 0:
+                for i, doc in enumerate(sub_docs):
+                    input_text += f"[{len(docs)+i+1}] {doc}\n"
+                input_text += "\n"
+                
+            # Few-shot examples
             if len(self.fewshot_examplers) > 0:
                 input_text += "Here are several examples of how to answer similar questions:\n\n"
                 for exp in self.fewshot_examplers:
@@ -64,47 +100,80 @@ class Generator:
                     input_text += f"Answer: {exp['answer']}\n"
                 input_text += "\n"
             
-            if len(subqs) > 0:
-                input_text += "Below are the sub-questions of the main question, along with their corresponding answers:\n\n"
-                for i, sub in enumerate(subqs):
-                    input_text += f"Subquestion [{i+1}]: {sub[0]} Subanswer: {sub[1]}\n"
+            
+            input_text += "Now, answer the following question EXACTLY in the format of the examples above.\n"
+            input_text += "DO NOT add any introductory phrases, explanations, or extra text.\n\n"
+            input_text += f"Question: {user_quesry}\nAnswer:"
+        
+        elif cur_node_type == 'subquestions':
+            input_text += "Given an input question, decompose it into multiple smaller and indivisible sub-questions.\n"
+            input_text += "Here are several examples of how to output the sub-questions:\n\n"
+            for exp in self.fewshot_examplers:
+                input_text += f"Original Question: {exp['question']}\n"
+                input_text += "Subquestions:\n"
+                for i, subq in enumerate(exp['subqa']):
+                    input_text += f"{i+1}.{subq[0]}\n"
                 input_text += "\n"
             
+            input_text += "Now, generate sub-questions for the following question EXACTLY in the format of the examples above.\n"
+            input_text += "DO NOT add any introductory phrases, explanations, or extra text.\n\n"
+            input_text += f'Original Question: {user_quesry}\n'
+            input_text += "Subquestions:\n"
+        
+        elif cur_node_type == 'rephrased_query':
+            input_text += "Given an input question, rephrase it into a more intuitive and easier-to-understand version.\n"
+            input_text += "Here are several examples of how to output the rephrased question:\n\n"
+            for exp in self.fewshot_rephrased_examplers:
+                input_text += f"Original Question: {exp['question']}\n"
+                input_text += f"Rephrased Question: {exp['Rephrased']}\n\n"
+            
+            input_text += "Now, generate the rephrased version for the following question EXACTLY in the format of the examples above.\n"
+            input_text += "DO NOT add any introductory phrases, explanations, or extra text.\n\n"
+            input_text += f'Original Question: {user_quesry}\n'
+            input_text += f'Rephrased Question: '
+        
+        elif cur_node_type in ['subq_direct_answer', 'subq_rag_answer']:
+            sub_docs = []
+            # Path
+            for item_idx in solution_trace:
+                solution_item = solution_trace[item_idx]
+                node_keys = list(solution_item.keys())
+                node_type = node_keys[0]
+                if node_type == 'user_question':
+                    input_text += f'Given the question: {solution_item[node_type]}\n'
+                elif node_type == 'rephrased_query':
+                    input_text += f'We rephrase the question, which can also be expressed as: \n{solution_item[node_type]}\n\n'
+
+            if len(prev_subqs) > 0:
+                input_text += f'We then decompose the question into several sub-questions, some of them are answered:\n'
+                for psub in prev_subqs:
+                    input_text += f"Sub-question: {psub[0]} sub-answer: {psub[1]}\n"
+            else:
+                input_text += f'We then decompose the question into several sub-questions, we want to answer one by one.\n'
+
+            # Docs
             if len(docs) > 0:
                 input_text += "Below are some relevant documents that may help answer the question:\n"
                 for i, doc in enumerate(docs):
                     input_text += f"[{i+1}] {doc}\n"
                 input_text += "\n"
-            
-            input_text += "Now, answer the following question EXACTLY in the format of the examples above.\n"
+        
+            # Few-shot examples
+            if len(self.fewshot_examplers) > 0:
+                input_text += "Here are several examples of how to answer similar questions:\n\n"
+                for exp in self.fewshot_examplers:
+                    input_text += f"Question: {exp['question']}\n"
+                    input_text += f"Answer: {exp['answer']}\n"
+                input_text += "\n"
+        
+            input_text += "Summarizing the information above, now answer the following question EXACTLY in the format of the examples above.\n"
             input_text += "DO NOT add any introductory phrases, explanations, or extra text.\n\n"
-            input_text += f"Question: {question}\nAnswer:"
-        
-        elif node_type == 'subquestions':
-            input_text += "Given an input question, decompose it into multiple smaller and indivisible sub-questions. The original question will be enclosed in <Original Question> and </Original Question>. Corresponding sub-questions should be enclosed in <Subquestions> and </Subquestions> tags."
-            for exp in self.fewshot_examplers:
-                input_text += f"<Question>\n{exp['question']}\n</Question>\n\n"
-                input_text += "<Subquestions>\n"
-                for i, subq in enumerate(exp['subqa']):
-                    input_text += f"{i+1}.{subq[0]}\n"
-                input_text += "</Subquestions>\n\n"
-
-            input_text += f'<Question>\n{question}\n</Question>\n\n'
-            input_text += f'<Subquestions>\n'
-        
-        elif node_type == 'rephrased_query':
-            input_text += "Given an input question, rephrase it into a more intuitive and easier-to-understand version. The original question is enclosed within <Original Question> </Original Question> tags, and the corresponding rephrased question is enclosed within <Rephrased Question> </Rephrased Question> tags."
-            for exp in self.fewshot_rephrased_examplers:
-                input_text += f"<Original Question>\n{exp['question']}\n</Original Question>\n"
-                input_text += f"<Rephrased Question>\n{exp['Rephrased']}\n</Rephrased Question>\n\n"
-                
-            input_text += f'<Original Question>\n{question}\n</Original Question>\n'
-            input_text += f'<Rephrased Question>\n'
+            input_text += f"Question: {cur_subq}\nAnswer:"
         
         return input_text
         
-    def generate(self, input_text, max_new_tokens, num_return:int = 1):
-        messages = [{'role': 'system', 'content': SYSTEM_PROMPT_SHORTFORM}]
+    def generate(self, input_text, max_new_tokens, sys_prompt='', num_return:int = 1):
+        messages = [{'role': 'system', 'content': sys_prompt}]
         messages.append({'role': 'user', 'content': input_text})
         tokenizer, messages = fix_tokenizer_chat(self.tokenizer, messages)
         text = tokenizer.apply_chat_template(
@@ -205,21 +274,14 @@ class Generator:
 
         return most_confident_answer, confidence
 
-    def generate_rephrased_question(self, query):
-        input_prompt_text = self.get_prompt_text('rephrased_query', query, [], [])
+    def generate_rephrased_question(self, solution_trace: Dict[int, Dict[str, str]]):
+        input_prompt_text = self.get_prompt_text('rephrased_query', solution_trace, [], [])
         output = self.generate(
             input_prompt_text,
             max_new_tokens=128,
             num_return=1,
         )[0]
-        
-        match = re.search(r"<Rephrased Question>\n(.*?)\n</Rephrased Question>", output, re.DOTALL)
-        if match:
-            rephrased_question_text = match.group(1)
-            return rephrased_question_text
-        else:
-            print("No rephrased question found.")
-            return query
+        return output
     
     def generate_direct_answer(self, solution_trace: Dict[int, Dict[str, str]]):
         subs = []
@@ -234,14 +296,14 @@ class Generator:
             
             if node_key is "rephrased_query":
                 user_question = cur_node[node_key]
-            
         
         # = Do generation
-        input_prompt_text = self.get_prompt_text('direct_answer', user_question, [], subs)
+        input_prompt_text = self.get_prompt_text('direct_answer', solution_trace, [], subs)
         output_list = self.generate(
             input_prompt_text,
             max_new_tokens=16,
             num_return=self.mcts_num_last_votes,
+            sys_prompt=SYSTEM_PROMPT_SHORTFORM
         )
         answer, value = self._get_most_likely_answer(user_query=user_question, output_list=output_list)
         return answer, value
@@ -259,32 +321,26 @@ class Generator:
         docs, _, _ = self.retriever.retrieve([user_question], [qid], [], [])
         
         # = Do generation
-        input_prompt_text = self.get_prompt_text('rag_answer', user_question, docs[0], [])
+        input_prompt_text = self.get_prompt_text('rag_answer', solution_trace, docs[0], [])
         output_list = self.generate(
             input_prompt_text,
             max_new_tokens=16,
             num_return=self.mcts_num_last_votes,
+            sys_prompt=SYSTEM_PROMPT_SHORTFORM
         )
         answer, value = self._get_most_likely_answer(user_query=user_question, output_list=output_list)
         return docs, answer, value
         
-    def generate_query_decomposition(self, query):
-        input_prompt_text = self.get_prompt_text('subquestions', query, [], [])
+    def generate_query_decomposition(self, solution_trace: Dict[int, Dict[str, str]]):
+        input_prompt_text = self.get_prompt_text('subquestions', solution_trace, [], [])
         output = self.generate(
             input_prompt_text,
             max_new_tokens=128,
             num_return=1,
         )[0]
-        
-        match = re.search(r"<Subquestions>\n(.*?)\n</Subquestions>", output, re.DOTALL)
-        if match:
-            subquestions_text = match.group(1)
-            subquestions = re.findall(r'\d+\.(.*)', subquestions_text)
-            subquestions = [s.strip() for s in subquestions]
-            return subquestions
-        else:
-            print("No subquestions found.")
-            return []
+        subquestions = re.findall(r'\d+\.(.*)', output)
+        subquestions = [s.strip() for s in subquestions]
+        return subquestions
        
     def generate_subq_direct_answer(self, solution_trace: Dict[int, Dict[str, str]]):
         # Get subquestion
@@ -310,10 +366,11 @@ class Generator:
                 if node_key in ['subq_direct_answer', 'subq_rag_answer']:
                     subq = node[node_key]['subquestion']
                     suba = node[node_key]['subanswer']
-                    subs.append((subq, suba))    
+                    subd = node[node_key]['documents'] if node_key=='subq_rag_answer' else []
+                    subs.append((subq, suba, subd))    
             
         # Do generation
-        input_prompt_text = self.get_prompt_text('direct_answer', subquestion, [], subs)
+        input_prompt_text = self.get_prompt_text('subq_direct_answer', solution_trace, [], subs, subquestion)
         output_list = self.generate(
             input_prompt_text,
             max_new_tokens=32,
@@ -347,7 +404,8 @@ class Generator:
                 if node_key in ['subq_direct_answer', 'subq_rag_answer']:
                     subq = node[node_key]['subquestion']
                     suba = node[node_key]['subanswer']
-                    subs.append((subq, suba))    
+                    subd = node[node_key]['documents'] if node_key=='subq_rag_answer' else []
+                    subs.append((subq, suba, subd))
 
         # Do retrieval
         ret_query = ', '.join([f"{sub[0]} {sub[1]}" for sub in subs])
@@ -355,7 +413,7 @@ class Generator:
         docs, _, _ = self.retriever.retrieve([ret_query], [qid], [], [])
         
         # Do generation
-        input_prompt_text = self.get_prompt_text('rag_answer', subquestion, docs[0], subs)
+        input_prompt_text = self.get_prompt_text('subq_rag_answer', solution_trace, docs[0], subs, subquestion)
         output_list = self.generate(
             input_prompt_text,
             max_new_tokens=32,

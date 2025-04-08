@@ -304,7 +304,6 @@ class Reasoning_MCTS_Node(MCTS_Node):
             self.max_depth_allowed = parent.max_depth_allowed
             self.enable_potential_score = parent.enable_potential_score
 
-
         #! keep track of paraphrasing
         #! record number of subquestions till now
 
@@ -389,7 +388,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                 query = self.user_question
             elif self.node_type is Node_Type.SUBQUESTIONS:
                 query = self.subquestion
-            rephrased_query = self.generator.generate_rephrased_question(query=query)
+            rephrased_query = self.generator.generate_rephrased_question(solution_trace=self.solution_trace)
             self.children.append(
                 Reasoning_MCTS_Node(
                     parent=self,
@@ -435,8 +434,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
             elif self.node_type is Node_Type.REPHRASED_QUERY:
                 query = self.rephrased_query
             
-            subquestions = self.generator.generate_query_decomposition(query=query)
-            # for sq in subquery_list:
+            subquestions = self.generator.generate_query_decomposition(solution_trace=self.solution_trace)
             self.children.append(
                 Reasoning_MCTS_Node(
                     parent=self,
@@ -482,7 +480,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
             do_action_generate_direct_answer() # A1
             do_action_generate_rag_answer()  # A2
             do_action_generate_subquestions() # A3
-            do_action_generate_rephrased_question()
+            do_action_generate_rephrased_question() # A4
 
         elif self.node_type is Node_Type.REPHRASED_QUERY:
             do_action_generate_direct_answer() # A1
@@ -496,15 +494,15 @@ class Reasoning_MCTS_Node(MCTS_Node):
             raise ValueError("RAG_ANSWER node cannot create children!!")
 
         elif self.node_type is Node_Type.SUBQUESTIONS:
-            do_action_generate_subq_direct_answer() # A4
-            do_action_generate_subq_rag_answer() # A5
+            do_action_generate_subq_direct_answer() # A5
+            do_action_generate_subq_rag_answer() # A6
         
         elif self.node_type is Node_Type.SUBQ_DIRECT_ANSWER:
             if self.subquestion_pointer == self.len_subqs:
                 do_action_generate_direct_answer() # A1
             else:
-                do_action_generate_subq_direct_answer() # A4
-                do_action_generate_subq_rag_answer() # A5
+                do_action_generate_subq_direct_answer() # A5
+                do_action_generate_subq_rag_answer() # A6
                 
         elif self.node_type is Node_Type.SUBQ_RAG_ANSWER:
             if self.subquestion_pointer == self.len_subqs:

@@ -11,6 +11,7 @@ import argparse
 from utils.general_utils import set_seed
 from mcts_generation import mcts_generation
 from mcts_discrimination import mcts_discrimination
+from mcts_evaluation import mcts_evaluation
 
 
 if __name__ == "__main__":
@@ -52,5 +53,6 @@ if __name__ == "__main__":
     set_seed(args.seed)
     mcts_generation(args)
     mcts_discrimination(args)
+    mcts_evaluation(args)
     
 

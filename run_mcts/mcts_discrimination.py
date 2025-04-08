@@ -33,10 +33,10 @@ def mcts_discrimination(args):
     
     # === Output files ==========================
     model_ = args.model_name_or_path.split('/')[-1]
-    answer_sheets_dir = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/trees'
+    answer_sheets_dir = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/generation_trees'
     entries = os.listdir(answer_sheets_dir)
     query_ids = [entry for entry in entries if os.path.isdir(os.path.join(answer_sheets_dir, entry))]
-    discriminate_results_file = f"{answer_sheets_dir}/discriminate_results.jsonl"
+    discriminate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/discriminate_results.jsonl"
     
     # === Model Definition ======================  
     evaluator = Evaluator()
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     parser.add_argument('--retrieve_topk', type=int, default=3)
     parser.add_argument('--generate_max_length', type=int, default=64)
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_0 (debug)')
+    parser.add_argument('--run', type=str, default='run_1 (+a4)')
     parser.add_argument("--seed", type=int, default=10)
     
     # MCTS ---
