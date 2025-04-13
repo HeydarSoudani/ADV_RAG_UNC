@@ -16,6 +16,9 @@ class Node_Type(Enum):
     SUBQUESTIONS = "SUBQUESTIONS"
     SUBQ_DIRECT_ANSWER = "SUBQ_DIRECT_ANSWER"
     SUBQ_RAG_ANSWER = "SUBQ_RAG_ANSWER"
+    
+    THINK_SERACH = "THINK_SERACH"
+    THINK_ANSWER = "THINK_ANSWER"
 
 def split_user_question(user_question: str):
     user_question = user_question.strip().rstrip(".")
@@ -114,7 +117,7 @@ def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None,
 
         if node.node_type is Node_Type.USER_QUESTION:
             gt = ", ".join(node.gt_answer)
-            node_details += f"User: {node.user_question}" + "  " + f"Ground truth: {gt}" +  "\n" + space + " " * len(node_info) 
+            node_details += f"User: {node.user_question} | Ground truth: {gt} | Path: {node.gt_reasoning_steps}" +  "\n" + space + " " * len(node_info) 
         elif node.node_type is Node_Type.DIRECT_ANSWER:
             node_details += f"Ans: {node.direct_answer.replace("\n", " ")}"
         elif node.node_type is Node_Type.RAG_ANSWER:
@@ -127,6 +130,11 @@ def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None,
             node_details += f"Query: {node.subquestion}" + "  Ans: " + f"{node.subanswer.replace("\n", " ")}" + f"  Pointer: {node.subquestion_pointer}" + f"  Docs: ..." +  "\n" + space + " " * len(node_info) # {node.subq_retrieved_documents}
         elif node.node_type is Node_Type.REPHRASED_QUERY:
             node_details += f"Rep-Query: {node.rephrased_query}" + "\n" + space + " " * len(node_info)
+    
+        elif node.node_type is Node_Type.THINK_SERACH:
+            node_details += f"Search: {node.search_query} | Think: {node.think.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
+        elif node.node_type is Node_Type.THINK_ANSWER:
+            node_details += f"Answer: {node.answer} | Think: {node.think.replace("\n", " ")}" + "\n" + space + " " * len(node_info)
     
         to_print += dash + node_details
         my_print(to_print)
@@ -181,6 +189,40 @@ def concat_solution_trace(solution_trace: Dict[int, Dict[str, str]]):
 
     return solution_trace_str.strip(), final_step_str.strip(), end_node_type, min(0, reward_value) + 1
 
+def concat_solution_trace_v2(solution_trace: Dict[int, Dict[str, str]]):
+    """Note that the solution trace might be subqs-subas and also one-step thought steps."""
+    solution_trace_str = ""
+    final_step_str = ""
+    end_node_type = None
+    reward_value = 0.0
+
+    for item_idx in solution_trace:
+        solution_item = solution_trace[item_idx]
+        keys = list(solution_item.keys())
+        node_type = keys[0]
+        
+        if node_type == 'user_question':
+            solution_trace_str += f'Question: \n{solution_item[node_type]}\n'
+        
+        elif node_type == 'think_search':
+            solution_trace_str += f'<think> {solution_item[node_type]['think']} </think>\n'
+            solution_trace_str += f'<search> {solution_item[node_type]['search_query']} </search>\n'
+            solution_trace_str += f'<information>'
+            for i, doc in enumerate(solution_item[node_type]['retrieved_documents']):
+                solution_trace_str += f"Doc [{i+1}]: {doc}\n"
+            solution_trace_str += f"<\information>\n"
+        
+        elif node_type == 'think_answer':
+            solution_trace_str += f'<think> {solution_item[node_type]['think']} </think>\n'
+            solution_trace_str += f'<answer> {solution_item[node_type]['answer']} </answer>\n'
+            
+            final_step_str = solution_item[node_type]['answer']
+            end_node_type = Node_Type.THINK_ANSWER
+            reward_value = solution_item[node_type]['value']
+            
+
+    return solution_trace_str.strip(), final_step_str.strip(), end_node_type, min(0, reward_value) + 1
+    
 def mask_solution_trace(
     solution_trace_str: str, num_return: int, left_boundary: float, right_boundary: float
 ) -> list[str]:
@@ -205,6 +247,7 @@ def mask_solution_trace(
 
     return masked_solution_traces
 
+
 def rag_mask_solution_trace(
     solution_trace_str: str, num_return: int, left_boundary: float, right_boundary: float
 ) -> list[str]:
@@ -218,7 +261,7 @@ def rag_mask_solution_trace(
 
     words_in_solution_trace = solution_trace_str.split(" ")
     
-    last_position = next((idx for idx in range(len(words_in_solution_trace) - 1, -1, -1) if "</document>" in words_in_solution_trace[idx]), -1)
+    last_position = next((idx for idx in range(len(words_in_solution_trace) - 1, -1, -1) if "</information>" in words_in_solution_trace[idx]), -1)
     mask_len = len(words_in_solution_trace[last_position+1:])
     
     # Mask the solution trace string from least to most

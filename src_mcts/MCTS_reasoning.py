@@ -32,7 +32,6 @@ class Reasoning_MCTS_Node(MCTS_Node):
         retrieved_documents: List[str] = None,
         subquestions: List[str] = None,
         
-        
         subquestion: str = None,
         subq_retrieved_documents: List[str] = None,
         subanswer: str = None,

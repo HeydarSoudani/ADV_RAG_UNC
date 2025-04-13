@@ -3,8 +3,8 @@
 #SBATCH --ntasks=1
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
-#SBATCH --partition=gpu
-#SBATCH --time=0:30:00
+#SBATCH --partition=gpu_a100
+#SBATCH --time=1:00:00
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -12,12 +12,12 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 
 ### === Set variables ==========================
-model_name_or_path="meta-llama/Llama-3.1-8B-Instruct"
-dataset="wikimultihopqa"
+model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
+dataset="hotpotqa"
 subsec="test"
-fraction_of_data_to_use=0.06
+fraction_of_data_to_use=0.2
 retriever_model="bm25"
-run="run_0 (debug)"
+run="run_7 (prompt_test)"
 
 srun python $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
     --model_name_or_path "$model_name_or_path" \

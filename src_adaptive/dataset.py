@@ -11,21 +11,23 @@ BASE_DIR = '/home/hsoudani/ADV_RAG_UNC'
 class BaseDataset:
     def __init__(self, dataset_name: str, split: str, fraction_of_data_to_use: float = 1.0):
         dataset_file = f"{BASE_DIR}/data/processed_files/{dataset_name}_{split}.jsonl"
-        try:
-            self.examplers = getattr(examplers, f'{dataset_name}_exps')
-        except AttributeError:
-            raise ValueError(f"The dataset '{dataset_name}' does not exist in the 'examplers' module.")
+        # try:
+        #     self.examplers = getattr(examplers, f'{dataset_name}_exps')
+        # except AttributeError:
+        #     raise ValueError(f"The dataset '{dataset_name}' does not exist in the 'examplers' module.")
 
         data = []
         with open(dataset_file, 'r', encoding='utf-8') as file:
             for line in tqdm(file, desc="Converting dataset ..."):
                 item = json.loads(line.strip())
                 
+                reasoning_steps = item["reasoning_steps"] if dataset_name in ['wikimultihopqa', 'musique'] else []
                 # === 
                 data.append({
                     "qid": item["id"],
                     "question": item["question"],
                     "ground_truths": item["answers"],
+                    "reasoning_steps": reasoning_steps,
                     "positive_ctxs": item['positive_ctxs'],
                     "negative_ctxs": item['negative_ctxs'],
                 })
