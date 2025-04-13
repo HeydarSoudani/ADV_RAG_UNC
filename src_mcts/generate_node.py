@@ -174,7 +174,7 @@ class Generator:
         
         return input_text
         
-    def generate(self, 
+    def generate(self,
         input_text,
         max_new_tokens,
         sys_prompt='You are a helpful assistant.',
@@ -439,124 +439,7 @@ class Generator:
     def get_prompt_text_v2(self, curr_node, solution_trace: Dict[int, Dict[str, str]]):
         user_quesry = solution_trace[0]['user_question']
         
-        # Intruction
-        # input_text = "You are tasked with answering the following question in multiple steps. "
-        # input_text += "At this point, you are responsible for executing one step of the process. "
-        # input_text += "This could be the first, an intermediate, or the final step. "
-        # if curr_node == 'think_search':
-        #     input_text += 'You MUST produce output exclusively within the <think>...</think> and <search>...</search> tags. Do not include any content outside these tags or use any other tags.'
-        #     input_text += ' To carry out one step, you MUST begin by reasoning inside <think> and </think>.'
-        #     input_text += ' During reasoning, aim to identify one of the information that would help in answering the question.'
-        #     input_text += ' Keep your reasoning concise and direct—no more than three to four sentences. Ensure that you close the reasoning properly with </think>.'
-        #     input_text += ' After reasoning, you MUST call a search engine by <search> query </search>.'
-
-        # elif curr_node == 'think_answer':
-        #     input_text += 'You MUST produce output exclusively within the <think>...</think> and <answer>...</answer> tags. Do not include any content outside these tags or use any other tags.'
-        #     input_text += ' During reasoning, draw upon your memorized knowledge and all previously retrieved external information to arrive at a final answer.'
-        #     input_text += ' Keep your reasoning concise and direct—no more than three to four sentences. Ensure that you close the reasoning properly with </think>.'
-        #     input_text += ' After reasoning, you MUST provide the final answer inside <answer> and </answer> without any further explanation. For example: <answer> Beijing </answer>.'
-
-        # input_text += f' Question: {user_quesry}'
-
-        # input_text = ''
-        # # input_text += 'Answer the given question.'
-        # input_text += 'You are a multi-step reasoner for the question-answering task. Your task is to generate ONLY one step forward.'
-        # input_text += 'You MUST first conduct one step reasoning inside <think> and </think>.' 
-        # input_text += 'Keep your reasoning concise and direct — no more than couple of sentences. Make sure to properly close the reasoning with </think>. '
-        # if curr_node == 'think_search':
-        #     input_text += " You are also equipped with a search engine and may use it as many times as needed." 
-        #     input_text += " If you are uncertain or lack confidence in the information, you are encouraged to retrieve external knowledge."
-        #     input_text += ' So, the reasoning should be concluded with a search query to find information helpful for answering the query.' # TODO 
-        #     input_text += ' After reasoning, you MUST call a search engine by <search> query </search>.'
-        # elif curr_node == 'think_answer':
-        #     input_text += 'The reasoning should be concluded with a final answer for the user query.' # TODO
-        #     # input_text += 'During reasoning, try to use your memorized knowledge and all external information provided so far to conclude and find the answer. '
-        #     input_text += 'After reasoning, you MUST directly provide the answer inside <answer> and </answer> without detailed illustrations. For example, <answer> Beijing </answer>. '
-        
-        # input_text += f'Question: {user_quesry}'
-        
-        
-        # input_text = ''
-        # input_text += 'You are a multi-step reasoner for a question-answering task. '
-        # input_text += 'At each step, your ONLY job is to generate one step of reasoning and an associated output. '
-        # input_text += 'The reasoning MUST appear inside the tags <think> and </think>. '
-        # # input_text += 'Do NOT include anything outside the required tags. No explanations, no formatting, no additional comments.\n\n'
-        # # input_text += 'Keep your reasoning concise and direct — no more than couple of sentences. Make sure to properly close the reasoning with </think>. '
-        # if curr_node == 'think_search':
-        #     input_text += 'You are currently in the SEARCH stage.\n'
-        #     input_text += 'At this stage, you do NOT answer the question. Instead, reason about the next information needed to answer part of the question.\n'
-        #     input_text += 'You MAY use the search engine as many times as needed.\n'
-        #     input_text += 'Your output MUST follow *exactly* this format:\n'
-        #     input_text += '<think> one step of reasoning that leads to a search query </think>\n'
-        #     input_text += '<search> your search query here </search>\n'
-        #     input_text += 'Output ONLY these two tags and nothing else.\n'
-
-        # elif curr_node == 'think_answer':
-        #     input_text += 'You are currently in the ANSWER stage.\n'
-        #     input_text += 'At this stage, you MUST conclude the task and provide the final answer to the main question.\n'
-        #     input_text += 'Your output MUST follow *exactly* this format:\n'
-        #     input_text += '<think> one step of reasoning that leads to the answer </think>\n'
-        #     input_text += '<answer> your final answer here </answer>\n'
-        #     input_text += 'Output ONLY these two tags and nothing else.\n'
-        # input_text += f'\nQuestion: {user_quesry.strip()}'
-
-
-        # input_text = ''
-        # input_text += 'You are a multi-step reasoner for a question-answering task.\n'
-        # input_text += 'At each step, you must reason one step forward toward answering the question.\n'
-        # input_text += 'You have access to both your internal knowledge and a search engine.\n'
-        # input_text += 'Use your internal knowledge whenever possible. Use the search engine only when additional information is needed.\n'
-        # input_text += 'Your output must always begin with a concise reasoning step inside <think> and </think> tags.\n'
-        # input_text += 'Output NOTHING outside the required tags.\n\n'
-
-        # if curr_node == 'think_search':
-        #     input_text += 'You are in the SEARCH stage.\n'
-        #     input_text += 'Your goal is to reason about what needs to be known next — not to answer the full question yet.\n'
-        #     input_text += 'After reasoning, if retrieval is needed, output a search query inside <search> and </search> tags.\n'
-        #     input_text += 'If retrieval is not needed, still produce a plausible query that would help someone gather supporting information.\n'
-        #     input_text += 'You must ONLY output the following two tags and nothing else:\n'
-        #     input_text += '<think> your one-step reasoning here </think>\n'
-        #     input_text += '<search> your search query here </search>\n'
-
-        # elif curr_node == 'think_answer':
-        #     input_text += 'You are in the ANSWER stage.\n'
-        #     input_text += 'You may rely on both your internal knowledge and any previously retrieved information to answer the question.\n'
-        #     input_text += 'After reasoning, output the final answer inside <answer> and </answer> tags.\n'
-        #     input_text += 'You must ONLY output the following two tags and nothing else:\n'
-        #     input_text += '<think> your final reasoning leading to the answer </think>\n'
-        #     input_text += '<answer> your answer here </answer>\n'
-
-
-        # input_text = ''
-        # input_text += 'You are a multi-step reasoner in a question-answering task. '
-        # input_text += 'At each step, generate only one step of reasoning toward answering the question. '
-        # input_text += 'You may use both your internal knowledge and a search engine as needed. '
-        # input_text += 'If any retrieved documents are provided, they will be enclosed in <information> and </information> tags. '
-        # input_text += 'Treat <information> as read-only input — do NOT generate or modify anything inside <information> tags. '
-        # input_text += 'Always begin by writing your reasoning inside <think> and </think>. '
-        # input_text += 'Your output must contain ONLY the required tags. Do not include anything else.\n'
-
-        # if curr_node == 'think_search':
-        #     input_text += 'You are in the SEARCH stage. '
-        #     input_text += 'Your goal is to identify the next piece of information needed — not to answer the question yet. '
-        #     input_text += 'After reasoning, provide a helpful search query inside <search> and </search>. '
-        #     input_text += 'Output only the following tags, in this exact order:\n'
-        #     input_text += '<think> one step of reasoning </think>. '
-        #     input_text += '<search> search query </search>.'
-
-        # elif curr_node == 'think_answer':
-        #     input_text += 'You are in the ANSWER stage. '
-        #     input_text += 'Your goal is to answer the main question. '
-        #     input_text += 'Use internal knowledge or prior information as needed. '
-        #     input_text += 'After reasoning, provide the final answer inside <answer> and </answer>. '
-        #     input_text += 'Output only the following tags, in this exact order:\n'
-        #     input_text += '<think> final reasoning step </think>.'
-        #     input_text += '<answer> final answer </answer>.'
-
-        # input_text += f'\nQuestion: {user_quesry.strip()}'
-    
-    
-    
+        # Intruction    
         input_text = ''
         input_text += 'You are a multi-step reasoner in a question-answering task. '
         input_text += 'At each step, generate exactly one reasoning step toward answering the question.\n'
@@ -574,7 +457,6 @@ class Generator:
             input_text += 'Your output must include only these two tags in this exact order:\n'
             input_text += '<think> one step of reasoning </think>\n'
             input_text += '<search> search query </search>\n'
-
         elif curr_node == 'think_answer':
             input_text += 'You are in the ANSWER stage.\n'
             input_text += 'You may use the question, your internal knowledge, and any input from <information>.\n'
@@ -676,7 +558,6 @@ class Generator:
             
         return thinks, search_query, retrieved_docs
     
-    
     def generate_think_answer(self, solution_trace: Dict[int, Dict[str, str]]):
         qid = solution_trace[0]['qid']
         user_question = solution_trace[0]['user_question']
@@ -757,6 +638,9 @@ class Generator:
             answer_list.append(answer)
         
         answer_list_ = [most_likely_answer] if len(answer_list) == 0 else [ans for ans in answer_list if ans]
-        answer, value = self._get_most_likely_answer(user_query=user_question, output_list=answer_list_)
+        if len(answer_list_) > 0:
+            answer, value = self._get_most_likely_answer(user_query=user_question, output_list=answer_list_)
+        else:
+            value = 0.001
 
         return thinks, most_likely_answer, value

@@ -4,7 +4,7 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
-#SBATCH --time=1:00:00
+#SBATCH --time=2:00:00
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -15,7 +15,7 @@ module load Python/3.12.3-GCCcore-13.3.0
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 dataset="hotpotqa"
 subsec="test"
-fraction_of_data_to_use=0.2
+fraction_of_data_to_use=0.6
 retriever_model="bm25"
 run="run_7 (prompt_test)"
 

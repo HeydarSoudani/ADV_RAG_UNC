@@ -153,13 +153,13 @@ def mcts_discrimination(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='musique', choices=[
         'wikimultihopqa', 'hotpotqa', 'musique', 'iirc', 'multihop_rag',
         'nqgold', 'trivia', 'popqa',
         'factscore'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--retriever_model', type=str, default='bm25', choices=[
+    parser.add_argument('--retriever_model', type=str, default='rerank', choices=[
         'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt', 'mistral_e5' # intfloat/e5-mistral-7b-instruct -> from "Search-R1"
     ])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=0.2)
