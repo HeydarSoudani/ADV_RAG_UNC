@@ -2,17 +2,43 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
+import spacy
 import re
 import torch
 import random
 from typing import List, Dict, Tuple
 from transformers import AutoModelForCausalLM, AutoTokenizer
+# import TruthTorchLM as ttlm
 
 from utils.general_utils import read_txt
 from utils.adaptive_utils import fix_tokenizer_chat
 from src_adaptive.templetes import SYSTEM_PROMPT_SHORTFORM
 from src_mcts import examplers
+
+nlp = spacy.load("en_core_web_sm")
+
+
+class Counter:
+    def __init__(self):
+        self.retrieve = 0
+        self.generate = 0
+        self.token = 0
+        self.sentence = 0
+
+    def add_generate(self, text, tokenizer):
+        self.generate += 1
+        ids = tokenizer(text, return_tensors="pt")['input_ids'][0].tolist()
+        self.token += len(ids)
+        sentences = [sent.text for sent in nlp(text).sents]
+        self.sentence += len(sentences)
+
+    def calc(self, other_counter):
+        return {
+            "retrieve_count": self.retrieve - other_counter.retrieve, 
+            "generate_count": self.generate - other_counter.generate,
+            "token_count": self.token - other_counter.token, 
+            "sentence_count": self.sentence - other_counter.sentence 
+        }
 
 
 class Generator:
@@ -22,6 +48,35 @@ class Generator:
         self.args = args
         self.retriever = retriever
         self.evaluator = evaluator
+        self.counter = Counter()
+        
+        # ---
+        # White-box
+        # pt = ttlm.truth_methods.PTrue()
+        # cnf = ttlm.truth_methods.Confidence()
+        # pe = ttlm.truth_methods.Entropy(number_of_generations=args.mcts_num_last_votes)
+        # se = ttlm.truth_methods.SemanticEntropy()
+        # mars = ttlm.truth_methods.MARS()
+        # lars_co = ttlm.truth_methods.LARS(ue_type='confidence')
+        # sar = ttlm.truth_methods.SAR()
+        # # Black-box
+        # nums = ttlm.truth_methods.NumSemanticSetUncertainty()
+        # eigv = ttlm.truth_methods.SumEigenUncertainty()
+        # ecc = ttlm.truth_methods.EccentricityUncertainty()
+        # deg = ttlm.truth_methods.MatrixDegreeUncertainty()
+        # verb = ttlm.truth_methods.VerbalizedConfidence()
+        # inside = ttlm.truth_methods.Inside()
+        # kere = ttlm.truth_methods.KernelLanguageEntropy()
+    
+        # truth_methods_name = [
+        #     'Pt', 'Conf', 'PE', 'SE', 'MARS', 'SAR', 'LARS_Co', 'INS',
+        #     'NumS', 'EigV', 'ECC', 'Deg', 'Verb', 'KerE'
+        # ]
+        # self.truth_methods = [
+        #     pt, cnf, pe, se, mars, sar, lars_co, inside,
+        #     nums, eigv, ecc, deg, verb, kere
+        # ]
+        
         
         # --- Define model ------------
         self.generation_model = AutoModelForCausalLM.from_pretrained(
@@ -238,6 +293,29 @@ class Generator:
                 generated_texts.append(generated_text)
                 
         return generated_texts
+
+    def generate_with_confidence(self,
+        input_text,
+        max_new_tokens,
+        sys_prompt='You are a helpful assistant.',
+        num_return:int = 1,
+        temperature:float = 1.0,
+        do_sample:bool = False,
+    ):
+        messages = [
+            {'role': 'system', 'content': sys_prompt},
+            {'role': 'user', 'content': input_text}
+        ]
+        
+        output_with_conf = ttlm.generate_with_truth_value(
+            model=self.generation_model,
+            tokenizer=self.tokenizer,
+            messages=messages,
+            truth_methods=self.truth_methods,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature
+        )
+        print(output_with_conf)
 
     def _get_most_likely_answer(self, user_query: str, output_list: List[str]):
         assert len(output_list) > 0
@@ -496,11 +574,14 @@ class Generator:
         
         ### = Do generation
         input_prompt_text = self.get_prompt_text_v2('think_search', solution_trace)
-        initial_output = self.generate(input_prompt_text, max_new_tokens=self.args.max_new_token, num_return=1)[0]
+        initial_output = self.generate(input_prompt_text, max_new_tokens=self.args.max_new_token, num_return=1)[0]        
         # print('\n\n')
         # print(input_prompt_text)
         # print('\n-------')
         # print(initial_output)
+        if self.args.use_counter:
+            self.counter.add_generate(initial_output, self.tokenizer)
+        
         
         ### = Post-processing
         thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, initial_output, re.DOTALL)]))
@@ -552,6 +633,8 @@ class Generator:
         if search_query != '':
             retrieved_docs_, _, _ = self.retriever.retrieve([search_query], [qid], [], [])
             retrieved_docs = retrieved_docs_[0]
+            if self.args.use_counter:
+                self.counter.retrieve += 1
         else:
             retrieved_docs = []
             
@@ -570,7 +653,10 @@ class Generator:
             input_prompt_text,
             max_new_tokens=self.args.max_new_token,
             num_return=1
-        )[0]        
+        )[0] 
+        if self.args.use_counter:
+            self.counter.add_generate(initial_output, self.tokenizer)
+        # initial_output_with_conf = self.generate_with_confidence(input_prompt_text, max_new_tokens=self.args.max_new_token)       
         # print('\n\n')
         # print(input_prompt_text)
         # print('\n-------')

@@ -152,8 +152,8 @@ def mcts_discrimination(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--model_name_or_path', type=str, default='meta-llama/Llama-3.1-8B-Instruct')
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'wikimultihopqa', 'hotpotqa', 'musique', 'iirc', 'multihop_rag',
         'nqgold', 'trivia', 'popqa',
         'factscore'
@@ -173,6 +173,7 @@ if __name__ == "__main__":
     parser.add_argument('--run', type=str, default='run_7 (prompt_test)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
+    parser.add_argument('--use_counter', action='store_false')
     
     # MCTS ---
     parser.add_argument("--verbose", action="store_true", help="extra login")

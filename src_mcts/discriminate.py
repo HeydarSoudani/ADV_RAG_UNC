@@ -102,7 +102,7 @@ class Discriminator:
         return candidates
 
     def _filter_long(self, candidates: list[Candidate]) -> list[Candidate]:
-        candidates = [c for c in candidates if len(c.final_answer) <= 100]
+        candidates = [c for c in candidates if len(c.final_answer) <= 200]
         return candidates
 
     def _filter_reasoning_consistency(

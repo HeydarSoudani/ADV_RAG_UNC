@@ -37,6 +37,7 @@ if __name__ == "__main__":
     parser.add_argument('--run', type=str, default='run_7 (prompt_test)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
+    parser.add_argument('--use_counter', action='store_false')
     
     # MCTS ---
     parser.add_argument("--verbose", action="store_true", help="extra login")

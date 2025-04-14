@@ -4,7 +4,7 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
-#SBATCH --time=2:00:00
+#SBATCH --time=1:00:00
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -13,11 +13,13 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 ### === Set variables ==========================
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="hotpotqa"
+dataset="musique"
 subsec="test"
-fraction_of_data_to_use=0.6
-retriever_model="bm25"
-run="run_7 (prompt_test)"
+fraction_of_data_to_use=0.04
+retriever_model="rerank"
+num_rollouts=8
+max_depth_allowed=8
+run="run_1 (rollout_8)"
 
 srun python $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
     --model_name_or_path "$model_name_or_path" \
@@ -25,7 +27,10 @@ srun python $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
     --subsec "$subsec" \
     --fraction_of_data_to_use "$fraction_of_data_to_use" \
     --retriever_model "$retriever_model" \
-    --run "$run"
+    --num_rollouts "$num_rollouts" \
+    --max_depth_allowed "$max_depth_allowed" \
+    --run "$run" \
+    
     
 
 ### Datasets:

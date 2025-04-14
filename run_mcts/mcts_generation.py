@@ -47,10 +47,12 @@ def mcts_generation(args):
     print(f"Reasoning Steps:{dataset[sample_index]['reasoning_steps']}")
     print(f"Gold Context: \n{dataset[sample_index]['positive_ctxs'][0]}\n\n")
     
+    
     # === Model Definition ======================    
     retriever = BM25(args) if args.retriever_model == 'bm25' else Rerank(args) if args.retriever_model == 'rerank' else ""
     evaluator = Evaluator()
     node_generator = Generator(args, retriever, evaluator)
+    
     
     # === Generation =============================
     for i, data_item in enumerate(tqdm(dataset)):
@@ -124,6 +126,16 @@ def mcts_generation(args):
                     json.dump(js, f)
 
 
+    # === Save results ==========================
+    reuslts_dict = {
+        'Tokens': node_generator.counter.token / len(dataset),
+        'Sentences': node_generator.counter.sentence / len(dataset),
+        'Retrieves': node_generator.counter.retrieve / len(dataset)
+    }
+    with open(args.statistics_results_file, 'w') as file:
+        json.dump(reuslts_dict, file, indent=4)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
@@ -136,7 +148,7 @@ if __name__ == "__main__":
     parser.add_argument('--retriever_model', type=str, default='rerank', choices=[
         'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt', 'mistral_e5' # intfloat/e5-mistral-7b-instruct -> from "Search-R1"
     ])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.02)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.004)
     parser.add_argument('--fewshot', type=int, default=6)
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
@@ -144,9 +156,10 @@ if __name__ == "__main__":
     parser.add_argument('--retrieve_max_query_length', type=int, default=64)
     parser.add_argument('--max_new_token', type=int, default=512)
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_7 (prompt_test)')
+    parser.add_argument('--run', type=str, default='run_7 (counter_test)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
+    parser.add_argument('--use_counter', action='store_false')
     
     # MCTS ---
     parser.add_argument("--verbose", action="store_true", help="extra login")
@@ -184,6 +197,7 @@ if __name__ == "__main__":
     args.generation_trees_results_dir = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/generation_trees'
     args.discriminate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/discriminate_results.jsonl"
     args.evaluate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/evaluate_results.jsonl"
+    args.statistics_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/statistics_results.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
     
     # === Prompt files =============
