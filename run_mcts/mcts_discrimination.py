@@ -29,13 +29,14 @@ def mcts_discrimination(args):
         Model name:  {args.model_name_or_path}
         Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
         Retriever:   {args.retriever_model}
+        Rollouts:    {args.num_rollouts}
         Seed:        {args.seed}
+        Run:         {args.run}
     """.replace('        ', ''))
     
     # === Output files ==========================
     entries = os.listdir(args.generation_trees_results_dir)
     query_ids = [entry for entry in entries if os.path.isdir(os.path.join(args.generation_trees_results_dir, entry))]
-    
     
     # === Model Definition ======================  
     evaluator = Evaluator()
@@ -106,6 +107,7 @@ def mcts_discrimination(args):
             # for can in all_candidates:
             #     print(can.to_dict())
             
+            # print(all_candidates)
             answer2candidates, answer2confidence, _ = group_candidates_by_answer(
                 all_candidates, evaluator, args.rc_criteria
             )
@@ -211,6 +213,7 @@ if __name__ == "__main__":
     args.generation_trees_results_dir = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/generation_trees'
     args.discriminate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/discriminate_results.jsonl"
     args.evaluate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/evaluate_results.jsonl"
+    args.statistics_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/statistics_results.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
     
     # === Prompt files =============

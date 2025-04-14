@@ -29,7 +29,9 @@ def mcts_generation(args):
         Model name:  {args.model_name_or_path}
         Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
         Retriever:   {args.retriever_model}
+        Rollouts:    {args.num_rollouts}
         Seed:        {args.seed}
+        Run:         {args.run}
     """.replace('        ', ''))
     
     # === Output files ==========================
