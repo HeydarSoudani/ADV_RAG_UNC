@@ -49,35 +49,7 @@ class Generator:
         self.retriever = retriever
         self.evaluator = evaluator
         self.counter = Counter()
-        
-        # ---
-        # White-box
-        # pt = ttlm.truth_methods.PTrue()
-        # cnf = ttlm.truth_methods.Confidence()
-        # pe = ttlm.truth_methods.Entropy(number_of_generations=args.mcts_num_last_votes)
-        # se = ttlm.truth_methods.SemanticEntropy()
-        # mars = ttlm.truth_methods.MARS()
-        # lars_co = ttlm.truth_methods.LARS(ue_type='confidence')
-        # sar = ttlm.truth_methods.SAR()
-        # # Black-box
-        # nums = ttlm.truth_methods.NumSemanticSetUncertainty()
-        # eigv = ttlm.truth_methods.SumEigenUncertainty()
-        # ecc = ttlm.truth_methods.EccentricityUncertainty()
-        # deg = ttlm.truth_methods.MatrixDegreeUncertainty()
-        # verb = ttlm.truth_methods.VerbalizedConfidence()
-        # inside = ttlm.truth_methods.Inside()
-        # kere = ttlm.truth_methods.KernelLanguageEntropy()
-    
-        # truth_methods_name = [
-        #     'Pt', 'Conf', 'PE', 'SE', 'MARS', 'SAR', 'LARS_Co', 'INS',
-        #     'NumS', 'EigV', 'ECC', 'Deg', 'Verb', 'KerE'
-        # ]
-        # self.truth_methods = [
-        #     pt, cnf, pe, se, mars, sar, lars_co, inside,
-        #     nums, eigv, ecc, deg, verb, kere
-        # ]
-        
-        
+                
         # --- Define model ------------
         self.generation_model = AutoModelForCausalLM.from_pretrained(
             args.model_name_or_path,
@@ -175,29 +147,6 @@ class Generator:
                 
         return generated_texts
 
-    def generate_with_confidence(self,
-        input_text,
-        max_new_tokens,
-        sys_prompt='You are a helpful assistant.',
-        num_return:int = 1,
-        temperature:float = 1.0,
-        do_sample:bool = False,
-    ):
-        messages = [
-            {'role': 'system', 'content': sys_prompt},
-            {'role': 'user', 'content': input_text}
-        ]
-        
-        output_with_conf = ttlm.generate_with_truth_value(
-            model=self.generation_model,
-            tokenizer=self.tokenizer,
-            messages=messages,
-            truth_methods=self.truth_methods,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature
-        )
-        print(output_with_conf)
-    
     def _get_most_likely_answer(self, user_query: str, output_list: List[str]):
         assert len(output_list) > 0
 
@@ -247,7 +196,7 @@ class Generator:
     def get_prompt_text(self, curr_node, solution_trace: Dict[int, Dict[str, str]]):
         user_quesry = solution_trace[0]['user_question']
         
-        # Intruction    
+        # Instruction    
         input_text = ''
         input_text += 'You are a multi-step reasoner in a question-answering task. '
         input_text += 'At each step, generate exactly one reasoning step toward answering the question.\n'
@@ -378,13 +327,10 @@ class Generator:
         
         ### = Do generation
         input_prompt_text = self.get_prompt_text('think_answer', solution_trace)
-        initial_output = self.generate(
-            input_prompt_text,
-            max_new_tokens=self.args.max_new_token,
-            num_return=1
-        )[0] 
+        initial_output = self.generate(input_prompt_text, max_new_tokens=self.args.max_new_token, num_return=1)[0] 
         if self.args.use_counter:
             self.counter.add_generate(initial_output, self.tokenizer)
+        
         # initial_output_with_conf = self.generate_with_confidence(input_prompt_text, max_new_tokens=self.args.max_new_token)       
         # print('\n\n')
         # print(input_prompt_text)
@@ -392,8 +338,42 @@ class Generator:
         # print(initial_output)
         
         ### = Post-processing
-        thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, initial_output, re.DOTALL)]))
-        answer_match = re.search(answer_pattern, initial_output, re.DOTALL)
+        think, most_likely_answer = self.think_answer_postprocessing(solution_trace, input_prompt_text, initial_output)
+        
+        # print(most_likely_answer)
+        ### = Generate more 
+        input_prompt_text_ = input_prompt_text + f'<think> {think} </think>\n'
+        # input_prompt_text_unc = self.get_prompt_text_unc(solution_trace, think)
+        output_list = self.generate(
+            input_prompt_text,
+            max_new_tokens=self.args.max_new_token,
+            num_return=self.mcts_num_last_votes,
+            temperature=0.7,
+            do_sample=True
+        )
+        # print(output_list)
+        answer_list = []
+        for output in output_list:
+            answer_match = re.search(answer_pattern, output, re.DOTALL)
+            answer = answer_match.group(1).strip() if answer_match else ''
+            answer_list.append(answer)
+        
+        answer_list_ = [most_likely_answer] if len(answer_list) == 0 else [ans for ans in answer_list if ans]
+        # print(answer_list_)
+        if len(answer_list_) > 0:
+            answer, value = self._get_most_likely_answer(user_query=user_question, output_list=answer_list_)
+        else:
+            value = 0.001
+
+        return think, most_likely_answer, value
+
+    def think_answer_postprocessing(self, solution_trace, input_prompt_text, output):
+        qid = solution_trace[0]['qid']
+        think_pattern = r'<think>(.*?)</think>'
+        answer_pattern = r'<answer>(.*?)</answer>'
+        
+        thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, output, re.DOTALL)]))
+        answer_match = re.search(answer_pattern, output, re.DOTALL)
         most_likely_answer = answer_match.group(1).strip() if answer_match else ''
         
         ### = Check if regenerate needed
@@ -438,28 +418,7 @@ class Generator:
             else:
                 print(f"Failed to generate the 'most-likely answer' after all retries for query {qid}")
         
-        ### = Generate more 
-        output_list = self.generate(
-            input_prompt_text, #input_prompt_text_,
-            max_new_tokens=self.args.max_new_token,
-            num_return=self.mcts_num_last_votes,
-            temperature=0.7,
-            do_sample=True
-        )
-        answer_list = []
-        for output in output_list:
-            answer_match = re.search(answer_pattern, output, re.DOTALL)
-            answer = answer_match.group(1).strip() if answer_match else ''
-            answer_list.append(answer)
-        
-        answer_list_ = [most_likely_answer] if len(answer_list) == 0 else [ans for ans in answer_list if ans]
-        if len(answer_list_) > 0:
-            answer, value = self._get_most_likely_answer(user_query=user_question, output_list=answer_list_)
-        else:
-            value = 0.001
-
-        return thinks, most_likely_answer, value
-
+        return thinks, most_likely_answer
 
 
 

@@ -52,6 +52,7 @@ def mcts_discrimination(args):
     
     with open(args.discriminate_results_file, 'w', encoding='utf-8') as outfile:
         for qid in query_ids:
+            print(qid)
             final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
             
             trace_js = read_jsonl(final_solutions_file)  
@@ -154,7 +155,7 @@ def mcts_discrimination(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name_or_path', type=str, default='meta-llama/Llama-3.1-8B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'wikimultihopqa', 'hotpotqa', 'musique', 'iirc', 'multihop_rag',
         'nqgold', 'trivia', 'popqa',
@@ -172,7 +173,7 @@ if __name__ == "__main__":
     parser.add_argument('--retrieve_max_query_length', type=int, default=64)
     parser.add_argument('--max_new_token', type=int, default=512)
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_7 (prompt_test)')
+    parser.add_argument('--run', type=str, default='run_1 (rollout_4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')

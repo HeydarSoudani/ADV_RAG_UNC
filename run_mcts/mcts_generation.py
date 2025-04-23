@@ -33,9 +33,6 @@ def mcts_generation(args):
         Seed:        {args.seed}
         Run:         {args.run}
     """.replace('        ', ''))
-    
-    # === Output files ==========================
-    generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
 
     # === Dataset ===============================
     dataset_ = BaseDataset(args.dataset, args.subsec, args.fraction_of_data_to_use)
@@ -57,6 +54,7 @@ def mcts_generation(args):
     
     
     # === Generation =============================
+    generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
     for i, data_item in enumerate(tqdm(dataset)):
         qid = data_item["qid"]
         user_query = data_item["question"]
@@ -141,7 +139,7 @@ def mcts_generation(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'wikimultihopqa', 'hotpotqa', 'musique', 'iirc', 'multihop_rag',
         'nqgold', 'trivia', 'popqa',
         'factscore'
@@ -150,7 +148,7 @@ if __name__ == "__main__":
     parser.add_argument('--retriever_model', type=str, default='rerank', choices=[
         'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt', 'mistral_e5' # intfloat/e5-mistral-7b-instruct -> from "Search-R1"
     ])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.004)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument('--fewshot', type=int, default=6)
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
@@ -158,7 +156,7 @@ if __name__ == "__main__":
     parser.add_argument('--retrieve_max_query_length', type=int, default=64)
     parser.add_argument('--max_new_token', type=int, default=512)
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_7 (counter_test)')
+    parser.add_argument('--run', type=str, default='run_1 (rollout_4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -172,7 +170,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_rollouts", type=int, default=4)
     parser.add_argument("--max_depth_allowed", type=int, default=4)
     parser.add_argument("--num_votes", type=int, default=1)
-    parser.add_argument("--mcts_num_last_votes", type=int, default=5)
+    parser.add_argument("--mcts_num_last_votes", type=int, default=10)
     parser.add_argument("--enable_potential_score", action="store_true")
     parser.add_argument("--num_subquestions", type=int, default=3, help="Number of trials for proposing the next subquestion")
     

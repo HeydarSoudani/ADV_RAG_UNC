@@ -27,8 +27,7 @@ class PositiveRet:
             docids.append(docids_)
             scores.append(scores_)
         return docs, docids, scores
-        
-        
+     
 class NegativeRet:
     def __init__(self, args):
         self.args = args
@@ -48,7 +47,6 @@ class NegativeRet:
             docids.append(docids_)
             scores.append(scores_)
         return docs, docids, scores
-
 
 class BM25:
     def __init__(self, args):
@@ -88,7 +86,7 @@ class Rerank:
         self.searcher = LuceneSearcher(index_dir)
         self.searcher.set_bm25(args.bm25_k1, args.bm25_b)
         
-        rerank_model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        rerank_model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2" # cross-encoder/ms-marco-MiniLM-L12-v2
         self.cross_encoder = CrossEncoder(rerank_model_name, max_length=args.retrieve_max_query_length)
     
     def rerank_documents(self, query, docids, documents):
@@ -126,3 +124,17 @@ class Rerank:
             scores.append(scores_)
         
         return docs, docids, scores
+    
+
+# TODO
+class Contriever:
+    pass
+
+
+
+# TODO
+
+# intfloat/e5-base-v2
+class E5:
+    pass
+

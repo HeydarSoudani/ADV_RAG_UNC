@@ -12,6 +12,7 @@ from utils.general_utils import set_seed
 from mcts_generation import mcts_generation
 from mcts_discrimination import mcts_discrimination
 from mcts_evaluation import mcts_evaluation
+from mcts_uncertainty_evaluation import mcts_uncertainty_evaluation
 
 
 if __name__ == "__main__":
@@ -97,5 +98,6 @@ if __name__ == "__main__":
     mcts_generation(args)
     mcts_discrimination(args)
     mcts_evaluation(args)
+    # mcts_uncertainty_evaluation(args)
     
 

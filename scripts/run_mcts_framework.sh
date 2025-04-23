@@ -4,7 +4,7 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
-#SBATCH --time=5:00:00
+#SBATCH --time=3:30:00
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -13,13 +13,13 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 ### === Set variables ==========================
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="musique"
+dataset="hotpotqa"
 subsec="test"
-fraction_of_data_to_use=0.6
+fraction_of_data_to_use=1.0
 retriever_model="rerank"
-num_rollouts=8
-max_depth_allowed=8
-run="run_1 (rollout_8)"
+num_rollouts=4
+max_depth_allowed=4
+run="run_1 (rollout_4)"
 
 srun python $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
     --model_name_or_path "$model_name_or_path" \
@@ -57,6 +57,7 @@ srun python $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
     # Qwen2.5:    "Qwen/Qwen2.5-7B-Instruct"
     # Gemma2:     "google/gemma-2-9b-it"
     # Phi4 (14B): "microsoft/phi-4"
+    # Falcon3:    "tiiuae/Falcon3-10B-Instruct"
     # Mistral:    "mistralai/Mistral-7B-Instruct-v0.3"
     # Vicuna:     "lmsys/vicuna-13b-v1.5"
 

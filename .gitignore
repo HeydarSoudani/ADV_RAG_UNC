@@ -121,9 +121,11 @@ ckpts
 
 data/processed_files/
 data/row_files/
+data/search_r1_files/
 script_logging/
 run_output/
 test/
 wandb/
+
 
 
