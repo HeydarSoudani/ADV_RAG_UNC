@@ -14,7 +14,7 @@ import transformers
 from tqdm import tqdm, trange
 
 from utils.general_utils import set_seed
-from run_searchr1.retrieval_local import BM25Retriever
+from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from correctness import em_score, f1_score
 
 
@@ -95,7 +95,7 @@ def searchr1_inference(args):
     print(f"""
         Model name:  {args.model_name_or_path}
         Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
-        Retriever:   {args.retrieval_method}
+        Retriever:   {args.retriever_name}
         Seed:        {args.seed}
         Run:         {args.run}
     """.replace('        ', ''))
@@ -127,7 +127,14 @@ def searchr1_inference(args):
 
 
     # === Static Retriever ===================== 
-    retriever = BM25Retriever(args) if args.retrieval_method == 'bm25' else "" # else Rerank(args) if args.retriever_model == 'rerank'
+    if args.retriever_name == 'bm25':
+        retriever = BM25Retriever(args)  
+    elif args.retriever_name == 'contriever':
+        retriever = ContrieverRetriever(args)
+    elif args.retriever_name == 'rerank':
+        retriever = RerankRetriever(args)
+    elif args.retriever_name in ['e5', 'bge']:
+        retriever = DenseRetriever(args)
 
 
     # === Prompt ===============================
@@ -239,24 +246,41 @@ def searchr1_inference(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    # Model
     parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    parser.add_argument('--max_new_token', type=int, default=512)
+    
+    # Dataset
     parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--retrieval_method', type=str, default='bm25', choices=[
-        'bm25', 'contriever', 'rerank', 'e5' # intfloat/e5-mistral-7b-instruct -> from "Search-R1"
-    ])
-    parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25')
-    parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
-    
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument('--fewshot', type=int, default=6)
+    
+    # Retriever
+    parser.add_argument('--retriever_name', type=str, default='rerank', choices=[
+        'bm25', 'contriever', 'rerank', 'e5' # intfloat/e5-mistral-7b-instruct -> from "Search-R1"
+    ])
+    parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
+    parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
+        'data/search_r1_files/bm25',          # For BM25 & Rerank
+        'data/search_r1_files/e5_Flat.index', # For E5
+    ])
+    parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L12-v2", choices=[
+        "intfloat/e5-base-v2" # For E5
+        "cross-encoder/ms-marco-MiniLM-L12-v2" # For Rerank | cross-encoder/ms-marco-MiniLM-L-6-v2
+    ])
+    parser.add_argument('--retrieval_topk', type=int, default=3)
+    parser.add_argument('--faiss_gpu', action='store_false', help='Use GPU for computation')
+    parser.add_argument('--retrieval_pooling_method', type=str, default="mean")
+    parser.add_argument('--retrieval_query_max_length', type=int, default=256)
+    parser.add_argument('--retrieval_use_fp16', action='store_false', help='')
+    parser.add_argument('--retrieval_batch_size', type=int, default=512)
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
-    parser.add_argument('--retrieval_topk', type=int, default=3)
-    parser.add_argument('--retrieve_max_query_length', type=int, default=64)
-    parser.add_argument('--max_new_token', type=int, default=512)
+    
+    # Others
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--run', type=str, default='run_4 (search_r1)')
     parser.add_argument("--seed", type=int, default=10)
@@ -266,7 +290,7 @@ if __name__ == "__main__":
     # === Files ====================
     args.output_dir = f"run_output/{args.run}" 
     model_ = args.model_name_or_path.split('/')[-1]
-    output_dir = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retrieval_method}"
+    output_dir = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     args.inference_results_file = f"{output_dir}/inference_results.jsonl"
     args.path_results_file = f"{output_dir}/path_results.jsonl"
     os.makedirs(output_dir, exist_ok=True)
