@@ -7,14 +7,14 @@ parser.add_argument("--save_path", type=str, required=True, help="Local director
     
 args = parser.parse_args()
 
-repo_id = "PeterJinGo/wiki-18-e5-index"
-for file in ["part_aa", "part_ab"]:
-    hf_hub_download(
-        repo_id=repo_id,
-        filename=file,  # e.g., "e5_Flat.index"
-        repo_type="dataset",
-        local_dir=args.save_path,
-    )
+# repo_id = "PeterJinGo/wiki-18-e5-index"
+# for file in ["part_aa", "part_ab"]:
+#     hf_hub_download(
+#         repo_id=repo_id,
+#         filename=file,  # e.g., "e5_Flat.index"
+#         repo_type="dataset",
+#         local_dir=args.save_path,
+#     )
 
 repo_id = "PeterJinGo/wiki-18-corpus"
 hf_hub_download(

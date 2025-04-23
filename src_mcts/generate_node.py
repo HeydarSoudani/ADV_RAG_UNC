@@ -43,7 +43,6 @@ class Counter:
 
 class Generator:
     """Generator generates children nodes"""
-
     def __init__(self, args, retriever, evaluator) -> None:
         self.args = args
         self.retriever = retriever
@@ -58,9 +57,10 @@ class Generator:
         )
         self.tokenizer = AutoTokenizer.from_pretrained(
             args.model_name_or_path,
-            use_fast=False
+            # use_fast=False
         )
         self.eos_token_ids = self.generation_model.config.eos_token_id
+        print(self.eos_token_ids)
         
         self.num_subquestions = args.num_subquestions
         self.num_votes = args.num_votes

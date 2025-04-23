@@ -6,12 +6,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import json
 import torch
 import argparse
+import datasets
 from tqdm import tqdm, trange
 
 from utils.general_utils import set_seed
+from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from src_adaptive.dataset import BaseDataset
 
-from src_adaptive.retrieve import BM25, Rerank
+# from src_adaptive.retrieve import BM25, Rerank
 from src_mcts.evaluate import Evaluator
 from src_mcts.generate_node import Generator
 from src_mcts.MCTS_backbone import MCTS_Searcher
@@ -28,38 +30,61 @@ def mcts_generation(args):
     print(f"""
         Model name:  {args.model_name_or_path}
         Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
-        Retriever:   {args.retriever_model}
+        Retriever:   {args.retriever_name}
         Rollouts:    {args.num_rollouts}
         Seed:        {args.seed}
         Run:         {args.run}
     """.replace('        ', ''))
 
     # === Dataset ===============================
-    dataset_ = BaseDataset(args.dataset, args.subsec, args.fraction_of_data_to_use)
-    dataset = dataset_.dataset
+    # dataset_ = BaseDataset(args.dataset, args.subsec, args.fraction_of_data_to_use)
+    # dataset = dataset_.dataset
+    # sample_index = 0
+    # print(f"Dataset example {sample_index}:")
+    # print(f"Id:             {dataset[sample_index]['qid']}")
+    # print(f"Question:       {dataset[sample_index]['question']}")
+    # print(f"Answers:        {dataset[sample_index]['ground_truths']}")
+    # print(f"Reasoning Steps:{dataset[sample_index]['reasoning_steps']}")
+    # print(f"Gold Context: \n{dataset[sample_index]['positive_ctxs'][0]}\n\n")
+    dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', args.dataset)
+    if 'test' in dataset:
+        print(f'Using the {args.dataset} test dataset...')
+        test_dataset = dataset['test']
+    elif 'dev' in dataset:
+        print(f'Using the {args.dataset} dev dataset...')
+        test_dataset = dataset['dev']
     
     sample_index = 0
     print(f"Dataset example {sample_index}:")
-    print(f"Id:             {dataset[sample_index]['qid']}")
-    print(f"Question:       {dataset[sample_index]['question']}")
-    print(f"Answers:        {dataset[sample_index]['ground_truths']}")
-    print(f"Reasoning Steps:{dataset[sample_index]['reasoning_steps']}")
-    print(f"Gold Context: \n{dataset[sample_index]['positive_ctxs'][0]}\n\n")
+    print(f"Id:             {test_dataset[sample_index]['id']}")
+    print(f"Question:       {test_dataset[sample_index]['question']}")
+    print(f"Answers:        {test_dataset[sample_index]['golden_answers']}")
     
+    
+    # === Static Retriever ===================== 
+    if args.retriever_name == 'bm25':
+        retriever = BM25Retriever(args)  
+    elif args.retriever_name == 'contriever':
+        retriever = ContrieverRetriever(args)
+    elif args.retriever_name == 'rerank':
+        retriever = RerankRetriever(args)
+    elif args.retriever_name in ['e5', 'bge']:
+        retriever = DenseRetriever(args)
     
     # === Model Definition ======================    
-    retriever = BM25(args) if args.retriever_model == 'bm25' else Rerank(args) if args.retriever_model == 'rerank' else ""
     evaluator = Evaluator()
     node_generator = Generator(args, retriever, evaluator)
     
     
     # === Generation =============================
     generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
-    for i, data_item in enumerate(tqdm(dataset)):
-        qid = data_item["qid"]
-        user_query = data_item["question"]
-        gt_answer = data_item["ground_truths"]
-        gt_reasoning_steps = data_item["reasoning_steps"]
+    for i, sample in enumerate(tqdm(test_dataset)):
+        if i == 5:
+            break
+        qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
+        question = question.strip()
+        if question[-1] != '?':
+            question += '?'
         
         if qid in generated_qids:
             print(f"The MCTS for query {qid} has been already generated")
@@ -81,9 +106,9 @@ def mcts_generation(args):
                 verbose=args.verbose,
                 generator=node_generator,
                 question_id=qid,
-                user_question=user_query,
-                gt_answer=gt_answer,
-                gt_reasoning_steps=gt_reasoning_steps,
+                user_question=question,
+                gt_answer=gt_answers,
+                gt_reasoning_steps=[],
                 max_depth_allowed=args.max_depth_allowed,
                 enable_potential_score=args.enable_potential_score,
             )

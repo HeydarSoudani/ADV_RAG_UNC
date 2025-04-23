@@ -259,8 +259,8 @@ if __name__ == "__main__":
     parser.add_argument('--fewshot', type=int, default=6)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='rerank', choices=[
-        'bm25', 'contriever', 'rerank', 'e5' # intfloat/e5-mistral-7b-instruct -> from "Search-R1"
+    parser.add_argument('--retriever_name', type=str, default='bm25', choices=[
+        'bm25', 'contriever', 'rerank', 'e5'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
     parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
