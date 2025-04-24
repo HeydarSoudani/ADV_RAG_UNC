@@ -2,14 +2,17 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-import spacy
 import re
+import spacy
 import torch
 import random
+import transformers
 from typing import List, Dict, Tuple
 from transformers import AutoModelForCausalLM, AutoTokenizer
 # import TruthTorchLM as ttlm
 
+
+from run_searchr1.inference import get_think, get_query, get_answer, _passages2string, StopOnSequence
 from utils.general_utils import read_txt
 from utils.adaptive_utils import fix_tokenizer_chat
 from src_adaptive.templetes import SYSTEM_PROMPT_SHORTFORM
@@ -60,7 +63,6 @@ class Generator:
             # use_fast=False
         )
         self.eos_token_ids = self.generation_model.config.eos_token_id
-        print(self.eos_token_ids)
         
         self.num_subquestions = args.num_subquestions
         self.num_votes = args.num_votes
@@ -79,8 +81,10 @@ class Generator:
         #     raise ValueError(f"The dataset '{args.dataset}' does not exist in the 'examplers' module.")
         
         # EoS tokens
-        self.stop_tokens_direct_answer = ['\n</Answer>']
-        self.stop_tokens_query_decomposition = ['\n4.', '\n</Subquestions>']
+        search_target_sequences = ["</search>", " </search>", "</search>\n", " </search>\n", "</search>\n\n", " </search>\n\n"]
+        answer_target_sequences = ["</answer>", " </answer>", "</answer>\n", " </answer>\n", "</answer>\n\n", " </answer>\n\n"]
+        self.search_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(search_target_sequences, self.tokenizer)])
+        self.answer_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(answer_target_sequences, self.tokenizer)])
 
     def generate(self,
         input_text,
@@ -147,6 +151,42 @@ class Generator:
                 
         return generated_texts
 
+    def generate_(self,
+        input_text,
+        stopping_criteria,
+        max_new_tokens=1024,
+        num_return:int = 1,
+        temperature:float = 1.0,
+        do_sample:bool = False
+    ):
+        if self.tokenizer.chat_template:
+            input_prompt = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": input_text}],
+                add_generation_prompt=True,
+                tokenize=False
+            )
+        
+        input_ids = self.tokenizer.encode(input_prompt, return_tensors='pt').to(self.generation_model.device)
+        attention_mask = torch.ones_like(input_ids)
+        
+        generated_texts = []
+        for i in range(num_return):
+            with torch.no_grad():
+                outputs = self.generation_model.generate(
+                    input_ids,
+                    attention_mask=attention_mask,
+                    max_new_tokens=max_new_tokens,
+                    stopping_criteria=stopping_criteria,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    do_sample=True,
+                    temperature=0.7
+                )
+                generated_tokens = outputs[0][input_ids.shape[1]:]
+                output_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                generated_texts.append(output_text)
+        
+        return generated_texts
+
     def _get_most_likely_answer(self, user_query: str, output_list: List[str]):
         assert len(output_list) > 0
 
@@ -194,38 +234,73 @@ class Generator:
         return most_confident_answer, confidence
     
     def get_prompt_text(self, curr_node, solution_trace: Dict[int, Dict[str, str]]):
-        user_quesry = solution_trace[0]['user_question']
+        user_query = solution_trace[0]['user_question']
         
-        # Instruction    
+        # Instruction
+        # === V1
+        # input_text = ''
+        # input_text += 'You are a multi-step reasoner in a question-answering task. '
+        # input_text += 'At each step, generate exactly one reasoning step toward answering the question.\n'
+        # input_text += 'You may use your internal knowledge or retrieved information if needed.\n'
+        # input_text += 'Retrieved documents, if any, will be provided inside <information> and </information> tags.\n'
+        # input_text += 'Treat <information> as read-only input. NEVER generate <information> tags yourself.\n'
+        # input_text += 'All reasoning must be enclosed in ONE and ONLY ONE pair of <think> and </think> tags.\n'
+        # # input_text += 'Do NOT generate multiple <think> tags. Do NOT repeat or summarize information.\n'
+        # input_text += 'Your output must contain ONLY the required tags. No commentary, formatting, or extra output is allowed.\n\n'
+
+        # if curr_node == 'think_search':
+        #     input_text += 'You are in the SEARCH stage.\n'
+        #     input_text += 'Your goal is to reason about what information is needed next — not to answer the question.\n'
+        #     input_text += 'After reasoning, provide a search query inside one <search> and </search> tag.\n'
+        #     input_text += 'Your output must include only these two tags in this exact order:\n'
+        #     input_text += '<think> one complete reasoning step leading to a search query </think>\n'
+        #     input_text += '<search> search query </search>\n'
+        # elif curr_node == 'think_answer':
+        #     input_text += 'You are in the ANSWER stage.\n'
+        #     input_text += 'You may use the question, your internal knowledge, and any input from <information>.\n'
+        #     # input_text += 'You MUST generate exactly ONE reasoning step in a single <think> block.\n'
+        #     # input_text += 'Do NOT generate multiple reasoning steps or multiple <think> tags.\n'
+        #     input_text += 'Do NOT generate any <information> tags.\n'
+        #     input_text += 'After the reasoning, output the final answer inside a single <answer> tag.\n'
+        #     input_text += 'Your output must include only these two tags in this exact order:\n'
+        #     input_text += '<think> one complete reasoning step leading to the final answer </think>\n'
+        #     input_text += '<answer> final answer </answer>\n'
+
+        # input_text += f'\nQuestion: {user_query.strip()}\n'
+
+
+
+        # === V2
         input_text = ''
         input_text += 'You are a multi-step reasoner in a question-answering task. '
+        input_text += 'Your overall task is to answer the question through a series of intermediate reasoning steps.\n'
         input_text += 'At each step, generate exactly one reasoning step toward answering the question.\n'
         input_text += 'You may use your internal knowledge or retrieved information if needed.\n'
         input_text += 'Retrieved documents, if any, will be provided inside <information> and </information> tags.\n'
-        input_text += 'Treat <information> as read-only input. NEVER generate <information> tags yourself.\n'
+        input_text += 'Treat <information> as read-only input. NEVER generate or alter <information> tags yourself.\n'
         input_text += 'All reasoning must be enclosed in ONE and ONLY ONE pair of <think> and </think> tags.\n'
-        input_text += 'Do NOT generate multiple <think> tags. Do NOT repeat or summarize information.\n'
-        input_text += 'Your output must contain ONLY the required tags. No commentary, formatting, or extra output is allowed.\n\n'
+        input_text += 'NEVER include anything outside the required tags. DO NOT add explanations, introductions, or extra formatting.\n'
+        input_text += 'Your output must not contain anything else beyond what is explicitly required.\n\n'
 
         if curr_node == 'think_search':
             input_text += 'You are in the SEARCH stage.\n'
-            input_text += 'Your goal is to reason about what information is needed next — not to answer the question.\n'
-            input_text += 'After reasoning, provide a search query inside one <search> and </search> tag.\n'
-            input_text += 'Your output must include only these two tags in this exact order:\n'
-            input_text += '<think> one step of reasoning </think>\n'
+            input_text += 'Your goal is to identify what specific information is missing and required to move closer to the answer.\n'
+            input_text += 'DO NOT attempt to answer the question yet.\n'
+            input_text += 'The search query should be precise and focused.\n'
+            input_text += 'Only include the following tags in this exact order:\n'
+            input_text += '<think> one complete reasoning step leading to a search query </think>\n'
             input_text += '<search> search query </search>\n'
         elif curr_node == 'think_answer':
             input_text += 'You are in the ANSWER stage.\n'
-            input_text += 'You may use the question, your internal knowledge, and any input from <information>.\n'
-            input_text += 'You MUST generate exactly ONE reasoning step in a single <think> block.\n'
-            input_text += 'Do NOT generate multiple reasoning steps or multiple <think> tags.\n'
-            input_text += 'Do NOT generate any <information> tags.\n'
-            input_text += 'After the reasoning, output the final answer inside a single <answer> tag.\n'
-            input_text += 'Your output must include only these two tags in this exact order:\n'
+            input_text += 'Use your internal knowledge and any available <information> content to reason toward the answer.\n'
+            input_text += 'Do NOT generate or modify <information> tags in your output.\n'
+            input_text += 'Ensure your reasoning is directly connected to the provided information and leads logically to the final answer.\n'
+            input_text += 'Only include the following tags in this exact order:\n'
             input_text += '<think> one complete reasoning step leading to the final answer </think>\n'
             input_text += '<answer> final answer </answer>\n'
 
-        input_text += f'\nQuestion: {user_quesry.strip()}'
+        input_text += f'\nQuestion: {user_query.strip()}\n'
+
 
         # Path so far
         for item_idx in solution_trace:
@@ -238,80 +313,28 @@ class Generator:
                 input_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
                 docs = solution_item[node_type]['retrieved_documents']
                 if len(docs) > 0:
-                    input_text += f"<information>"
-                    for i, doc in enumerate(docs):
-                        input_text += f"Doc [{i+1}]: {doc}\n"
-                    input_text += f"<\information>\n"
+                    input_text += f"<information> {_passages2string(docs)}<\information>\n"
             
         return input_text
     
+    
     def generate_think_search(self, solution_trace: Dict[int, Dict[str, str]]):
-        qid = solution_trace[0]['qid']
-        user_question = solution_trace[0]['user_question']
-        think_pattern = r'<think>(.*?)</think>'
-        search_query_pattern = r'<search>(.*?)</search>'
-        
         ### = Do generation
         input_prompt_text = self.get_prompt_text('think_search', solution_trace)
-        initial_output = self.generate(input_prompt_text, max_new_tokens=self.args.max_new_token, num_return=1)[0]        
+        initial_output = self.generate_(input_prompt_text, self.search_stopping_criteria, num_return=1)[0]        
+        if self.args.use_counter:
+            self.counter.add_generate(initial_output, self.tokenizer)
         # print('\n\n')
         # print(input_prompt_text)
         # print('\n-------')
         # print(initial_output)
-        if self.args.use_counter:
-            self.counter.add_generate(initial_output, self.tokenizer)
-        
         
         ### = Post-processing
-        thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, initial_output, re.DOTALL)]))
-        search_query_match = re.search(search_query_pattern, initial_output, re.DOTALL)
-        search_query = search_query_match.group(1).strip() if search_query_match else user_question
-        
-        ### = Check if regenerate needed
-        if thinks == '':
-            print(f"Think is not provided for query {qid}")
-            for i in range(self.args.retry):
-                print(f"Think, try {i+1} ...")
-                output = self.generate(
-                    input_prompt_text,
-                    max_new_tokens=self.args.max_new_token,
-                    num_return=1,
-                    temperature=0.7,
-                    do_sample=True
-                )[0]
-                
-                thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, output, re.DOTALL)]))
-                if thinks != '':
-                    search_query_match = re.search(search_query_pattern, output, re.DOTALL)
-                    search_query = search_query_match.group(1).strip() if search_query_match else ''
-                    break
-            else:
-                print(f"Failed to generate 'think' after all retries for query {qid}")
-                   
-        if search_query == '':
-            print(f"Search Query is not provided for query {qid}")
-            input_prompt_text_ = input_prompt_text + f'<think> {thinks} </think>\n'
-            for i in range(self.args.retry):
-                print(f"Search Query, try {i+1} ...")
-                output = self.generate(
-                    input_prompt_text_,
-                    max_new_tokens=self.args.max_new_token,
-                    num_return=1,
-                    temperature=0.7,
-                    do_sample=True
-                )[0]
-                
-                search_query_match = re.search(search_query_pattern, output, re.DOTALL)
-                search_query = search_query_match.group(1).strip() if search_query_match else ''
-                if search_query != '':
-                    break
-            else:
-                print(f"Failed to generate 'search query' after all retries for query {qid}")
+        thinks, search_query = self.think_search_postprocessing(solution_trace, input_prompt_text, initial_output)
         
         ### = Do retrieval
         if search_query != '':
-            retrieved_docs_, _, _ = self.retriever.retrieve([search_query], [qid], [], [])
-            retrieved_docs = retrieved_docs_[0]
+            retrieved_docs = self.retriever.search(search_query)
             if self.args.use_counter:
                 self.counter.retrieve += 1
         else:
@@ -319,19 +342,13 @@ class Generator:
               
         return thinks, search_query, retrieved_docs
     
+    
     def generate_think_answer(self, solution_trace: Dict[int, Dict[str, str]]):
-        qid = solution_trace[0]['qid']
-        user_question = solution_trace[0]['user_question']
-        think_pattern = r'<think>(.*?)</think>'
-        answer_pattern = r'<answer>(.*?)</answer>'
-        
         ### = Do generation
         input_prompt_text = self.get_prompt_text('think_answer', solution_trace)
-        initial_output = self.generate(input_prompt_text, max_new_tokens=self.args.max_new_token, num_return=1)[0] 
+        initial_output = self.generate_(input_prompt_text, self.answer_stopping_criteria)[0] 
         if self.args.use_counter:
             self.counter.add_generate(initial_output, self.tokenizer)
-        
-        # initial_output_with_conf = self.generate_with_confidence(input_prompt_text, max_new_tokens=self.args.max_new_token)       
         # print('\n\n')
         # print(input_prompt_text)
         # print('\n-------')
@@ -339,84 +356,92 @@ class Generator:
         
         ### = Post-processing
         think, most_likely_answer = self.think_answer_postprocessing(solution_trace, input_prompt_text, initial_output)
+        value = 0.9
         
-        # print(most_likely_answer)
-        ### = Generate more 
-        input_prompt_text_ = input_prompt_text + f'<think> {think} </think>\n'
-        # input_prompt_text_unc = self.get_prompt_text_unc(solution_trace, think)
-        output_list = self.generate(
-            input_prompt_text,
-            max_new_tokens=self.args.max_new_token,
-            num_return=self.mcts_num_last_votes,
-            temperature=0.7,
-            do_sample=True
-        )
-        # print(output_list)
-        answer_list = []
-        for output in output_list:
-            answer_match = re.search(answer_pattern, output, re.DOTALL)
-            answer = answer_match.group(1).strip() if answer_match else ''
-            answer_list.append(answer)
+        # ### = Generate more 
+        # user_question = solution_trace[0]['user_question']
+        # input_prompt_text_ = input_prompt_text + f'<think> {think} </think>\n'
+        # output_list = self.generate_(input_prompt_text_, self.answer_stopping_criteria, num_return=self.mcts_num_last_votes)
+        # answer_list = [get_answer(output) for output in output_list]
+        # answer_list_ = [most_likely_answer] if len(answer_list) == 0 else [ans for ans in answer_list if ans]
+        # if len(answer_list_) > 0:
+        #     answer, value = self._get_most_likely_answer(user_query=user_question, output_list=answer_list_)
+        # else:
+        #     value = 0.001
         
-        answer_list_ = [most_likely_answer] if len(answer_list) == 0 else [ans for ans in answer_list if ans]
-        # print(answer_list_)
-        if len(answer_list_) > 0:
-            answer, value = self._get_most_likely_answer(user_query=user_question, output_list=answer_list_)
-        else:
-            value = 0.001
-
         return think, most_likely_answer, value
 
-    def think_answer_postprocessing(self, solution_trace, input_prompt_text, output):
+
+    def think_search_postprocessing(self, solution_trace, input_prompt_text, output):
         qid = solution_trace[0]['qid']
         think_pattern = r'<think>(.*?)</think>'
-        answer_pattern = r'<answer>(.*?)</answer>'
         
         thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, output, re.DOTALL)]))
-        answer_match = re.search(answer_pattern, output, re.DOTALL)
-        most_likely_answer = answer_match.group(1).strip() if answer_match else ''
+        search_query = get_query(output) 
         
         ### = Check if regenerate needed
         if thinks == '':
             print(f"Think is not provided for query {qid}")
             for i in range(self.args.retry):
                 print(f"Think, try {i+1} ...")
-                output = self.generate(
-                    input_prompt_text,
-                    max_new_tokens=self.args.max_new_token,
-                    num_return=1,
-                    temperature=0.7,
-                    do_sample=True
-                )[0]
+                output = self.generate_(input_prompt_text, self.search_stopping_criteria, temperature=0.7, do_sample=True)[0]
                 
                 thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, output, re.DOTALL)]))
                 if thinks != '':
-                    answer_match = re.search(answer_pattern, output, re.DOTALL)
-                    most_likely_answer = answer_match.group(1).strip() if answer_match else ''
+                    search_query = get_query(output) 
+                    break
+            else:
+                print(f"Failed to generate 'think' after all retries for query {qid}")
+                   
+        if search_query == None:
+            print(f"Search Query is not provided for query {qid}")
+            input_prompt_text_ = input_prompt_text + f'<think> {thinks} </think>\n'
+            for i in range(self.args.retry):
+                print(f"Search Query, try {i+1} ...")
+                output = self.generate_(input_prompt_text_, self.search_stopping_criteria)[0]
+                
+                search_query = get_query(output)
+                if search_query != None:
+                    break
+            else:
+                print(f"Failed to generate 'search query' after all retries for query {qid}")
+        search_query = '' if search_query == None else search_query
+
+        return thinks, search_query
+
+    def think_answer_postprocessing(self, solution_trace, input_prompt_text, output):
+        qid = solution_trace[0]['qid']
+        think_pattern = r'<think>(.*?)</think>'
+        
+        thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, output, re.DOTALL)]))
+        most_likely_answer = get_answer(output)
+        
+        ### = Check if regenerate needed
+        if thinks == '':
+            print(f"Think is not provided for query {qid}")
+            for i in range(self.args.retry):
+                print(f"Think, try {i+1} ...")
+                output = self.generate_(input_prompt_text, self.answer_stopping_criteria)[0]
+                
+                thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, output, re.DOTALL)]))
+                if thinks != '':
+                    most_likely_answer = get_answer(output)
                     break
             else:
                 print(f"Failed to generate 'think' after all retries for query {qid}")
         
-        input_prompt_text_ = input_prompt_text + f'<think> {thinks} </think>\n' if thinks != '' else input_prompt_text
-        if most_likely_answer == '':
+        if most_likely_answer == None:
             print(f"The most-likely answer is not provided for query {qid}")
-            
+            input_prompt_text_ = input_prompt_text + f'<think> {thinks} </think>\n'
             for i in range(self.args.retry):
                 print(f"The most-likely answer, try {i+1} ...")
-                output = self.generate(
-                    input_prompt_text_,
-                    max_new_tokens=16,
-                    num_return=1,
-                    temperature=0.7,
-                    do_sample=True
-                )[0]
-                answer_match = re.search(answer_pattern, output, re.DOTALL)
-                most_likely_answer = answer_match.group(1).strip() if answer_match else ''
-                
-                if most_likely_answer != '':
+                output = self.generate_(input_prompt_text_, self.answer_stopping_criteria)[0]
+                most_likely_answer = get_answer(output)
+                if most_likely_answer != None:
                     break
             else:
                 print(f"Failed to generate the 'most-likely answer' after all retries for query {qid}")
+        most_likely_answer = '' if most_likely_answer == None else most_likely_answer
         
         return thinks, most_likely_answer
 

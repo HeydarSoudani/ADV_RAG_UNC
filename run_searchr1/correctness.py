@@ -33,6 +33,22 @@ def em_score(prediction, golden_answers):
     return score
 
 
+def em_score_v2(predictions, golden_answers):
+    if isinstance(golden_answers, str):
+        golden_answers = [golden_answers]
+    if isinstance(predictions, str):
+        predictions = [predictions]
+    
+    normalized_golden = [normalize_answer(ans) for ans in golden_answers]
+    
+    for pred in predictions:
+        normalized_pred = normalize_answer(pred)
+        if normalized_pred in normalized_golden:
+            return 1
+    return 0
+
+
+
 def f1_score(prediction, ground_truth):
     ground_truths = {ground_truth} if isinstance(ground_truth, str) else set(ground_truth)
         

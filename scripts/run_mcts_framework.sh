@@ -4,7 +4,7 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
-#SBATCH --time=3:30:00
+#SBATCH --time=6:00:00
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -13,20 +13,20 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 ### === Set variables ==========================
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="hotpotqa"
-subsec="test"
+dataset="musique"
+subsec="dev"
 fraction_of_data_to_use=1.0
-retriever_model="rerank"
+retriever_name="rerank"
 num_rollouts=4
 max_depth_allowed=4
-run="run_1 (rollout_4)"
+run="run_5 (edited_prompt_roll4)"
 
 srun python $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
     --model_name_or_path "$model_name_or_path" \
     --dataset "$dataset" \
     --subsec "$subsec" \
     --fraction_of_data_to_use "$fraction_of_data_to_use" \
-    --retriever_model "$retriever_model" \
+    --retriever_name "$retriever_name" \
     --num_rollouts "$num_rollouts" \
     --max_depth_allowed "$max_depth_allowed" \
     --run "$run" \
@@ -34,15 +34,10 @@ srun python $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
     
 
 ### Datasets:
-    # 'wikimultihopqa', 'hotpotqa', 'musique', 'iirc'
-
-### rag_method:
-    # 'no_retrieval', 'single_retrieval',
-    # 'fix_length_retrieval', 'fix_sentence_retrieval',
-    # 'flare', 'dragin'
+    # 'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
 
 ### retriever_model:
-    # 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt', 'positive'
+    # 'bm25', 'contriever', 'rerank', 'e5'
 
 ### Model name:
     # GPT-4o:     "openai/gpt-4o"

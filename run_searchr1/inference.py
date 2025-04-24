@@ -6,16 +6,17 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
 import torch
-import argparse
 import requests
 import datasets
+import argparse
+import jsonlines
 import numpy as np
 import transformers
 from tqdm import tqdm, trange
 
 from utils.general_utils import set_seed
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
-from correctness import em_score, f1_score
+from run_searchr1.correctness import em_score, f1_score
 
 
 # Define the custom stopping criterion
@@ -74,7 +75,7 @@ def _passages2string(retrieval_result):
         # content = doc_item['document']['contents']
         title = content.split("\n")[0]
         text = "\n".join(content.split("\n")[1:])
-        format_reference += f"Doc {idx+1}(Title: {title}) {text}\n"
+        format_reference += f"Doc {idx+1} (Title: {title}) {text}\n"
     return format_reference
 
 # For server retrieval
@@ -89,13 +90,12 @@ def search(query: str):
 
     return _passages2string(results[0])
 
-
 def searchr1_inference(args):
     print("\n== Search R1 Inference ...")
     print(f"""
         Model name:  {args.model_name_or_path}
         Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
-        Retriever:   {args.retriever_name}
+        Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
         Seed:        {args.seed}
         Run:         {args.run}
     """.replace('        ', ''))
@@ -145,121 +145,126 @@ def searchr1_inference(args):
     If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}\n"""
 
 
+    # === Read existing data ===================
+    generated_qids = []
+    generated_em = []
+    if os.path.exists(args.inference_results_file):
+        with open(args.inference_results_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                data = json.loads(line)
+                if 'qid' in data:
+                    generated_qids.append(data['qid'])
+                    generated_em.append(data['em'])
+    
+    
     # === Inference ============================
-    em_evaluation = []
-    with open(args.inference_results_file, 'w', encoding='utf-8') as inf_file, open(args.path_results_file, 'w', encoding='utf-8') as path_file:
+    em_evaluation = generated_em
+    with jsonlines.open(args.inference_results_file, mode='a') as inf_file, jsonlines.open(args.path_results_file, mode='a') as path_file:
         for i, sample in enumerate(tqdm(test_dataset)):
-            
-            if i == 5:
-                break
-            
+            # if i == 20:
+            #     break
             qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
             question = question.strip()
             if question[-1] != '?':
                 question += '?'
-            input_prompt = prompt.format(question=question)
-            
-            if tokenizer.chat_template:
-                input_prompt = tokenizer.apply_chat_template([{"role": "user", "content": input_prompt}], add_generation_prompt=True, tokenize=False)
-        
-            cnt = 0
-            path = []
-            
-            while True:
-                input_ids = tokenizer.encode(input_prompt, return_tensors='pt').to(args.device)
-                attention_mask = torch.ones_like(input_ids)
                 
-                # Generate text with the stopping criteria
-                outputs = model.generate(
-                    input_ids,
-                    attention_mask=attention_mask,
-                    max_new_tokens=1024,
-                    stopping_criteria=stopping_criteria,
-                    pad_token_id=tokenizer.eos_token_id,
-                    do_sample=True,
-                    temperature=0.7
-                )
+            if qid in generated_qids:
+                print(f"The answer for query {qid} has been already generated")
+            else:
+                input_prompt = prompt.format(question=question)
+                if tokenizer.chat_template:
+                    input_prompt = tokenizer.apply_chat_template([{"role": "user", "content": input_prompt}], add_generation_prompt=True, tokenize=False)
+            
+                cnt = 0
+                path = []
+                while True:
+                    input_ids = tokenizer.encode(input_prompt, return_tensors='pt').to(args.device)
+                    attention_mask = torch.ones_like(input_ids)
+                    
+                    # Generate text with the stopping criteria
+                    outputs = model.generate(
+                        input_ids,
+                        attention_mask=attention_mask,
+                        max_new_tokens=args.max_new_token,
+                        stopping_criteria=stopping_criteria,
+                        pad_token_id=tokenizer.eos_token_id,
+                        do_sample=True,
+                        temperature=0.7
+                    )
 
-                if outputs[0][-1].item() in curr_eos:
+                    if outputs[0][-1].item() in curr_eos:
+                        generated_tokens = outputs[0][input_ids.shape[1]:]
+                        output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                        break
+
                     generated_tokens = outputs[0][input_ids.shape[1]:]
                     output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-                    break
+                    
+                    tmp_query = get_query(tokenizer.decode(outputs[0], skip_special_tokens=True))
+                    if tmp_query:
+                        search_docs = retriever.search(tmp_query)
+                        search_results = _passages2string(search_docs)
+                    else:
+                        search_docs = []
+                        search_results = ''
 
-                generated_tokens = outputs[0][input_ids.shape[1]:]
-                output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                    path.append({
+                        'think': get_think(output_text),
+                        'search_query': tmp_query,
+                        'docs': search_docs
+                    })
+
+                    search_text = curr_search_template.format(output_text=output_text, search_results=search_results)
+                    input_prompt += search_text
+                    cnt += 1
                 
-                tmp_query = get_query(tokenizer.decode(outputs[0], skip_special_tokens=True))
-                if tmp_query:
-                    # print(f'searching "{tmp_query}"...')
-                    # search_results = search(tmp_query)
-                    search_docs = retriever.search(tmp_query)
-                    search_results = _passages2string(search_docs)
-                else:
-                    search_docs = []
-                    search_results = ''
-
-                path.append({
-                    'think': get_think(output_text),
-                    'search_query': tmp_query,
-                    'docs': search_docs
-                })
-
-                search_text = curr_search_template.format(output_text=output_text, search_results=search_results)
-                input_prompt += search_text
-                cnt += 1
-             
-            
-            one_step_think = get_think(output_text)
-            pred_answer = get_answer(output_text)
-            path.append({
-                'think': one_step_think,
-                'answer': pred_answer
-            })
-            correctness_em = em_score(pred_answer, gt_answers)
-            correctness_f1 = f1_score(pred_answer, gt_answers)
-            em_evaluation.append(correctness_em)
-            
-            # Save to files
-            item1 = {
-                "qid": qid,
-                "query": question,
-                "gt_answers": gt_answers,
-                "pred_answer": pred_answer,
-                "em": correctness_em,
-                "f1": correctness_f1
-            }
-            inf_file.write(json.dumps(item1) + '\n')
-            
-            item2 = {
-                "qid": qid,
-                "query": question,
-                "gt_answers": gt_answers,
-                "pred_answer": pred_answer,
-                "path": path
-            }
-            path_file.write(json.dumps(item2) + '\n')
+                one_step_think = get_think(output_text)
+                pred_answer = get_answer(output_text)
+                correctness_em = em_score(pred_answer, gt_answers)
+                correctness_f1 = f1_score(pred_answer, gt_answers)
+                em_evaluation.append(correctness_em)
+                path.append({'think': one_step_think, 'answer': pred_answer})
+                
+                # Save to files
+                item1 = {
+                    "qid": qid,
+                    "query": question,
+                    "gt_answers": gt_answers,
+                    "pred_answer": pred_answer,
+                    "em": correctness_em,
+                    "f1": correctness_f1
+                }
+                inf_file.write(item1)
+                item2 = {
+                    "qid": qid,
+                    "query": question,
+                    "gt_answers": gt_answers,
+                    "pred_answer": pred_answer,
+                    "path": path
+                }
+                path_file.write(item2)
 
 
     # === Print results ========================
     print("\nEvaluation Result:")
+    # print(em_evaluation)
     print(f"EM: {np.mean(em_evaluation)*100}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
-    parser.add_argument('--max_new_token', type=int, default=512)
+    parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='musique', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
-    parser.add_argument('--fewshot', type=int, default=6)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='bm25', choices=[
+    parser.add_argument('--retriever_name', type=str, default='rerank', choices=[
         'bm25', 'contriever', 'rerank', 'e5'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
@@ -267,7 +272,7 @@ if __name__ == "__main__":
         'data/search_r1_files/bm25',          # For BM25 & Rerank
         'data/search_r1_files/e5_Flat.index', # For E5
     ])
-    parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L12-v2", choices=[
+    parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
         "intfloat/e5-base-v2" # For E5
         "cross-encoder/ms-marco-MiniLM-L12-v2" # For Rerank | cross-encoder/ms-marco-MiniLM-L-6-v2
     ])

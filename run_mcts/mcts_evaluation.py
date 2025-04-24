@@ -10,6 +10,7 @@ import numpy as np
 
 from utils.general_utils import set_seed
 from src_adaptive.evaluate import CorrectnessEval
+from run_searchr1.correctness import em_score, em_score_v2
 
 
 def mcts_evaluation(args):
@@ -17,66 +18,71 @@ def mcts_evaluation(args):
     print(f"""
         Model name:  {args.model_name_or_path}
         Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
-        Retriever:   {args.retriever_model}
+        Retriever:   {args.retriever_name}
         Rollouts:    {args.num_rollouts}
         Seed:        {args.seed}
         Run:         {args.run}
     """.replace('        ', ''))
     
     # === Dataset & Metric Setup ================
-    correctness = CorrectnessEval()
-    correctness_res = {
-        'EM': [],
-        'F1': [],
-        'Recall': [],
-        'Precision': [],
-    }
+    em_evaluation = []
     with open(args.discriminate_results_file, 'r') as infile:
         for line in infile:
             data = json.loads(line)
             gt_answers = data['gt_answers']
-            pred_answer = data['pred_answer']
-            em_socre = correctness.exact_match_score(pred_answer, gt_answers)
-            f1_score = correctness.f1_score(pred_answer, gt_answers)
             
-            correctness_res['EM'].append(em_socre['correct'])
-            correctness_res['F1'].append(f1_score['f1'])
-            correctness_res['Recall'].append(f1_score['recall'])
-            correctness_res['Precision'].append(f1_score['precision'])
+            pred_answer = data['winner_answer']
+            em_socre = em_score(pred_answer, gt_answers)
+            # pred_answers = data['pred_answers']
+            # em_socre = em_score_v2(pred_answers, gt_answers)
             
+            em_evaluation.append(em_socre)
             
-    # === Save results ==========================
-    reuslts_dict = {
-        'EM': np.mean(correctness_res['EM'])*100,
-        'F1': np.mean(correctness_res['F1'])*100,
-        'Recall': np.mean(correctness_res['Recall'])*100,
-        'Precision': np.mean(correctness_res['Precision'])*100,
-    }
-    with open(args.evaluate_results_file, 'w') as file:
-        json.dump(reuslts_dict, file, indent=4)
+    # === Print results ========================
+    print("\nEvaluation Result:")
+    print(f"EM: {np.mean(em_evaluation)*100}")
+    # with open(args.evaluate_results_file, 'w') as file:
+    #     json.dump(reuslts_dict, file, indent=4)
         
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    # Model
     parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
-        'wikimultihopqa', 'hotpotqa', 'musique', 'iirc', 'multihop_rag',
-        'nqgold', 'trivia', 'popqa',
-        'factscore'
+    parser.add_argument('--max_new_token', type=int, default=512)
+    
+    # Dataset
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+        'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--retriever_model', type=str, default='rerank', choices=[
-        'positive', 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt', 'mistral_e5' # intfloat/e5-mistral-7b-instruct -> from "Search-R1"
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    
+    # Retriever
+    parser.add_argument('--retriever_name', type=str, default='rerank', choices=[
+        'bm25', 'contriever', 'rerank', 'e5'
     ])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=0.2)
-    parser.add_argument('--fewshot', type=int, default=6)
+    parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
+    parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
+        'data/search_r1_files/bm25',          # For BM25 & Rerank
+        'data/search_r1_files/e5_Flat.index', # For E5
+    ])
+    parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
+        "intfloat/e5-base-v2" # For E5
+        "cross-encoder/ms-marco-MiniLM-L12-v2" # For Rerank | cross-encoder/ms-marco-MiniLM-L-6-v2
+    ])
+    parser.add_argument('--retrieval_topk', type=int, default=3)
+    parser.add_argument('--faiss_gpu', action='store_false', help='Use GPU for computation')
+    parser.add_argument('--retrieval_pooling_method', type=str, default="mean")
+    parser.add_argument('--retrieval_query_max_length', type=int, default=256)
+    parser.add_argument('--retrieval_use_fp16', action='store_false', help='')
+    parser.add_argument('--retrieval_batch_size', type=int, default=512)
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
-    parser.add_argument('--retrieve_topk', type=int, default=3)
-    parser.add_argument('--retrieve_max_query_length', type=int, default=64)
-    parser.add_argument('--max_new_token', type=int, default=512)
+    
+    # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_1 (rollout_4)')
+    parser.add_argument('--run', type=str, default='run_6 (edited_prompt_roll6)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -114,10 +120,10 @@ if __name__ == "__main__":
     # === Files ====================
     args.output_dir = f"run_output/{args.run}" 
     model_ = args.model_name_or_path.split('/')[-1]
-    args.generation_trees_results_dir = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/generation_trees'
-    args.discriminate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/discriminate_results.jsonl"
-    args.evaluate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/evaluate_results.jsonl"
-    args.statistics_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_model}/statistics_results.jsonl"
+    args.generation_trees_results_dir = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/generation_trees'
+    args.discriminate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/discriminate_results.jsonl"
+    args.evaluate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/evaluate_results.jsonl"
+    args.statistics_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/statistics_results.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
     
     # === Prompt files =============
@@ -139,4 +145,5 @@ if __name__ == "__main__":
     
     
     # python run_mcts/mcts_evaluation.py
+    
     
