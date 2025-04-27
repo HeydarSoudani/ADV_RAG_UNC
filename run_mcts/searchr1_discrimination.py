@@ -14,6 +14,8 @@ import jsonlines
 import numpy as np
 import transformers
 from tqdm import tqdm, trange
+from collections import defaultdict
+from typing import List, Dict, Tuple
 
 from utils.general_utils import set_seed, read_jsonl, read_txt
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
@@ -123,7 +125,6 @@ class SemanticEquivalenceGenerator:
         response = self.generate(equiv_prompt, max_new_tokens=1)
         return True if 'Yes' in response else False
 
-
     def _get_most_likely_answer(self, user_query: str, output_list: list[str]):
         assert len(output_list) > 0
 
@@ -169,6 +170,7 @@ class SemanticEquivalenceGenerator:
             assert confidence > 0 and confidence <= 1
 
         return most_confident_answer, confidence
+
 
 def searchr1_discrimination(args):
     print("\n== Search-R1 Discrimination ...")

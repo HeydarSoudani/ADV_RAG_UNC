@@ -92,7 +92,6 @@ class Discriminator:
         self.answer_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(answer_target_sequences, self.se_model.tokenizer)])
 
     def get_instruction(self, node_type):
-
         input_text = ''
         input_text += 'You are a multi-step reasoner in a question-answering task. '
         input_text += 'Your overall task is to answer the question through a series of intermediate reasoning steps.\n'
@@ -126,7 +125,6 @@ class Discriminator:
         
     def trace2text(self, solution_trace: Dict[int, Dict[str, str]]):
         input_text = ''
-        # Path so far
         for item_idx in solution_trace:
             solution_item = solution_trace[item_idx]
             node_keys = list(solution_item.keys())
@@ -154,6 +152,7 @@ class Discriminator:
         repetition_penalty:float = 1.1,
         best_of=None,
     ):
+        generated_texts = []
         for input_text in input_texts:
             input_text_ = f"{self.prompt_instruction} {question.strip()}\n{input_text}"
             if self.se_model.tokenizer.chat_template:
@@ -182,30 +181,14 @@ class Discriminator:
                     num_beams=num_beams,
                     stopping_criteria=self.answer_stopping_criteria,
                 )
-                outputs_ = [output[input_ids.shape[1]:] for output in outputs] 
-                generated_texts = self.se_model.tokenizer.batch_decode(outputs_, skip_special_tokens=True)
-        
+                generated_texts.extend(self.se_model.tokenizer.batch_decode(
+                    [output[input_ids.shape[1]:] for output in outputs],
+                    skip_special_tokens=True
+                ))
         del input_ids, outputs
         torch.cuda.empty_cache()
         
         return generated_texts
-        
-        # for i in range(num_return):
-        #     with torch.no_grad():
-        #         outputs = self.model.generate(
-        #             input_ids,
-        #             attention_mask=attention_mask,
-        #             max_new_tokens=max_new_tokens,
-        #             stopping_criteria=stopping_criteria,
-        #             pad_token_id=self.tokenizer.eos_token_id,
-        #             do_sample=True,
-        #             temperature=0.7
-        #         )
-        #         generated_tokens = outputs[0][input_ids.shape[1]:]
-        #         output_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-        #         generated_texts.append(output_text)
-        
-        # return generated_texts
 
     def _filter_none(self, candidates: list[Candidate]) -> list[Candidate]:
         candidates = [c for c in candidates if c.final_answer is not None]
@@ -231,16 +214,16 @@ class Discriminator:
         for c in candidates:
             for masked_solution_trace in c.masked_trace_text_list:
                 for _ in range(self.args.rc_n_completions):
-                    gen_input_list.append(
-                        masked_solution_trace
-                    )
+                    gen_input_list.append(masked_solution_trace)
                     ground_truth_list.append(c.final_answer)
             c_completion_num_list.append(len(c.masked_trace_text_list) * self.args.rc_n_completions)
         """gen_input_list:
         [c1_mask1, c1_mask2, ..., c2_mask1, c2_mask2, ..., ......, ct_mask1, ct_mask2, ...]
         """
+        
         # Manually split into batches
-        batch_size = self.args.max_num_seqs // self.args.rc_n_completions // 2
+        # batch_size = self.args.max_num_seqs // self.args.rc_n_completions // 2
+        batch_size = self.args.rc_n_completions
         gen_output_list = []
         for start_idx in range(0, len(gen_input_list), batch_size):
             end_idx = start_idx + batch_size
@@ -251,10 +234,97 @@ class Discriminator:
                 max_new_tokens=256,
                 num_return_sequences=1,
                 temperature=self.args.rc_temperature,
-                best_of=self.args.best_of
+                # best_of=self.args.best_of
             )
             gen_output_list.extend(sub_gen_output_list)
 
+        if all(isinstance(item, list) for item in gen_output_list):
+            completion_list = []
+            for n_completions in gen_output_list:
+                for completion in n_completions:
+                    completion_list.append(completion)
+            assert len(completion_list) == self.args.rc_n_completions * self.args.num_masked_solution_traces * len(candidates)
+            candidate_group_size = self.args.rc_n_completions * self.args.num_masked_solution_traces
+        elif all(isinstance(item, str) for item in gen_output_list):
+            completion_list = gen_output_list
+            candidate_group_size = self.args.num_masked_solution_traces
+        
+        answer_list = [get_answer(completion) for completion in completion_list]
+        count = 0
+        completion_group_list = []
+        answer_group_list = []
+        gt_group_list = []
+        for num in c_completion_num_list:
+            completion_group_list.append(completion_list[count : count + num])
+            answer_group_list.append(answer_list[count : count + num])
+            gt_group_list.append(ground_truth_list[count : count + num])
+            count += num
+        assert count == len(completion_list) == len(answer_list)
+
+        consistent_candidates = []
+        for c, completion_group, answer_group, gt_answer in zip(
+            candidates, completion_group_list, answer_group_list, gt_group_list
+        ):
+            candidate_group_size = len(c.masked_trace_text_list)
+            num_consistent = 0
+            if self.args.rc_mode == "maj":
+                answer = self.find_most_confident_answer(question, completion_group)[0]
+                if self.se_model.check_answers_equiv(question, gt_answer[-1], answer):
+                    consistent_candidates.append(c)
+            else:
+                for answer, gt_a in zip(answer_group, gt_answer):
+                    if self.se_model.check_answers_equiv(question, gt_a, answer):
+                        num_consistent += 1
+                if self.args.rc_mode == "loose":
+                    if num_consistent > 0:
+                        consistent_candidates.append(c)
+                elif self.args.rc_mode == "mid":
+                    if num_consistent >= candidate_group_size // 2:
+                        consistent_candidates.append(c)
+                elif self.args.rc_mode == "strict":
+                    if num_consistent == candidate_group_size:
+                        consistent_candidates.append(c)
+        return consistent_candidates
+
+    def _BoN_filter(self, question: str, candidates: list[Candidate], aux={}) -> list[Candidate]:
+        assert all(
+            len(c.masked_trace_text_list) == self.args.num_masked_solution_traces
+            for c in candidates
+            if c.c_type == "default"
+        )
+        gen_input_list = []
+        ground_truth_list = []
+        c_completion_num_list = []
+        for c in candidates:
+            for masked_solution_trace in c.masked_trace_text_list:
+                for _ in range(self.args.rc_n_completions):
+                    gen_input_list.append(masked_solution_trace)
+                    ground_truth_list.append(c.final_answer)
+            c_completion_num_list.append(len(c.masked_trace_text_list) * self.args.rc_n_completions)
+        """gen_input_list:
+        [c1_mask1, c1_mask2, ..., c2_mask1, c2_mask2, ..., ......, ct_mask1, ct_mask2, ...]
+        """
+        
+        # Manually split into batches
+        # batch_size = self.args.max_num_seqs // self.args.rc_n_completions // 2
+        batch_size = self.args.rc_n_completions
+        gen_output_list = []
+        for start_idx in range(0, len(gen_input_list), batch_size):
+            end_idx = start_idx + batch_size
+            sub_gen_input_list = gen_input_list[start_idx: end_idx]
+            sub_gen_output_list = self.generate(
+                input_texts=sub_gen_input_list,
+                question=question,
+                max_new_tokens=256,
+                num_return_sequences=1,
+                temperature=self.args.rc_temperature,
+                best_of=self.args.best_of
+            )
+            gen_output_list.extend(sub_gen_output_list)
+        # """gen_output_list:
+        # [[c1_mask1_o1, c1_mask1_o2, ...], [c1_mask2_o1, c1_mask2_o2, ...], ..., [ct_mask1_o1, ct_mask1_o2, ...], [ct_mask2_o1, ct_mask2_o2, ...], ...]
+        # """
+        
         if all(isinstance(item, list) for item in gen_output_list):
             completion_list = []
             for n_completions in gen_output_list:
@@ -286,7 +356,7 @@ class Discriminator:
             candidate_group_size = len(c.masked_trace_text_list)
             num_consistent = 0
             if self.args.rc_mode == "maj":
-                answer = self.evaluator.find_most_confident_answer(completion_group)[0]
+                answer = self.find_most_confident_answer(question, answer_group)[0]
                 if self.se_model.check_answers_equiv(question, gt_answer[-1], answer):
                     consistent_candidates.append(c)
             else:
@@ -302,7 +372,6 @@ class Discriminator:
                 elif self.args.rc_mode == "strict":
                     if num_consistent == candidate_group_size:
                         consistent_candidates.append(c)
-        
         return consistent_candidates
 
     def _find_winner_filtered(
@@ -321,9 +390,9 @@ class Discriminator:
         elif len(filtered_candidates) == 1:
             winner = filtered_candidates[0]
             print(f"==> Winner answer: {winner.final_answer}\n")
-        elif not any(self.se_model.check_answers_equiv(question, c.final_answer, gt_answer[0]) for c in filtered_candidates):
-            winner = None
-            print(f"==> Winner answer: None")
+        # elif not any(self.se_model.check_answers_equiv(question, c.final_answer, gt_answer[0]) for c in filtered_candidates):
+        #     winner = None
+        #     print(f"==> Winner answer: None")
         else:
             filtered_answer2score = self._calculate_scores(question, unfiltered_candidates, filtered_candidates)
             winner_answer = max(filtered_answer2score.keys(), key=lambda x: filtered_answer2score[x])
@@ -407,6 +476,66 @@ class Discriminator:
 
         return answer2candidates, answer2confidence, answer2cnt
 
+    def find_most_confident_answer(self, question:str, completions: list[str], prior_weights: list[float] = None):
+        """Returns the most confident answer, its completion, its id in the input list, and its confidence."""
+        if completions is None or len(completions) == 0:
+            return None, None, None, None
+
+        answer2completions = defaultdict(list)
+        answer2ids = defaultdict(list)
+        for id, c in enumerate(completions):
+            try:
+                model_answer = get_answer(c)
+                has_existed = False
+                for existing_answer in answer2completions.keys():
+                    if self.check_answers_equiv(question, model_answer, existing_answer):
+                        assert not has_existed
+                        has_existed = True
+                        answer2completions[existing_answer].append(c)
+                        answer2ids[existing_answer].append(id)
+                if not has_existed:
+                    answer2completions[model_answer].append(c)
+                    answer2ids[model_answer].append(id)
+            except:
+                pass
+
+        assert len(answer2completions.keys()) > 0, "There are no valid completions."
+        if prior_weights is not None:
+            assert len(completions) == len(prior_weights)
+            completion2count = {}
+            for answer, answer_completions in answer2completions.items():
+                count = len(answer_completions)
+                for answer_completion in answer_completions:
+                    completion2count[answer_completion] = count
+
+            completion2score = {}
+            for id, (completion, count) in enumerate(completion2count.items()):
+                prior_weight = prior_weights[id]
+                score = prior_weight * (count / len(completions))
+                completion2score[completion] = score
+
+            most_confident_completion = max(completion2score.keys(), key=lambda x: completion2score[x])
+
+            return (
+                get_answer(most_confident_completion),
+                most_confident_completion,
+                completions.index(most_confident_completion),
+                completion2score[most_confident_completion],
+            )
+        else:
+            most_confident_answer = max(answer2completions.keys(), key=lambda x: len(answer2completions[x]))
+            assert (
+                len(answer2completions[most_confident_answer]) > 0
+            ), "There are no completions for the most confident answer."
+            confidence = len(answer2completions[most_confident_answer]) / len(completions)
+            assert confidence > 0
+            return (
+                most_confident_answer,
+                answer2completions[most_confident_answer][0],
+                answer2ids[most_confident_answer][0],
+                confidence,
+            )
+
     def select(self, question: str, candidates: list[Candidate], gt_answer: str = None, aux={}) -> Candidate:
         print(f"==> Ground truth answer: {gt_answer}")
         unfiltered_candidates = candidates
@@ -417,9 +546,12 @@ class Discriminator:
         print(f"==> Pre-filtered answers: {[c.final_answer for c in prefiltered_candidates]}")
         
         # select the final trajectory through Reasoning Consistency
-        if self.args.extend_rc_mode == 'original':
+        if self.args.extend_rc_mode == 'reasoning_consistency':
             filtered_candidates = self._filter_reasoning_consistency(question, prefiltered_candidates, aux)
             print(f"==> RC-filtered answers: {[c.final_answer for c in filtered_candidates]}")
+        elif self.args.extend_rc_mode == 'BoN':
+            filtered_candidates = self._BoN_filter(question, prefiltered_candidates, aux)
+            print(f"==> BoN-filtered answers: {[c.final_answer for c in filtered_candidates]}")
         elif self.args.extend_rc_mode == 'majority_vote':
             filtered_candidates = []
         else:
@@ -451,7 +583,7 @@ def rc_discrimination(args):
     em_evaluation = []
     with open(args.discriminate_results_file, 'w', encoding='utf-8') as outfile:
         for i, qid in enumerate(tqdm(sorted_query_ids)):
-            # if i == 5:
+            # if i == 10:
             #     break
             # === Generating answer candidates
             final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
@@ -537,7 +669,7 @@ if __name__ == "__main__":
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='bm25', choices=[
+    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
@@ -589,9 +721,9 @@ if __name__ == "__main__":
     parser.add_argument("--rc_n_completions", type=int, default=1)
     parser.add_argument("--rc_criteria", type=str, default="freq", choices=["freq", "reward"])
     parser.add_argument("--threshold", type=float, default=0.999)
-    parser.add_argument("--extend_rc_mode", type=str, default="original", choices=["original", "BoN", "majority_vote"])
+    parser.add_argument("--extend_rc_mode", type=str, default="reasoning_consistency", choices=["reasoning_consistency", "BoN", "majority_vote"])
     parser.add_argument("--best_of", type=int, default=5)
-    parser.add_argument("--max_num_seqs", type=int, default=2)
+    # parser.add_argument("--max_num_seqs", type=int, default=2)
     
     args = parser.parse_args()
     

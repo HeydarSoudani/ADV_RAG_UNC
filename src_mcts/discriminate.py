@@ -169,9 +169,7 @@ class Discriminator:
         for c in candidates:
             for masked_solution_trace in c.masked_solution_trace_list:
                 for _ in range(self.args.rc_n_completions):
-                    gen_input_list.append(
-                        masked_solution_trace
-                    )
+                    gen_input_list.append(masked_solution_trace)
                     ground_truth_list.append(c.final_answer)
             c_completion_num_list.append(len(c.masked_solution_trace_list) * self.args.rc_n_completions)
         """gen_input_list:

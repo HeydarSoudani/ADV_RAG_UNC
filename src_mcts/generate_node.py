@@ -221,6 +221,7 @@ class Generator:
 
         return most_confident_answer, confidence
     
+    # === Prompt ==================
     def get_instruction(self, node_type):
         # === V1
         # input_text = ''
@@ -284,7 +285,6 @@ class Generator:
         
         return input_text
         
-    
     def get_prompt_text(self, curr_node, solution_trace: Dict[int, Dict[str, str]]):
         if self.mcts_type == "generation":
             return self.get_prompt_text_generation(curr_node, solution_trace)
@@ -354,6 +354,7 @@ class Generator:
             
         return input_text
 
+    # === Actions ==================
     def generate_think_search(self, solution_trace: Dict[int, Dict[str, str]]):
         ### = Do generation
         input_prompt_text = self.get_prompt_text('think_search', solution_trace)
