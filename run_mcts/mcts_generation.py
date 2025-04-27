@@ -14,7 +14,6 @@ from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, Rer
 from src_adaptive.dataset import BaseDataset
 
 # from src_adaptive.retrieve import BM25, Rerank
-from src_mcts.evaluate import Evaluator
 from src_mcts.generate_node import Generator
 from src_mcts.MCTS_backbone import MCTS_Searcher
 from src_mcts.MCTS_reasoning_v2 import Reasoning_MCTS_Node
@@ -29,8 +28,8 @@ def mcts_generation(args):
     print("\n== MCTS Generation ...")
     print(f"""
         Model name:  {args.model_name_or_path}
-        Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
-        Retriever:   {args.retriever_name}
+        Dataset:     {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
+        Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
         Rollouts:    {args.num_rollouts}
         Seed:        {args.seed}
         Run:         {args.run}
@@ -41,32 +40,42 @@ def mcts_generation(args):
     dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', args.dataset)
     if 'test' in dataset:
         print(f'Using the {args.dataset} test dataset...')
-        test_dataset = dataset['test']
+        test_dataset_ = dataset['test']
     elif 'dev' in dataset:
         print(f'Using the {args.dataset} dev dataset...')
-        test_dataset = dataset['dev']
+        test_dataset_ = dataset['dev']
+    
+    if args.fraction_of_data_to_use < 1.0:
+        shuffled_dataset = test_dataset_.shuffle(seed=args.seed)
+        num_samples = int(args.fraction_of_data_to_use * len(shuffled_dataset))
+        test_dataset = shuffled_dataset.select(range(num_samples))
+    elif args.fraction_of_data_to_use > 1.0:
+        shuffled_dataset = test_dataset_.shuffle(seed=args.seed)
+        test_dataset = shuffled_dataset.select(range(args.fraction_of_data_to_use))
+    else:
+        test_dataset = test_dataset_
     
     sample_index = 0
+    print(f"Length of Dataset: {len(test_dataset)}")
     print(f"Dataset example {sample_index}:")
     print(f"Id:             {test_dataset[sample_index]['id']}")
     print(f"Question:       {test_dataset[sample_index]['question']}")
     print(f"Answers:        {test_dataset[sample_index]['golden_answers']}")
-    
+
     
     # === Static Retriever ===================== 
     if args.retriever_name == 'bm25':
         retriever = BM25Retriever(args)  
     elif args.retriever_name == 'contriever':
         retriever = ContrieverRetriever(args)
-    elif args.retriever_name == 'rerank':
+    elif args.retriever_name in ['rerank_l6', 'rerank_l12']:
         retriever = RerankRetriever(args)
     elif args.retriever_name in ['e5', 'bge']:
         retriever = DenseRetriever(args)
     
     
     # === Model Definition ======================    
-    evaluator = Evaluator()
-    node_generator = Generator(args, retriever, evaluator)
+    node_generator = Generator(args, retriever)
     
     
     # === Generation =============================
@@ -102,6 +111,7 @@ def mcts_generation(args):
                 user_question=question,
                 gt_answer=gt_answers,
                 gt_reasoning_steps=[],
+                answer_candidates=[],
                 max_depth_allowed=args.max_depth_allowed,
                 enable_potential_score=args.enable_potential_score,
             )
@@ -114,7 +124,7 @@ def mcts_generation(args):
                 model_rollout_nodes.append(rollout_node)
 
                 all_solution_nodes, all_solutions = stochastic_find_best_solution(
-                    root_node, node_generator.evaluator, enable_potential_score=args.enable_potential_score
+                    root_node, enable_potential_score=args.enable_potential_score
                 )
                 model_all_solutions.append(all_solutions)
 
@@ -138,13 +148,8 @@ def mcts_generation(args):
                 for item in js2:
                     f.write(json.dumps(item) + "\n")
 
-            if args.enable_potential_score:
-                js = [node.potential_answers_history for node in all_solution_nodes]
-                with open(f"{args.generation_trees_results_dir}/{qid}/potentials.json", "w") as f:
-                    json.dump(js, f)
 
-
-    # === Save results ==========================
+    # === Save results ===========================
     reuslts_dict = {
         'Tokens': node_generator.counter.token / len(dataset),
         'Sentences': node_generator.counter.sentence / len(dataset),
@@ -161,15 +166,15 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='rerank', choices=[
-        'bm25', 'contriever', 'rerank', 'e5'
+    parser.add_argument('--retriever_name', type=str, default='bm25', choices=[
+        'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
     parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
@@ -178,7 +183,7 @@ if __name__ == "__main__":
     ])
     parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
         "intfloat/e5-base-v2" # For E5
-        "cross-encoder/ms-marco-MiniLM-L12-v2" # For Rerank | cross-encoder/ms-marco-MiniLM-L-6-v2
+        "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2" # For Rerank
     ])
     parser.add_argument('--retrieval_topk', type=int, default=3)
     parser.add_argument('--faiss_gpu', action='store_false', help='Use GPU for computation')
@@ -207,7 +212,6 @@ if __name__ == "__main__":
     parser.add_argument("--num_votes", type=int, default=1)
     parser.add_argument("--mcts_num_last_votes", type=int, default=5)
     parser.add_argument("--enable_potential_score", action="store_true")
-    parser.add_argument("--num_subquestions", type=int, default=3, help="Number of trials for proposing the next subquestion")
     
     # Discrimination ---
     parser.add_argument("--cutoff_rollout", type=int, default=-1)
@@ -253,7 +257,7 @@ if __name__ == "__main__":
     mcts_generation(args)
     
     
-    # python run_mcts/mcts_generation.py --verbose
+    # python run_mcts/mcts_generation.py
     
 
 

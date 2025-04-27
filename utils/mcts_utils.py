@@ -2,6 +2,7 @@ import math
 from typing import Dict, Tuple
 from enum import Enum, unique
 from colorama import Fore, Style
+from run_searchr1.inference import _passages2string
 
 def verbose_print(s: str, verbose: bool):
     if verbose:
@@ -58,7 +59,7 @@ def find_valid_solution_nodes(root_node):
 
 def stochastic_find_best_solution(
     root_node,
-    evaluator,
+    # evaluator,
     enable_potential_score,
 ):
     # todo: what strategy do we use to select best node?
@@ -117,7 +118,7 @@ def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None,
 
         if node.node_type is Node_Type.USER_QUESTION:
             gt = ", ".join(node.gt_answer)
-            node_details += f"User: {node.user_question} | Ground truth: {gt} | Path: {node.gt_reasoning_steps}" +  "\n" + space + " " * len(node_info) 
+            node_details += f"User: {node.user_question} | Ground truth: {gt} | Candidates: {node.answer_candidates} | Path: {node.gt_reasoning_steps}" +  "\n" + space + " " * len(node_info) 
         elif node.node_type is Node_Type.DIRECT_ANSWER:
             node_details += f"Ans: {node.direct_answer.replace("\n", " ")}"
         elif node.node_type is Node_Type.RAG_ANSWER:
@@ -207,10 +208,7 @@ def concat_solution_trace_v2(solution_trace: Dict[int, Dict[str, str]]):
         elif node_type == 'think_search':
             solution_trace_str += f'<think> {solution_item[node_type]['think']} </think>\n'
             solution_trace_str += f'<search> {solution_item[node_type]['search_query']} </search>\n'
-            solution_trace_str += f'<information>'
-            for i, doc in enumerate(solution_item[node_type]['retrieved_documents']):
-                solution_trace_str += f"Doc [{i+1}]: {doc}\n"
-            solution_trace_str += f"<\information>\n"
+            solution_trace_str += f'<information> {_passages2string(solution_item[node_type]['retrieved_documents'])}<\information>\n'
         
         elif node_type == 'think_answer':
             solution_trace_str += f'<think> {solution_item[node_type]['think']} </think>\n'

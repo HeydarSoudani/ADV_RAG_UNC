@@ -9,6 +9,44 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from utils.general_utils import read_txt, read_json
 
+
+def generate_with_hf_model(
+    model,
+    tokenizer,
+    input,
+    temperature=0.8,
+    top_p=0.95,
+    top_k=40,
+    repetition_penalty=1.1,
+    n=1,
+    max_tokens=256,
+    stop=None,
+    best_of=None,
+):
+    input_ids = tokenizer(input, return_tensors="pt").input_ids.to(model.device)
+
+    # Determine the number of sequences to generate
+    num_return_sequences = n
+    num_beams = best_of if best_of and best_of > n else n
+
+    # Decide whether to use sampling or beam search
+    do_sample = best_of is None or best_of <= n
+
+    outputs = model.generate(
+        input_ids=input_ids,
+        do_sample=do_sample,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        repetition_penalty=repetition_penalty,
+        max_new_tokens=max_tokens,
+        num_return_sequences=num_return_sequences,
+        num_beams=num_beams,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.eos_token_id,
+    )
+    return tokenizer.batch_decode(outputs, skip_special_tokens=True)
+
 class Candidate:
     def __init__(
         self,
@@ -91,7 +129,8 @@ class Discriminator:
     def __init__(self, args, evaluator):
         self.args = args
         self.evaluator = evaluator
-
+        self.discriminator_prompt = read_txt(args.discriminator_prompt_file)
+        
         self.fewshot_config = None
         self.fewshot_template = None
         self.fewshot_prompt = None
@@ -102,17 +141,21 @@ class Discriminator:
         return candidates
 
     def _filter_long(self, candidates: list[Candidate]) -> list[Candidate]:
-        candidates = [c for c in candidates if len(c.final_answer) <= 200]
+        candidates = [c for c in candidates if len(c.final_answer) <= 40]
+        return candidates
+
+    def _filter_white_space(self, candidates: list[Candidate]) -> list[Candidate]:
+        candidates = [c for c in candidates if c.final_answer.strip()]
         return candidates
 
     def _filter_reasoning_consistency(
-        self, gen_model, problem: str, candidates: list[Candidate], aux={}
+        self, gen_model, gen_tokenizer, problem: str, candidates: list[Candidate], aux={}
     ) -> list[Candidate]:
         # problem_id = aux["problem_id"]
         # file_idx = aux["file_idx"]
 
-        prompt_template = self.fewshot_template
-        fewshot_examples = self.fewshot_prompt
+        prompt_template = None
+        fewshot_examples = None
         stop_tokens = self.stop_tokens
 
         assert all(
@@ -127,7 +170,7 @@ class Discriminator:
             for masked_solution_trace in c.masked_solution_trace_list:
                 for _ in range(self.args.rc_n_completions):
                     gen_input_list.append(
-                        prompt_template.format(examples=fewshot_examples, instruction=problem) + masked_solution_trace
+                        masked_solution_trace
                     )
                     ground_truth_list.append(c.final_answer)
             c_completion_num_list.append(len(c.masked_solution_trace_list) * self.args.rc_n_completions)
@@ -143,6 +186,7 @@ class Discriminator:
             sub_gen_input_list = gen_input_list[start_idx:end_idx]
             sub_gen_output_list = self._gen_func(
                 gen_model=gen_model,
+                gen_tokenizer=gen_tokenizer,
                 gen_input=sub_gen_input_list,
                 temperature=self.args.rc_temperature,
                 n=1,
@@ -215,23 +259,145 @@ class Discriminator:
 
         return consistent_candidates
 
-    def _gen_func(self, gen_model, gen_input, temperature: float, n: int = 1, max_tokens: int = 768, stop_tokens=None):
+    def _BoN_filter(self, gen_model, gen_tokenizer, problem: str, candidates: list[Candidate], best_of: int, aux={}) -> list[Candidate]:
+        '''
+        for RAG scenario
+        '''
+        # problem_id = aux["qid"]
+        # file_idx = aux["file_idx"]
+
+        discriminator_prompt = self.discriminator_prompt
+        stop_tokens = self.stop_tokens
+
+        assert all(
+            len(c.masked_solution_trace_list) == self.args.num_masked_solution_traces
+            for c in candidates
+            if c.c_type == "default"
+        )
+        gen_input_list = []
+        ground_truth_list = []
+        c_completion_num_list = []
+        for c in candidates:
+            for masked_solution_trace in c.masked_solution_trace_list:
+                for _ in range(self.args.rc_n_completions):
+                    gen_input_list.append(
+                        discriminator_prompt + '\n\n' + masked_solution_trace
+                    )
+                    ground_truth_list.append(c.final_answer)
+            c_completion_num_list.append(len(c.masked_solution_trace_list) * self.args.rc_n_completions)
+
+        batch_size = self.args.max_num_seqs // self.args.rc_n_completions // 2
+        gen_output_list = []
+        for start_idx in range(0, len(gen_input_list), batch_size):
+            
+            print(start_idx, len(gen_input_list))
+
+            end_idx = start_idx + batch_size
+            sub_gen_input_list = gen_input_list[start_idx: end_idx]
+            sub_gen_output_list = self._gen_func(
+                gen_model=gen_model,
+                gen_tokenizer=gen_tokenizer,
+                gen_input=sub_gen_input_list,
+                temperature=self.args.rc_temperature,
+                n=1,
+                max_tokens=1024,
+                stop_tokens=stop_tokens,
+                best_of=best_of,
+            )
+            gen_output_list.extend(sub_gen_output_list)
+
+        # with open(os.path.join(self.args.discriminate_results_dir, f"problem-{problem_id}.json"), "w") as f:
+        #     js = {"problem_id": problem_id, "file_idx": file_idx, "gen_output_list": gen_output_list}
+        #     json.dump(js, f)
+
+        if all(isinstance(item, list) for item in gen_output_list):
+            completion_list = []
+            for n_completions in gen_output_list:
+                for completion in n_completions:
+                    completion_list.append(completion)
+            assert len(completion_list) == self.args.rc_n_completions * self.args.num_masked_solution_traces * len(
+                candidates
+            )
+            candidate_group_size = self.args.rc_n_completions * self.args.num_masked_solution_traces
+        elif all(isinstance(item, str) for item in gen_output_list):
+            completion_list = gen_output_list
+            candidate_group_size = self.args.num_masked_solution_traces
+
+        answer_list = [
+            self.evaluator.extract_answer_from_model_completion(completion) for completion in completion_list
+        ]
+
+        count = 0
+        completion_group_list = []
+        answer_group_list = []
+        gt_group_list = []
+        for num in c_completion_num_list:
+            completion_group_list.append(completion_list[count : count + num])
+            answer_group_list.append(answer_list[count : count + num])
+            gt_group_list.append(ground_truth_list[count : count + num])
+            count += num
+        assert count == len(completion_list) == len(answer_list)
+
+        consistent_candidates = []
+
+        for c, completion_group, answer_group, gt_answer in zip(
+            candidates, completion_group_list, answer_group_list, gt_group_list
+        ):
+            candidate_group_size = len(c.masked_solution_trace_list)
+            num_consistent = 0
+            if self.args.rc_mode == "maj":
+                answer = self.evaluator.find_most_confident_answer(answer_group)[0]
+                if self.evaluator.check_answers_equiv(gt_answer[-1], answer):
+                    consistent_candidates.append(c)
+            else:
+                for answer, gt_a in zip(answer_group, gt_answer):
+                    if self.evaluator.check_answers_equiv(gt_a, answer):
+                        num_consistent += 1
+                if self.args.rc_mode == "loose":
+                    if num_consistent > 0:
+                        consistent_candidates.append(c)
+                elif self.args.rc_mode == "mid":
+                    if num_consistent >= candidate_group_size // 2:
+                        consistent_candidates.append(c)
+                elif self.args.rc_mode == "strict":
+                    if num_consistent == candidate_group_size:
+                        consistent_candidates.append(c)
+
+        return consistent_candidates
+
+    def _gen_func(self, gen_model, gen_tokenizer, gen_input, temperature: float, n: int = 1, max_tokens: int = 768, stop_tokens=None, best_of=None):
         if temperature == 0.0:
             n = 1
 
-        response = generate_with_vLLM_model(
-            model=gen_model, input=gen_input, temperature=temperature, n=n, max_tokens=max_tokens, stop=stop_tokens
+        response = generate_with_hf_model(
+            model=gen_model, tokenizer=gen_tokenizer, input=gen_input, temperature=temperature, n=n, max_tokens=max_tokens, stop=stop_tokens, best_of=best_of
         )
-        if n == 1:
-            if isinstance(gen_input, str):
-                return response[0].outputs[0].text
-            elif isinstance(gen_input, list):
-                return [r.outputs[0].text for r in response]
-        elif n > 1:
-            if isinstance(gen_input, str):
-                return [o.text for o in response[0].outputs]
-            elif isinstance(gen_input, list):
-                return [[o.text for o in r.outputs] for r in response]
+        print(response)
+        if isinstance(gen_input, str):
+            if n == 1:
+                return response[0]
+            else:
+                return response
+        elif isinstance(gen_input, list):
+            if n == 1:
+                return response
+            else:
+                # Group the outputs: each prompt has 'n' generated sequences
+                return [response[i * n : (i + 1) * n] for i in range(len(gen_input))]
+        
+        # response = generate_with_vLLM_model(
+        #     model=gen_model, input=gen_input, temperature=temperature, n=n, max_tokens=max_tokens, stop=stop_tokens
+        # )
+        # if n == 1:
+        #     if isinstance(gen_input, str):
+        #         return response[0].outputs[0].text
+        #     elif isinstance(gen_input, list):
+        #         return [r.outputs[0].text for r in response]
+        # elif n > 1:
+        #     if isinstance(gen_input, str):
+        #         return [o.text for o in response[0].outputs]
+        #     elif isinstance(gen_input, list):
+        #         return [[o.text for o in r.outputs] for r in response]
 
     def _calculate_scores(self, unfiltered_candidates: list[Candidate], filtered_candidates: list[Candidate]) -> dict:
         _, filtered_answer2confidence, filtered_answer2cnt = group_candidates_by_answer(
@@ -281,9 +447,12 @@ class Discriminator:
             answer2candidates, answer2confidence, _ = group_candidates_by_answer(
                 unfiltered_candidates, self.evaluator, self.args.rc_criteria
             )
-            most_confident_answer = max(answer2confidence.keys(), key=lambda x: answer2confidence[x])
-            winner = answer2candidates[most_confident_answer][0]
-            print(f"==> Winner answer: {most_confident_answer}\n")
+            if answer2confidence:
+                most_confident_answer = max(answer2confidence.keys(), key=lambda x: answer2confidence[x], default=None)
+                winner = answer2candidates[most_confident_answer][0]
+                print(f"==> Winner answer: {most_confident_answer}\n")
+            else:
+                winner = None
         elif len(filtered_candidates) == 1:
             winner = filtered_candidates[0]
             print(f"==> Winner answer: {winner.final_answer}\n")
@@ -313,6 +482,7 @@ class MajorityVoteDiscriminator(Discriminator):
             args.model_name_or_path,
             use_fast=False
         )
+        self.best_of = args.best_of
 
     def select(self, problem: str, candidates: list[Candidate], gt_answer: str = None, aux={}) -> Candidate:
         print(f"==> Ground truth answer: {gt_answer}")
@@ -322,15 +492,16 @@ class MajorityVoteDiscriminator(Discriminator):
         # candidate: [1, 2, 3, 4, 5, None, paosdifjpsod]
         prefiltered_candidates = self._filter_none(candidates)
         prefiltered_candidates = self._filter_long(prefiltered_candidates)
+        prefiltered_candidates = self._filter_white_space(prefiltered_candidates)
         # prefiltered_candidates: [1, 2, 3, 4, 5]
         print(f"==> Pre-filtered answers: {[c.final_answer for c in prefiltered_candidates]}")
         
         # select the final trajectory through Reasoning Consistency
         if self.args.extend_rc_mode == 'original':
-            filtered_candidates = self._filter_reasoning_consistency(self.model, problem, prefiltered_candidates, aux)
+            filtered_candidates = self._filter_reasoning_consistency(self.model, self.tokenizer, problem, prefiltered_candidates, aux)
             print(f"==> RC-filtered answers: {[c.final_answer for c in filtered_candidates]}")
         elif self.args.extend_rc_mode == 'BoN':
-            filtered_candidates = self._BoN_filter(self.model, problem, prefiltered_candidates, self.best_of, aux)
+            filtered_candidates = self._BoN_filter(self.model, self.tokenizer, problem, prefiltered_candidates, self.best_of, aux)
             print(f"==> BoN-filtered answers: {[c.final_answer for c in filtered_candidates]}")
         elif self.args.extend_rc_mode == 'majority_vote':
             filtered_candidates = []

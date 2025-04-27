@@ -10,9 +10,8 @@ import argparse
 
 from utils.general_utils import set_seed
 from mcts_generation import mcts_generation
-from mcts_discrimination import mcts_discrimination
+from run_mcts.rc_discrimination import rc_discrimination
 from mcts_evaluation import mcts_evaluation
-from mcts_uncertainty_evaluation import mcts_uncertainty_evaluation
 
 
 if __name__ == "__main__":
@@ -29,8 +28,8 @@ if __name__ == "__main__":
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='rerank', choices=[
-        'bm25', 'contriever', 'rerank', 'e5'
+    parser.add_argument('--retriever_name', type=str, default='bm25', choices=[
+        'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
     parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
@@ -38,8 +37,8 @@ if __name__ == "__main__":
         'data/search_r1_files/e5_Flat.index', # For E5
     ])
     parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
+        "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank
         "intfloat/e5-base-v2" # For E5
-        "cross-encoder/ms-marco-MiniLM-L12-v2" # For Rerank | cross-encoder/ms-marco-MiniLM-L-6-v2
     ])
     parser.add_argument('--retrieval_topk', type=int, default=3)
     parser.add_argument('--faiss_gpu', action='store_false', help='Use GPU for computation')
@@ -68,7 +67,6 @@ if __name__ == "__main__":
     parser.add_argument("--num_votes", type=int, default=1)
     parser.add_argument("--mcts_num_last_votes", type=int, default=5)
     parser.add_argument("--enable_potential_score", action="store_true")
-    parser.add_argument("--num_subquestions", type=int, default=3, help="Number of trials for proposing the next subquestion")
     
     # Discrimination ---
     parser.add_argument("--cutoff_rollout", type=int, default=-1)
@@ -91,7 +89,7 @@ if __name__ == "__main__":
     model_ = args.model_name_or_path.split('/')[-1]
     output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     args.generation_trees_results_dir = f'{output_dir}/generation_trees'
-    args.discriminate_results_file = f"{output_dir}/discriminate_results.jsonl"
+    args.discriminate_results_file = f"{output_dir}/rc_discriminate_results.jsonl"
     args.evaluate_results_file = f"{output_dir}/evaluate_results.jsonl"
     args.statistics_results_file = f"{output_dir}/statistics_results.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
@@ -113,8 +111,9 @@ if __name__ == "__main__":
     ### === Run Steps ============================
     set_seed(args.seed)
     mcts_generation(args)
-    mcts_discrimination(args)
+    rc_discrimination(args)
     mcts_evaluation(args)
-    # mcts_uncertainty_evaluation(args)
+    
+    # python run_mcts/run_framework.py
     
 

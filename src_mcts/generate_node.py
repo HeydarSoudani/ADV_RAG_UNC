@@ -46,10 +46,10 @@ class Counter:
 
 class Generator:
     """Generator generates children nodes"""
-    def __init__(self, args, retriever, evaluator) -> None:
+    def __init__(self, args, retriever, mcts_type="generation") -> None:
         self.args = args
         self.retriever = retriever
-        self.evaluator = evaluator
+        self.mcts_type = mcts_type
         self.counter = Counter()
                 
         # --- Define model ------------
@@ -63,23 +63,11 @@ class Generator:
             # use_fast=False
         )
         self.eos_token_ids = self.generation_model.config.eos_token_id
-        
-        self.num_subquestions = args.num_subquestions
-        self.num_votes = args.num_votes
-        
-        self.enable_potential_score = args.enable_potential_score
         self.mcts_num_last_votes = args.mcts_num_last_votes
         
-        # Actions' prompts
-        self.query_decomposition_prompt = read_txt(self.args.query_decomposition_prompt_file) # A3
+        # Prompts
         self.semantic_equivalence_prompt = read_txt(self.args.semantic_equivalence_prompt_file)
-        
-        # try:
-        #     self.fewshot_examplers = getattr(examplers, f'{args.dataset}_query_exps')
-        #     self.fewshot_rephrased_examplers = getattr(examplers, 'rephrased_exps')
-        # except AttributeError:
-        #     raise ValueError(f"The dataset '{args.dataset}' does not exist in the 'examplers' module.")
-        
+            
         # EoS tokens
         search_target_sequences = ["</search>", " </search>", "</search>\n", " </search>\n", "</search>\n\n", " </search>\n\n"]
         answer_target_sequences = ["</answer>", " </answer>", "</answer>\n", " </answer>\n", "</answer>\n\n", " </answer>\n\n"]
@@ -233,10 +221,7 @@ class Generator:
 
         return most_confident_answer, confidence
     
-    def get_prompt_text(self, curr_node, solution_trace: Dict[int, Dict[str, str]]):
-        user_query = solution_trace[0]['user_question']
-        
-        # Instruction
+    def get_instruction(self, node_type):
         # === V1
         # input_text = ''
         # input_text += 'You are a multi-step reasoner in a question-answering task. '
@@ -265,11 +250,8 @@ class Generator:
         #     input_text += 'Your output must include only these two tags in this exact order:\n'
         #     input_text += '<think> one complete reasoning step leading to the final answer </think>\n'
         #     input_text += '<answer> final answer </answer>\n'
-
         # input_text += f'\nQuestion: {user_query.strip()}\n'
-
-
-
+        # 
         # === V2
         input_text = ''
         input_text += 'You are a multi-step reasoner in a question-answering task. '
@@ -282,7 +264,7 @@ class Generator:
         input_text += 'NEVER include anything outside the required tags. DO NOT add explanations, introductions, or extra formatting.\n'
         input_text += 'Your output must not contain anything else beyond what is explicitly required.\n\n'
 
-        if curr_node == 'think_search':
+        if node_type == 'think_search':
             input_text += 'You are in the SEARCH stage.\n'
             input_text += 'Your goal is to identify what specific information is missing and required to move closer to the answer.\n'
             input_text += 'DO NOT attempt to answer the question yet.\n'
@@ -290,7 +272,7 @@ class Generator:
             input_text += 'Only include the following tags in this exact order:\n'
             input_text += '<think> one complete reasoning step leading to a search query </think>\n'
             input_text += '<search> search query </search>\n'
-        elif curr_node == 'think_answer':
+        elif node_type == 'think_answer':
             input_text += 'You are in the ANSWER stage.\n'
             input_text += 'Use your internal knowledge and any available <information> content to reason toward the answer.\n'
             input_text += 'Do NOT generate or modify <information> tags in your output.\n'
@@ -298,9 +280,45 @@ class Generator:
             input_text += 'Only include the following tags in this exact order:\n'
             input_text += '<think> one complete reasoning step leading to the final answer </think>\n'
             input_text += '<answer> final answer </answer>\n'
-
-        input_text += f'\nQuestion: {user_query.strip()}\n'
-
+        input_text += f'\nQuestion: '
+        
+        return input_text
+        
+    
+    def get_prompt_text(self, curr_node, solution_trace: Dict[int, Dict[str, str]]):
+        if self.mcts_type == "generation":
+            return self.get_prompt_text_generation(curr_node, solution_trace)
+        elif self.mcts_type == "discrimination":
+            return self.get_prompt_text_discrimination(curr_node, solution_trace)
+    
+    def get_prompt_text_generation(self, cur_node_type, solution_trace: Dict[int, Dict[str, str]]):
+        user_query = solution_trace[0]['user_question'] 
+        input_text = self.get_instruction(cur_node_type)
+        input_text = f"{user_query.strip()}\n"
+        
+        # Path so far
+        for item_idx in solution_trace:
+            solution_item = solution_trace[item_idx]
+            node_keys = list(solution_item.keys())
+            node_type = node_keys[0]
+            
+            if node_type == 'think_search':
+                input_text += f"<think> {solution_item[node_type]['think']} </think>\n"
+                input_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
+                docs = solution_item[node_type]['retrieved_documents']
+                if len(docs) > 0:
+                    input_text += f"<information> {_passages2string(docs)}</information>\n"
+            
+        return input_text
+    
+    def get_prompt_text_discrimination(self, cur_node_type, solution_trace: Dict[int, Dict[str, str]]):
+        user_query = solution_trace[0]['user_question']
+        answer_candidates = solution_trace[0]['answer_candidates']
+        
+        input_text = self.get_instruction(cur_node_type, user_query)
+        input_text += 'Answer Candidates:\n'
+        for idx, candidate in enumerate(answer_candidates, 1):
+            input_text += f'- {candidate}\n'
 
         # Path so far
         for item_idx in solution_trace:
@@ -313,11 +331,29 @@ class Generator:
                 input_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
                 docs = solution_item[node_type]['retrieved_documents']
                 if len(docs) > 0:
-                    input_text += f"<information> {_passages2string(docs)}<\information>\n"
+                    input_text += f"<information> {_passages2string(docs)}</information>\n"
             
         return input_text
     
-    
+    def trace2text(self, solution_trace: Dict[int, Dict[str, str]]):
+        input_text = ''
+        # Path so far
+        for item_idx in solution_trace:
+            solution_item = solution_trace[item_idx]
+            node_keys = list(solution_item.keys())
+            node_type = node_keys[0]
+            if node_type == 'think_search':
+                input_text += f"<think> {solution_item[node_type]['think']} </think>\n"
+                input_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
+                docs = solution_item[node_type]['retrieved_documents']
+                if len(docs) > 0:
+                    input_text += f"<information> {_passages2string(docs)}</information>\n"
+            if node_type == 'think_answer':
+                input_text += f"<think> {solution_item[node_type]['think']} </think>\n"
+                input_text += f"<answer> {solution_item[node_type]['answer']} </answer>\n"    
+            
+        return input_text
+
     def generate_think_search(self, solution_trace: Dict[int, Dict[str, str]]):
         ### = Do generation
         input_prompt_text = self.get_prompt_text('think_search', solution_trace)
@@ -341,7 +377,6 @@ class Generator:
             retrieved_docs = []
               
         return thinks, search_query, retrieved_docs
-    
     
     def generate_think_answer(self, solution_trace: Dict[int, Dict[str, str]]):
         ### = Do generation
@@ -370,7 +405,6 @@ class Generator:
         #     value = 0.001
         
         return think, most_likely_answer, value
-
 
     def think_search_postprocessing(self, solution_trace, input_prompt_text, output):
         qid = solution_trace[0]['qid']

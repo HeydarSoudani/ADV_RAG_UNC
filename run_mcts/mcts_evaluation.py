@@ -31,10 +31,10 @@ def mcts_evaluation(args):
             data = json.loads(line)
             gt_answers = data['gt_answers']
             
-            pred_answer = data['winner_answer']
-            em_socre = em_score(pred_answer, gt_answers)
-            # pred_answers = data['pred_answers']
-            # em_socre = em_score_v2(pred_answers, gt_answers)
+            # pred_answer = data['winner_answer']
+            # em_socre = em_score(pred_answer, gt_answers)
+            pred_answers = data['pred_answers']
+            em_socre = em_score_v2(pred_answers, gt_answers)
             
             em_evaluation.append(em_socre)
             
@@ -52,15 +52,15 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=512)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='musique', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='rerank', choices=[
-        'bm25', 'contriever', 'rerank', 'e5'
+    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
+        'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
     parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     ])
     parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
         "intfloat/e5-base-v2" # For E5
-        "cross-encoder/ms-marco-MiniLM-L12-v2" # For Rerank | cross-encoder/ms-marco-MiniLM-L-6-v2
+        "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2" # For Rerank
     ])
     parser.add_argument('--retrieval_topk', type=int, default=3)
     parser.add_argument('--faiss_gpu', action='store_false', help='Use GPU for computation')
@@ -82,7 +82,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_6 (edited_prompt_roll6)')
+    parser.add_argument('--run', type=str, default='run_5 (edited_prompt_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -98,7 +98,6 @@ if __name__ == "__main__":
     parser.add_argument("--num_votes", type=int, default=1)
     parser.add_argument("--mcts_num_last_votes", type=int, default=5)
     parser.add_argument("--enable_potential_score", action="store_true")
-    parser.add_argument("--num_subquestions", type=int, default=3, help="Number of trials for proposing the next subquestion")
     
     # Discrimination ---
     parser.add_argument("--cutoff_rollout", type=int, default=-1)
@@ -121,7 +120,7 @@ if __name__ == "__main__":
     args.output_dir = f"run_output/{args.run}" 
     model_ = args.model_name_or_path.split('/')[-1]
     args.generation_trees_results_dir = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/generation_trees'
-    args.discriminate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/discriminate_results.jsonl"
+    args.discriminate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/rc_discriminate_results.jsonl"
     args.evaluate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/evaluate_results.jsonl"
     args.statistics_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/statistics_results.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)

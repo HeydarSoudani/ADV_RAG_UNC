@@ -5,21 +5,26 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
 import torch
+import random
 import argparse
-from copy import deepcopy
+import datasets
+import numpy as np
 from tqdm import tqdm, trange
 
-from src_mcts.evaluate import Evaluator
-from src_mcts.discriminate import Candidate, MajorityVoteDiscriminator, group_candidates_by_answer
-from utils.general_utils import set_seed, read_txt, read_json, read_jsonl
+from utils.general_utils import set_seed, read_jsonl
+from run_searchr1.correctness import em_score
+from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
+from src_adaptive.dataset import BaseDataset
+
+from run_mcts.searchr1_discrimination import SemanticEquivalenceGenerator
+# from src_adaptive.retrieve import BM25, Rerank
+from src_mcts.generate_node import Generator
+from src_mcts.MCTS_backbone import MCTS_Searcher
+from src_mcts.MCTS_reasoning_v2 import Reasoning_MCTS_Node
 from utils.mcts_utils import (
     Node_Type,
     stochastic_find_best_solution,
-    print_tree_from_root,
-    concat_solution_trace,
-    mask_solution_trace,
-    rag_mask_solution_trace,
-    concat_solution_trace_v2
+    print_tree_from_root
 )
 
 
@@ -27,139 +32,156 @@ def mcts_discrimination(args):
     print("\n== MCTS Discrimination ...")
     print(f"""
         Model name:  {args.model_name_or_path}
-        Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
-        Retriever:   {args.retriever_name}
+        Dataset:     {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
+        Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
         Rollouts:    {args.num_rollouts}
         Seed:        {args.seed}
         Run:         {args.run}
     """.replace('        ', ''))
     
-    # === Output files ==========================
+    # === Input ================================
     entries = os.listdir(args.generation_trees_results_dir)
     query_ids = [entry for entry in entries if os.path.isdir(os.path.join(args.generation_trees_results_dir, entry))]
-    sorted_query_ids = sorted(query_ids, key=lambda x: int(x.split('_')[1]))
+    sorted_query_ids = sorted(query_ids, key=lambda x: int(x.split('_')[1])) 
+    # Output
+    generated_qids = [name for name in os.listdir(args.discrimination_trees_results_dir) if os.path.isdir(os.path.join(args.discrimination_trees_results_dir, name))]
     
-    # === Model Definition ======================  
-    evaluator = Evaluator()
-    discriminator = MajorityVoteDiscriminator(args, evaluator)
-    evaluator.model = discriminator.model
-    evaluator.eos_token_ids = discriminator.model.config.eos_token_id
-    evaluator.tokenizer = discriminator.tokenizer
-    evaluator.equiv_prompt = read_txt(args.semantic_equivalence_prompt_file)
+    # === Static Retriever ===================== 
+    if args.retriever_name == 'bm25':
+        retriever = BM25Retriever(args)  
+    elif args.retriever_name == 'contriever':
+        retriever = ContrieverRetriever(args)
+    elif args.retriever_name == 'rerank':
+        retriever = RerankRetriever(args)
+    elif args.retriever_name in ['e5', 'bge']:
+        retriever = DenseRetriever(args)
     
-    # === Main Loop =============================
-    num_correct, num_correct_majvote, num_correct_limit, num_tested = 0, 0, 0, 0
-    total_num_candidates = 0
     
-    with open(args.discriminate_results_file, 'w', encoding='utf-8') as outfile:
-        for qid in sorted_query_ids:
-            print(qid)
+    # === Model Definition ======================    
+    node_generator = Generator(args, retriever, mcts_type="discrimination")
+    se_model = SemanticEquivalenceGenerator(args)
+    
+    
+    # === Tree Generation =======================
+    em_evaluation = []
+    with open(args.discriminate_results_file, 'w', encoding='utf-8') as inf_file:
+        for idx, qid in enumerate(tqdm(sorted_query_ids)):
+            print('\n-------------------')
+            # if idx == 5:
+            #     break
+            
             final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
-            
             trace_js = read_jsonl(final_solutions_file)  
-            if args.cutoff_rollout > -1:
-                trace_js = [s for s in trace_js if s["rollout_id"] <= args.cutoff_rollout]  
-            
-            user_question = trace_js[0]["trace"]["0"]["user_question"]
-            ground_truth = trace_js[0]["trace"]["0"]["ground_truth"]
-            evaluator.question = user_question
-            
-            all_candidates = []
-            solution_trace_dic = {}
-            for id, s in enumerate(trace_js):
-                trace = s["trace"] if "trace" in s else s
-                solution_trace, final_step, _, reward = concat_solution_trace_v2(trace) # TODO
-                if solution_trace in solution_trace_dic:
-                    solution_trace_dic[solution_trace]["freq"] = solution_trace_dic[solution_trace]["freq"] + 1
-                    solution_trace_dic[solution_trace]["reward"] = (
-                        solution_trace_dic[solution_trace]["reward"] + reward
-                    )
-                    if len(solution_trace_dic[solution_trace]["final_step"]) < len(final_step):
-                        solution_trace_dic[solution_trace]["final_step"] = final_step
-                else:
-                    solution_trace_dic[solution_trace] = {"freq": 1, "reward": reward, "final_step": final_step}
+            question = trace_js[0]["trace"]["0"]["user_question"]
+            question = question.strip()
+            if question[-1] != '?':
+                question += '?'
+                
+            gt_answers = trace_js[0]["trace"]["0"]["ground_truth"]
+            options = [s["trace"][list(s["trace"].keys())[-1]]['think_answer']["answer"] for s in trace_js]
+            options = se_model._filter_none(options)
+            options = se_model._filter_long(options)
+            options = se_model._filter_white_space(options)
+            options = se_model._filter_stop_words(options)
+            cls_options = se_model.cluster_by_meaning(question, options)
+            print(cls_options)
 
-            for solution_trace in solution_trace_dic.keys():
-                final_step = solution_trace_dic[solution_trace]["final_step"]
-                trace_freq = solution_trace_dic[solution_trace]["freq"]
-                trace_reward = solution_trace_dic[solution_trace]["reward"]
-
-                masked_solution_trace_list = rag_mask_solution_trace( # TODO
-                    solution_trace,
-                    num_return=args.num_masked_solution_traces,
-                    left_boundary=args.mask_left_boundary,
-                    right_boundary=args.mask_right_boundary,
-                )
-                final_answer = final_step.strip()
-                # print(f"{final_answer} -> {trace_reward}")
-                # print(masked_solution_trace_list)
-
-
-                candidate = Candidate(
-                    solution_trace,
-                    deepcopy(masked_solution_trace_list),
-                    final_step,
-                    final_answer,
-                    id,
-                    trace_freq,
-                    trace_reward,
-                )
-                all_candidates.append(candidate)
-            
-            # for can in all_candidates:
-            #     print(can.to_dict())
-            
-            # print(all_candidates)
-            answer2candidates, answer2confidence, _ = group_candidates_by_answer(
-                all_candidates, evaluator, args.rc_criteria
-            )
-            most_confident_answer = max(answer2candidates.keys(), key=lambda x: answer2confidence[x])
-            highest_confidence = answer2confidence[most_confident_answer]
-            assert highest_confidence > 0
-            # -------------------------------------------------------------------------
-
-            candidates = all_candidates  #! exhaustive
-            total_num_candidates += len(candidates)
-
-            # ------ Get winner answer ------
-            if highest_confidence > args.threshold:
-                print("You are very confident. Skipping...")
-                winner_answer = most_confident_answer
+            if len(cls_options) == 0:
+                pred_answer = ''
+            elif len(cls_options) == 1:
+                pred_answer = random.choice(cls_options[0])
             else:
-                winner_candidate = discriminator.select(
-                    user_question,
-                    candidates,
-                    gt_answer=ground_truth,
-                    # aux={"file_idx": file_idx, "problem_id": qid},
+                unq_options = [random.choice(cls_) for cls_ in cls_options]
+                
+                # = Tree Geeration ... 
+                # if qid in generated_qids:
+                #     print(f"The MCTS for query {qid} has been already generated")
+                # else:
+                print(f"Generating MCTS for query {qid} ...")
+
+                #! build an MCTS searcher
+                mcts_searcher = MCTS_Searcher(
+                    exploration_weight=args.mcts_exploration_weight,
+                    weight_scheduler=args.mcts_weight_scheduler,
+                    num_rollouts=args.num_rollouts,
+                    discount=args.mcts_discount_factor,
+                    verbose=args.verbose,
                 )
-                if winner_candidate is not None:
-                    winner_answer = winner_candidate.final_answer
+                #! build the MCTS tree
+                root_node = Reasoning_MCTS_Node(
+                    parent=None,
+                    depth=0,
+                    node_type=Node_Type.USER_QUESTION,
+                    verbose=args.verbose,
+                    generator=node_generator,
+                    question_id=qid,
+                    user_question=question,
+                    gt_answer=gt_answers,
+                    gt_reasoning_steps=[],
+                    answer_candidates=unq_options,
+                    max_depth_allowed=args.max_depth_allowed,
+                    enable_potential_score=args.enable_potential_score,
+                )
+                
+                #! do rollout 
+                model_all_solutions = []
+                model_rollout_nodes = []
+                for i in (pbar := trange(args.num_rollouts, disable=True, position=0)):
+                    rollout_node = mcts_searcher.do_rollout(root_node, i)
+                    model_rollout_nodes.append(rollout_node)
+                    all_solution_nodes, all_solutions = stochastic_find_best_solution(
+                        root_node, enable_potential_score=args.enable_potential_score
+                    )
+                    model_all_solutions.append(all_solutions)
+                    
+                    os.makedirs(f"{args.discrimination_trees_results_dir}/{qid}", exist_ok=True)
+                    with open(f"{args.discrimination_trees_results_dir}/{qid}/rollout_{i}.tree", "w") as f:
+                        print_tree_from_root(
+                            mcts_searcher=mcts_searcher,
+                            rollout_id=i,
+                            root_node=root_node,
+                            chosen_node=None,
+                            file=f,
+                        )
+                
+                #! record final traces
+                disc_trace_js = [{"trace": node.solution_trace, "rollout_id": node.rollout_id} for node in all_solution_nodes]
+                disc_options = [s["trace"][list(s["trace"].keys())[-1]]['think_answer']["answer"] for s in disc_trace_js]
+                disc_cls_options = se_model.cluster_by_meaning(question, disc_options)
+                print(disc_cls_options)
+                
+                if len(disc_cls_options) == 0:
+                    pred_answer = ''
+                elif len(disc_cls_options) == 1:
+                    pred_answer = random.choice(disc_cls_options[0])
                 else:
-                    winner_answer = most_confident_answer
-            
-            
+                    pred_answer = random.choice([random.choice(cls_) for cls_ in disc_cls_options])
+
+            print(pred_answer)
+            correctness_em = em_score(pred_answer, gt_answers)
+            em_evaluation.append(correctness_em)
             item = {
                 "qid": qid,
-                "query": user_question,
-                "gt_answers": ground_truth,
-                "winner_answer": winner_answer,
-                "pred_answers": [c.final_answer for c in candidates],
-                "conf": answer2confidence[winner_answer]
+                "query": question,
+                "em": correctness_em,
+                "gt_answers": gt_answers,
+                "final_answer": pred_answer,
+                "cluster_options": cls_options,
             }
-            outfile.write(json.dumps(item) + '\n')
+            inf_file.write(json.dumps(item) + '\n')
             
-            # print(winner_answer)
-
-            # 
-            # with open(discriminate_results_file, "w") as f:
-            #     json.dump(temp_recording, f, indent=4)
-
+            
+    # === Print results ========================
+    print("\nEvaluation Result:")
+    print(f"EM: {np.mean(em_evaluation)*100}")
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--max_new_token', type=int, default=512)
+    parser.add_argument('--model_name_or_path_gen', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-3B-Instruct')
+    parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
     parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
@@ -192,7 +214,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_6 (edited_prompt_roll6)')
+    parser.add_argument('--run', type=str, default='run_5 (edited_prompt_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -203,12 +225,11 @@ if __name__ == "__main__":
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
-    parser.add_argument("--num_rollouts", type=int, default=4)
-    parser.add_argument("--max_depth_allowed", type=int, default=4)
+    parser.add_argument("--num_rollouts", type=int, default=2)
+    parser.add_argument("--max_depth_allowed", type=int, default=2)
     parser.add_argument("--num_votes", type=int, default=1)
-    parser.add_argument("--mcts_num_last_votes", type=int, default=10)
+    parser.add_argument("--mcts_num_last_votes", type=int, default=5)
     parser.add_argument("--enable_potential_score", action="store_true")
-    parser.add_argument("--num_subquestions", type=int, default=3, help="Number of trials for proposing the next subquestion")
     
     # Discrimination ---
     parser.add_argument("--cutoff_rollout", type=int, default=-1)
@@ -228,13 +249,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # === Files ====================
-    model_ = args.model_name_or_path.split('/')[-1]
+    model_ = args.model_name_or_path_gen.split('/')[-1]
     output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     args.generation_trees_results_dir = f'{output_dir}/generation_trees'
-    args.discriminate_results_file = f"{output_dir}/discriminate_results.jsonl"
-    args.evaluate_results_file = f"{output_dir}/evaluate_results.jsonl"
-    args.statistics_results_file = f"{output_dir}/statistics_results.jsonl"
-    os.makedirs(args.generation_trees_results_dir, exist_ok=True)
+    args.discrimination_trees_results_dir = f"{output_dir}/discrimination_trees"
+    args.discriminate_results_file = f"{output_dir}/mcts_discriminate_results.jsonl"
+    os.makedirs(args.discrimination_trees_results_dir, exist_ok=True)
     
     # === Prompt files =============
     args.semantic_equivalence_prompt_file = "prompts_mcts/semantic_equivalence_prompt_template.txt"
@@ -253,5 +273,7 @@ if __name__ == "__main__":
     mcts_discrimination(args)
     
     
-    # python run_mcts/mcts_discrimination.py
+    # python run_mcts/mcts_discrimination.py --verbose
     
+
+

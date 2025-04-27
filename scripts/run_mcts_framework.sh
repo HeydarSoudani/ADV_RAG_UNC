@@ -4,7 +4,7 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
-#SBATCH --time=6:00:00
+#SBATCH --time=2:00:00
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -13,13 +13,15 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 ### === Set variables ==========================
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="musique"
-subsec="dev"
+dataset="bamboogle"
+subsec="test"
 fraction_of_data_to_use=1.0
-retriever_name="rerank"
-num_rollouts=4
-max_depth_allowed=4
-run="run_5 (edited_prompt_roll4)"
+retriever_name="bm25"
+index_path="data/search_r1_files/bm25"
+retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
+num_rollouts=6
+max_depth_allowed=6
+run="run_6 (edited_prompt_roll6)"
 
 srun python $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
     --model_name_or_path "$model_name_or_path" \
@@ -49,12 +51,14 @@ srun python $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
     # llama2(13B):"meta-llama/Llama-2-13b-chat-hf"
     # llama2(7B): "meta-llama/Llama-2-7b-chat-hf"
     
-    # Qwen2.5:    "Qwen/Qwen2.5-7B-Instruct"
-    # Gemma2:     "google/gemma-2-9b-it"
-    # Phi4 (14B): "microsoft/phi-4"
-    # Falcon3:    "tiiuae/Falcon3-10B-Instruct"
-    # Mistral:    "mistralai/Mistral-7B-Instruct-v0.3"
-    # Vicuna:     "lmsys/vicuna-13b-v1.5"
+    # Qwen2.5 (7B): "Qwen/Qwen2.5-7B-Instruct"
+    # Qwen2.5 (3B): "Qwen/Qwen2.5-3B-Instruct"
+    
+    # Gemma2:         "google/gemma-2-9b-it"
+    # Phi4 (14B):     "microsoft/phi-4"
+    # Falcon3:        "tiiuae/Falcon3-10B-Instruct"
+    # Mistral:        "mistralai/Mistral-7B-Instruct-v0.3"
+    # Vicuna:         "lmsys/vicuna-13b-v1.5"
 
     # DS-7B: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
     # DS-8B: deepseek-ai/DeepSeek-R1-Distill-Llama-8B

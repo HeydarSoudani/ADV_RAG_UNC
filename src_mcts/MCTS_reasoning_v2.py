@@ -23,6 +23,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
         user_question: str = None,
         gt_answer: List[str] = None,
         gt_reasoning_steps: List[str] = None,
+        answer_candidates: List[str] = None,
         generator: Generator = None,
         node_value: float = None,
         max_depth_allowed: int = None,
@@ -74,6 +75,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         user_question,
                         gt_answer,
                         gt_reasoning_steps,
+                        answer_candidates,
                         max_depth_allowed,
                     ]
                 )
@@ -88,6 +90,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         user_question,
                         gt_answer,
                         gt_reasoning_steps,
+                        answer_candidates,
                         max_depth_allowed,
                         node_value,
                         answer,   
@@ -113,6 +116,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         user_question,
                         gt_answer,
                         gt_reasoning_steps,
+                        answer_candidates,
                         max_depth_allowed,
                         search_query,
                         retrieved_documents,
@@ -150,6 +154,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
             self.user_question = user_question
             self.gt_answer = gt_answer
             self.gt_reasoning_steps = gt_reasoning_steps
+            self.answer_candidates = answer_candidates
             self.generator = generator
             self.max_depth_allowed = max_depth_allowed
             self.enable_potential_score = enable_potential_score
@@ -159,6 +164,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
             self.user_question = parent.user_question
             self.gt_answer = parent.gt_answer
             self.gt_reasoning_steps = parent.gt_reasoning_steps
+            self.answer_candidates = parent.answer_candidates
             self.generator = parent.generator
             self.max_depth_allowed = parent.max_depth_allowed
             self.enable_potential_score = parent.enable_potential_score
@@ -167,7 +173,13 @@ class Reasoning_MCTS_Node(MCTS_Node):
         if parent is None:  # root
             assert self.node_type is Node_Type.USER_QUESTION
             self.solution_trace: Dict[int, Dict[str, str]] = {
-                0: {"user_question": user_question, "qid": question_id, "ground_truth": gt_answer, "reasoning_steps": gt_reasoning_steps}
+                0: {
+                    "user_question": user_question,
+                    "qid": question_id,
+                    "ground_truth": gt_answer,
+                    "answer_candidates": answer_candidates,
+                    "reasoning_steps": gt_reasoning_steps
+                }
             }
         else:
             assert self.node_type is not Node_Type.USER_QUESTION
@@ -175,12 +187,20 @@ class Reasoning_MCTS_Node(MCTS_Node):
             
             if node_type is Node_Type.THINK_SERACH:
                 self.solution_trace[max(self.solution_trace.keys())+1] = {
-                    "think_search": {"think": think, "search_query": search_query, "retrieved_documents": retrieved_documents}
+                    "think_search": {
+                        "think": think,
+                        "search_query": search_query,
+                        "retrieved_documents": retrieved_documents
+                    }
                 }
             
             elif node_type is Node_Type.THINK_ANSWER:
                 self.solution_trace[max(self.solution_trace.keys())+1] = {
-                    "think_answer": {"think": think, "answer": answer, "value": node_value}
+                    "think_answer": {
+                        "think": think,
+                        "answer": answer,
+                        "value": node_value
+                    }
                 }
         
         #! potential_score for intermediate nodes (only used for node selection)
