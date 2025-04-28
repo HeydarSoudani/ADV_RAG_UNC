@@ -10,8 +10,7 @@ import argparse
 
 from utils.general_utils import set_seed
 from mcts_generation import mcts_generation
-from run_mcts.rc_discrimination import rc_discrimination
-from mcts_evaluation import mcts_evaluation
+from run_mcts.rc_discrimination_v2 import rc_discrimination
 
 
 if __name__ == "__main__":
@@ -28,15 +27,15 @@ if __name__ == "__main__":
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='bm25', choices=[
+    parser.add_argument('--retriever_name', type=str, default='e5', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
-    parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
+    parser.add_argument('--index_path', type=str, default='data/search_r1_files/e5_Flat.index', choices=[
         'data/search_r1_files/bm25',          # For BM25 & Rerank
         'data/search_r1_files/e5_Flat.index', # For E5
     ])
-    parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
+    parser.add_argument("--retrieval_model_path", type=str, default="intfloat/e5-base-v2", choices=[
         "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank
         "intfloat/e5-base-v2" # For E5
     ])
@@ -57,6 +56,7 @@ if __name__ == "__main__":
     parser.add_argument('--use_counter', action='store_false')
     
     # MCTS ---
+    parser.add_argument("--enable_critique", action="store_true", help="")
     parser.add_argument("--verbose", action="store_true", help="extra login")
     parser.add_argument("--mcts_discount_factor", type=float, default=1.0)
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
@@ -89,9 +89,11 @@ if __name__ == "__main__":
     model_ = args.model_name_or_path.split('/')[-1]
     output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     args.generation_trees_results_dir = f'{output_dir}/generation_trees'
-    args.discriminate_results_file = f"{output_dir}/rc_discriminate_results.jsonl"
-    args.evaluate_results_file = f"{output_dir}/evaluate_results.jsonl"
     args.statistics_results_file = f"{output_dir}/statistics_results.jsonl"
+    
+    args.discriminate_results_file = f"{output_dir}/rc_discriminate_results_v2.jsonl"
+    args.evaluate_results_file = f"{output_dir}/evaluate_results.jsonl"
+    
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
     
     # === Prompt files ===========================
@@ -112,7 +114,7 @@ if __name__ == "__main__":
     set_seed(args.seed)
     mcts_generation(args)
     rc_discrimination(args)
-    mcts_evaluation(args)
+    # mcts_evaluation(args)
     
     # python run_mcts/run_framework.py
     

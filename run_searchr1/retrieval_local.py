@@ -206,7 +206,7 @@ class DenseRetriever(BaseRetriever):
         print('loading index ...')
         self.index = faiss.read_index(self.index_path)
         if config.faiss_gpu:
-            print('a')
+            print('Using faiss_gpu ...')
             co = faiss.GpuMultipleClonerOptions()
             co.useFloat16 = True
             co.shard = True

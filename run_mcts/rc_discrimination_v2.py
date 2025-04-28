@@ -99,32 +99,63 @@ class Discriminator:
         input_text += 'You may use your internal knowledge or retrieved information if needed.\n'
         input_text += 'Retrieved documents, if any, will be provided inside <information> and </information> tags.\n'
         input_text += 'Treat <information> as read-only input. NEVER generate or alter <information> tags yourself.\n'
-        input_text += 'All reasoning must be enclosed in ONE and ONLY ONE pair of <think> and </think> tags.\n'
         input_text += 'NEVER include anything outside the required tags. DO NOT add explanations, introductions, or extra formatting.\n'
         input_text += 'Your output must not contain anything else beyond what is explicitly required.\n\n'
 
         if node_type == 'think_search':
-            input_text += 'You are in the SEARCH stage.\n'
+            input_text += 'You are in the THINK-SEARCH stage.\n'
             input_text += 'Your goal is to identify what specific information is missing and required to move closer to the answer.\n'
             input_text += 'DO NOT attempt to answer the question yet.\n'
             input_text += 'The search query should be precise and focused.\n'
+            input_text += 'All reasoning must be enclosed within ONE and ONLY ONE pair of <think> and </think> tags.\n'
             input_text += 'Only include the following tags in this exact order:\n'
             input_text += '<think> one complete reasoning step leading to a search query </think>\n'
             input_text += '<search> search query </search>\n'
+        
         elif node_type == 'think_answer':
-            input_text += 'You are in the ANSWER stage.\n'
+            input_text += 'You are in the THINK-ANSWER stage.\n'
             input_text += 'Use your internal knowledge and any available <information> content to reason toward the answer.\n'
             input_text += 'Do NOT generate or modify <information> tags in your output.\n'
             input_text += 'Ensure your reasoning is directly connected to the provided information and leads logically to the final answer.\n'
+            input_text += 'The final answer must be short, concise, and to the point.\n'
+            input_text += 'All reasoning must be enclosed within ONE and ONLY ONE pair of <think> and </think> tags.\n'
             input_text += 'Only include the following tags in this exact order:\n'
             input_text += '<think> one complete reasoning step leading to the final answer </think>\n'
             input_text += '<answer> final answer </answer>\n'
+        
+        elif node_type == 'critique_search':
+            input_text += 'You are in the CRITIQUE-SEARCH stage.\n'
+            input_text += 'Your goal is to critically assess both your internal knowledge and the content of the retrieved documents.\n'
+            input_text += 'Consider the possibility that these documents may contain inaccuracies, biases, or outdated information.\n'
+            input_text += 'Reflect on how these potential issues could affect the reliability of the information provided.\n'
+            input_text += 'Based on this critical assessment, formulate a new search query aimed at retrieving alternative or more reliable information sources.\n'
+            input_text += 'Formulate a new search query that explores the question from a fresh perspective, utilizing creative strategies like rephrasing, employing synonyms, or considering related concepts.\n'
+            input_text += 'All reasoning must be enclosed within ONE and ONLY ONE pair of <critique> and </critique> tags.\n'
+            input_text += 'Only include the following tags in this exact order:\n'
+            input_text += '<critique> one complete critical assessment and reasoning leading to a new search query </critique>\n'
+            input_text += '<search> new search query </search>\n'
+        
+        elif node_type == 'critique_answer':
+            input_text += 'You are in the CRITIQUE-ANSWER stage.\n'
+            input_text += 'Your goal is to critically evaluate both your internal knowledge and the content of the retrieved documents.\n'
+            input_text += 'Consider the possibility that these documents may contain inaccuracies, biases, or outdated information.\n'
+            input_text += 'Reflect on how these potential issues could affect the reliability of the information provided.\n'
+            input_text += 'Compare the information from the documents with your internal knowledge to identify any discrepancies or confirmations.\n'
+            input_text += 'Based on this critical evaluation, reason carefully toward a new and improved final answer.\n'
+            input_text += 'The final answer must be short, concise, and to the point.\n'
+            input_text += 'Use <information> content carefully without generating or modifying the tags.\n'
+            input_text += 'All reasoning must be enclosed within ONE and ONLY ONE pair of <critique> and </critique> tags.\n'
+            input_text += 'Only include the following tags in this exact order:\n'
+            input_text += '<critique> one complete critical evaluation and reasoning leading to a new final answer </critique>\n'
+            input_text += '<answer> new final answer </answer>\n'
+    
         input_text += f'\nQuestion: '
         
         return input_text
         
     def trace2text(self, solution_trace: Dict[int, Dict[str, str]]):
         input_text = ''
+        # Path so far
         for item_idx in solution_trace:
             solution_item = solution_trace[item_idx]
             node_keys = list(solution_item.keys())
@@ -135,11 +166,20 @@ class Discriminator:
                 docs = solution_item[node_type]['retrieved_documents']
                 if len(docs) > 0:
                     input_text += f"<information> {_passages2string(docs)}</information>\n"
+            if node_type == 'critique_search':
+                input_text += f"<critique> {solution_item[node_type]['critique']} </critique>\n"
+                input_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
+                docs = solution_item[node_type]['retrieved_documents']
+                if len(docs) > 0:
+                    input_text += f"<information> {_passages2string(docs)}</information>\n"
             if node_type == 'think_answer':
                 input_text += f"<think> {solution_item[node_type]['think']} </think>\n"
                 input_text += f"<answer> {solution_item[node_type]['answer']} </answer>\n"    
+            if node_type == 'critique_answer':
+                input_text += f"<critique> {solution_item[node_type]['critique']} </critique>\n"
+                input_text += f"<answer> {solution_item[node_type]['answer']} </answer>\n"
             
-        return input_text    
+        return input_text  
 
     def generate(self,
         input_texts:list[str],
@@ -600,8 +640,10 @@ def rc_discrimination(args):
                 trace_ = trace["trace"]
                 trace_ = {int(key): val for key, val in  trace_.items()}
                 trace_text = discriminator.trace2text(trace_)
-                final_answer = trace_[list(trace_.keys())[-1]]['think_answer']["answer"]
-                final_answer_reward = trace_[list(trace_.keys())[-1]]['think_answer']["value"]
+                last_depth_key = list(trace_.keys())[-1]
+                last_node_type = list(trace_[last_depth_key].keys())[0] 
+                final_answer = trace_[last_depth_key][last_node_type]["answer"]
+                final_answer_reward = trace_[last_depth_key][last_node_type]["value"]
                 masked_trace_text_list = rag_mask_solution_trace(
                     trace_text,
                     num_return=args.num_masked_solution_traces,
@@ -643,7 +685,7 @@ def rc_discrimination(args):
                 "qid": qid,
                 "query": question,
                 "gt_answers": gt_answers,
-                "EM": correctness_em,
+                "em": correctness_em,
                 "winner_answer": winner_answer,
                 "pred_answers": [c.final_answer for c in all_candidates],
                 "conf": answer2confidence[winner_answer]
@@ -669,17 +711,17 @@ if __name__ == "__main__":
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
+    parser.add_argument('--retriever_name', type=str, default='e5', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
-    parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
+    parser.add_argument('--index_path', type=str, default='data/search_r1_files/e5_Flat.index', choices=[
         'data/search_r1_files/bm25',          # For BM25 & Rerank
         'data/search_r1_files/e5_Flat.index', # For E5
     ])
-    parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L12-v2", choices=[
+    parser.add_argument("--retrieval_model_path", type=str, default="intfloat/e5-base-v2", choices=[
+        "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank
         "intfloat/e5-base-v2" # For E5
-        "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2" # For Rerank
     ])
     parser.add_argument('--retrieval_topk', type=int, default=3)
     parser.add_argument('--faiss_gpu', action='store_false', help='Use GPU for computation')

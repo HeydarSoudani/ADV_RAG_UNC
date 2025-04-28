@@ -66,6 +66,14 @@ def get_answer(text):
     else:
         return None
 
+def get_critique(text):
+    pattern = re.compile(r"<critique>(.*?)</critique>", re.DOTALL)
+    matches = pattern.findall(text)
+    if matches:
+        return matches[-1]
+    else:
+        return None
+
 def _passages2string(retrieval_result):
     # print(retrieval_result)
     format_reference = ''
@@ -103,14 +111,29 @@ def searchr1_inference(args):
     
     # === Dataset ===============================
     dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', args.dataset)
-    if 'test' in dataset:
+    if args.subsec == 'train' and 'train' in dataset:
+        print(f'Using the {args.dataset} train dataset...')
+        test_dataset_ = dataset['train']
+    elif 'test' in dataset:
         print(f'Using the {args.dataset} test dataset...')
-        test_dataset = dataset['test']
+        test_dataset_ = dataset['test']
     elif 'dev' in dataset:
         print(f'Using the {args.dataset} dev dataset...')
-        test_dataset = dataset['dev']
+        test_dataset_ = dataset['dev']
+    
+    
+    if args.fraction_of_data_to_use < 1.0:
+        shuffled_dataset = test_dataset_.shuffle(seed=args.seed)
+        num_samples = int(args.fraction_of_data_to_use * len(shuffled_dataset))
+        test_dataset = shuffled_dataset.select(range(num_samples))
+    elif args.fraction_of_data_to_use > 1.0:
+        shuffled_dataset = test_dataset_.shuffle(seed=args.seed)
+        test_dataset = shuffled_dataset.select(range(int(args.fraction_of_data_to_use)))
+    else:
+        test_dataset = test_dataset_
     
     sample_index = 0
+    print(f"Length of Dataset: {len(test_dataset)}")
     print(f"Dataset example {sample_index}:")
     print(f"Id:             {test_dataset[sample_index]['id']}")
     print(f"Question:       {test_dataset[sample_index]['question']}")
@@ -131,7 +154,7 @@ def searchr1_inference(args):
         retriever = BM25Retriever(args)  
     elif args.retriever_name == 'contriever':
         retriever = ContrieverRetriever(args)
-    elif args.retriever_name == 'rerank':
+    elif args.retriever_name in ['rerank_l6', 'rerank_l12']:
         retriever = RerankRetriever(args)
     elif args.retriever_name in ['e5', 'bge']:
         retriever = DenseRetriever(args)
@@ -161,7 +184,7 @@ def searchr1_inference(args):
     em_evaluation = generated_em
     with jsonlines.open(args.inference_results_file, mode='a') as inf_file, jsonlines.open(args.path_results_file, mode='a') as path_file:
         for i, sample in enumerate(tqdm(test_dataset)):
-            # if i == 20:
+            # if i == 10:
             #     break
             qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
             question = question.strip()
@@ -257,15 +280,15 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=20.0)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='rerank', choices=[
-        'bm25', 'contriever', 'rerank', 'e5'
+    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
+        'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
     parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
@@ -273,8 +296,8 @@ if __name__ == "__main__":
         'data/search_r1_files/e5_Flat.index', # For E5
     ])
     parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
+        "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank
         "intfloat/e5-base-v2" # For E5
-        "cross-encoder/ms-marco-MiniLM-L12-v2" # For Rerank | cross-encoder/ms-marco-MiniLM-L-6-v2
     ])
     parser.add_argument('--retrieval_topk', type=int, default=3)
     parser.add_argument('--faiss_gpu', action='store_false', help='Use GPU for computation')

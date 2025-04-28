@@ -17,6 +17,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
         depth: int,
         node_type: Node_Type,
         verbose: bool = False,
+        enable_critique: bool = False,
         
         # --- For instantiating root node ---
         question_id: str = None,
@@ -30,6 +31,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
         
         # --- My Actions ---------------------
         think: str = None,
+        critique: str = None,
         search_query: str = None,
         retrieved_documents: List[str] = None,
         answer: str = None,
@@ -62,6 +64,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         parent,
                         node_value,
                         think,
+                        critique,
                         search_query,
                         retrieved_documents,
                         answer,
@@ -94,6 +97,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         max_depth_allowed,
                         node_value,
                         answer,   
+                        critique,
                     ]
                 )
                 assert all(
@@ -120,6 +124,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         max_depth_allowed,
                         search_query,
                         retrieved_documents,
+                        critique,
                     ]
                 )
                 assert all(
@@ -128,6 +133,60 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         parent,
                         node_value,
                         think,
+                        answer,
+                    ]
+                )
+
+            elif node_type is Node_Type.CRITIQUE_SEARCH:
+                assert depth > 0
+                assert all(
+                    attr is None
+                    for attr in [
+                        generator,
+                        question_id,
+                        user_question,
+                        gt_answer,
+                        gt_reasoning_steps,
+                        answer_candidates,
+                        max_depth_allowed,
+                        node_value,
+                        answer,  
+                        think, 
+                    ]
+                )
+                assert all(
+                    attr is not None
+                    for attr in [
+                        parent,
+                        critique,
+                        search_query,
+                        retrieved_documents,
+                    ]
+                )
+            
+            elif node_type is Node_Type.CRITIQUE_ANSWER:
+                assert depth > 0
+                assert all(
+                    attr is None
+                    for attr in [
+                        generator,
+                        question_id,
+                        user_question,
+                        gt_answer,
+                        gt_reasoning_steps,
+                        answer_candidates,
+                        max_depth_allowed,
+                        search_query,
+                        retrieved_documents,
+                        think,
+                    ]
+                )
+                assert all(
+                    attr is not None
+                    for attr in [
+                        parent,
+                        node_value,
+                        critique,
                         answer,
                     ]
                 )
@@ -144,12 +203,14 @@ class Reasoning_MCTS_Node(MCTS_Node):
         self.node_type = node_type
         self.node_value = node_value
         self.think = think
+        self.critique = critique
         self.search_query = search_query
         self.retrieved_documents = retrieved_documents
         self.answer = answer
         
         if parent is None:  # root
             self.verbose = verbose
+            self.enable_critique = enable_critique
             self.question_id = question_id
             self.user_question = user_question
             self.gt_answer = gt_answer
@@ -160,6 +221,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
             self.enable_potential_score = enable_potential_score
         else:  # inherit from parent
             self.verbose = parent.verbose
+            self.enable_critique = parent.enable_critique
             self.question_id = parent.question_id
             self.user_question = parent.user_question
             self.gt_answer = parent.gt_answer
@@ -193,11 +255,26 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         "retrieved_documents": retrieved_documents
                     }
                 }
-            
             elif node_type is Node_Type.THINK_ANSWER:
                 self.solution_trace[max(self.solution_trace.keys())+1] = {
                     "think_answer": {
                         "think": think,
+                        "answer": answer,
+                        "value": node_value
+                    }
+                }
+            elif node_type is Node_Type.CRITIQUE_SEARCH:
+                self.solution_trace[max(self.solution_trace.keys())+1] = {
+                    "critique_search": {
+                        "critique": critique,
+                        "search_query": search_query,
+                        "retrieved_documents": retrieved_documents
+                    }
+                }
+            elif node_type is Node_Type.CRITIQUE_ANSWER:
+                self.solution_trace[max(self.solution_trace.keys())+1] = {
+                    "critique_answer": {
+                        "critique": critique,
                         "answer": answer,
                         "value": node_value
                     }
@@ -220,6 +297,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
             Node_Type.USER_QUESTION: "UQ",
             Node_Type.THINK_SERACH: "TS",
             Node_Type.THINK_ANSWER: "TA",
+            Node_Type.CRITIQUE_SEARCH: "CS",
+            Node_Type.CRITIQUE_ANSWER: "CA",
         }
         return f"{type2str[self.node_type]}-{self.id}"
     
@@ -253,6 +332,34 @@ class Reasoning_MCTS_Node(MCTS_Node):
                 )
             )
     
+        def do_action_critique_search():
+            print(f"---- Generating critique search for node {self.id}...")
+            critique, search_query, retrieved_docs = self.generator.generate_critique_search(solution_trace=self.solution_trace)
+            self.children.append(
+                Reasoning_MCTS_Node(
+                    parent=self,
+                    depth=self.depth + 1,
+                    node_type=Node_Type.CRITIQUE_SEARCH,
+                    critique=critique,
+                    search_query=search_query,
+                    retrieved_documents=retrieved_docs
+                )
+            )
+        
+        def do_action_critique_answer():
+            print(f"---- Generating critique answer for node {self.id}...")
+            critique, answer, value = self.generator.generate_critique_answer(solution_trace=self.solution_trace)
+            self.children.append(
+                Reasoning_MCTS_Node(
+                    parent=self,
+                    depth=self.depth + 1,
+                    node_type=Node_Type.CRITIQUE_ANSWER,
+                    critique=critique,
+                    answer=answer,
+                    node_value=value
+                )
+            )
+    
         #! create children
         if self.node_type is Node_Type.USER_QUESTION:
             do_action_think_search()
@@ -260,6 +367,16 @@ class Reasoning_MCTS_Node(MCTS_Node):
         elif self.node_type is Node_Type.THINK_SERACH:
             do_action_think_search()
             do_action_think_answer()
+            if self.enable_critique:
+                do_action_critique_search()
+                do_action_critique_answer()
+        elif self.node_type is Node_Type.CRITIQUE_SEARCH:
+            do_action_think_search()
+            do_action_think_answer()
+            do_action_critique_answer()
+            
+        elif self.node_type is Node_Type.CRITIQUE_ANSWER:
+            raise ValueError("CRITIQUE_ANSWER node cannot create children!!")  
         elif self.node_type is Node_Type.THINK_ANSWER:
             raise ValueError("THINK_ANSWER node cannot create children!!")    
         
@@ -268,11 +385,11 @@ class Reasoning_MCTS_Node(MCTS_Node):
         
     def is_valid_leaf_node(self):
         #! a valid solution can only be in SUBQUESTION type or DIRECT_ANSWER type
-        return self.node_type is Node_Type.THINK_ANSWER
+        return self.node_type is Node_Type.THINK_ANSWER or self.node_type is Node_Type.CRITIQUE_ANSWER
 
     def is_valid_solution_node(self):
         #! a valid solution can only be in SUBQUESTION type or DIRECT_ANSWER type
-        return self.node_type is Node_Type.THINK_ANSWER
+        return self.node_type is Node_Type.THINK_ANSWER or self.node_type is Node_Type.CRITIQUE_ANSWER
 
     def set_potential_score(self, score: float):
         self.potential_score = score

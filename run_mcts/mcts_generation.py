@@ -51,7 +51,7 @@ def mcts_generation(args):
         test_dataset = shuffled_dataset.select(range(num_samples))
     elif args.fraction_of_data_to_use > 1.0:
         shuffled_dataset = test_dataset_.shuffle(seed=args.seed)
-        test_dataset = shuffled_dataset.select(range(args.fraction_of_data_to_use))
+        test_dataset = shuffled_dataset.select(range(int(args.fraction_of_data_to_use)))
     else:
         test_dataset = test_dataset_
     
@@ -79,15 +79,17 @@ def mcts_generation(args):
     
     
     # === Generation =============================
+    challenging_samples = ['test_24', 'test_27', 'test_47', 'test_52', 'test_64']
     generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
     for i, sample in enumerate(tqdm(test_dataset)):
-        # if i == 10:
-        #     break
+        if i == 5:
+            break
         qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
         question = question.strip()
         if question[-1] != '?':
             question += '?'
         
+        # if qid in challenging_samples:
         if qid in generated_qids:
             print(f"The MCTS for query {qid} has been already generated")
         else:
@@ -171,9 +173,10 @@ if __name__ == "__main__":
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='bm25', choices=[
+    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
@@ -182,8 +185,8 @@ if __name__ == "__main__":
         'data/search_r1_files/e5_Flat.index', # For E5
     ])
     parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
+        "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank
         "intfloat/e5-base-v2" # For E5
-        "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2" # For Rerank
     ])
     parser.add_argument('--retrieval_topk', type=int, default=3)
     parser.add_argument('--faiss_gpu', action='store_false', help='Use GPU for computation')
@@ -196,12 +199,13 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_5 (edited_prompt_roll4)')
+    parser.add_argument('--run', type=str, default='run_12 (test_fewshot_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
     
     # MCTS ---
+    parser.add_argument("--enable_critique", action="store_true", help="")
     parser.add_argument("--verbose", action="store_true", help="extra login")
     parser.add_argument("--mcts_discount_factor", type=float, default=1.0)
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
@@ -210,7 +214,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_rollouts", type=int, default=4)
     parser.add_argument("--max_depth_allowed", type=int, default=4)
     parser.add_argument("--num_votes", type=int, default=1)
-    parser.add_argument("--mcts_num_last_votes", type=int, default=5)
+    parser.add_argument("--mcts_num_last_votes", type=int, default=3)
     parser.add_argument("--enable_potential_score", action="store_true")
     
     # Discrimination ---

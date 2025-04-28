@@ -20,6 +20,8 @@ class Node_Type(Enum):
     
     THINK_SERACH = "THINK_SERACH"
     THINK_ANSWER = "THINK_ANSWER"
+    CRITIQUE_SEARCH = "CRITIQUE_SEARCH"
+    CRITIQUE_ANSWER = "CRITIQUE_ANSWER"
 
 def split_user_question(user_question: str):
     user_question = user_question.strip().rstrip(".")
@@ -136,6 +138,11 @@ def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None,
             node_details += f"Search: {node.search_query} | Think: {node.think.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.THINK_ANSWER:
             node_details += f"Answer: {node.answer} | Think: {node.think.replace("\n", " ")}" + "\n" + space + " " * len(node_info)
+        elif node.node_type is Node_Type.CRITIQUE_SEARCH:
+            node_details += f"Search: {node.search_query} | Critique: {node.critique.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
+        elif node.node_type is Node_Type.CRITIQUE_ANSWER:
+            node_details += f"Answer: {node.answer} | Critique: {node.critique.replace("\n", " ")}" + "\n" + space + " " * len(node_info)
+
     
         to_print += dash + node_details
         my_print(to_print)

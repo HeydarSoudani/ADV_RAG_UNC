@@ -52,14 +52,14 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=512)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
+    parser.add_argument('--retriever_name', type=str, default='bm25', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     args.output_dir = f"run_output/{args.run}" 
     model_ = args.model_name_or_path.split('/')[-1]
     args.generation_trees_results_dir = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/generation_trees'
-    args.discriminate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/rc_discriminate_results.jsonl"
+    args.discriminate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/rc_discriminate_results_v2.jsonl"
     args.evaluate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/evaluate_results.jsonl"
     args.statistics_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/statistics_results.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
