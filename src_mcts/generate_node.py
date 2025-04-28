@@ -20,7 +20,6 @@ from src_mcts import examplers
 
 nlp = spacy.load("en_core_web_sm")
 
-
 examples = [
     {   
         "dataset": "hotpotqa",
@@ -84,7 +83,6 @@ class Counter:
             "token_count": self.token - other_counter.token, 
             "sentence_count": self.sentence - other_counter.sentence 
         }
-
 
 class Generator:
     """Generator generates children nodes"""

@@ -243,8 +243,13 @@ def searchr1_inference(args):
                 
                 one_step_think = get_think(output_text)
                 pred_answer = get_answer(output_text)
-                correctness_em = em_score(pred_answer, gt_answers)
-                correctness_f1 = f1_score(pred_answer, gt_answers)
+                if pred_answer != None:
+                    correctness_em = em_score(pred_answer, gt_answers)
+                    correctness_f1 = f1_score(pred_answer, gt_answers)
+                else:
+                    correctness_em = 0
+                    correctness_f1 = {'f1': 0, 'precision': 0, 'recall': 0}
+                
                 em_evaluation.append(correctness_em)
                 path.append({'think': one_step_think, 'answer': pred_answer})
                 
@@ -276,15 +281,17 @@ def searchr1_inference(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='2wikimultihopqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=20.0)
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=500.0)
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[

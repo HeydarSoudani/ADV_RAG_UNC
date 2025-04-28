@@ -25,6 +25,7 @@ if __name__ == "__main__":
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument("--enable_fewshot_examples", action="store_false", help="")
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='e5', choices=[

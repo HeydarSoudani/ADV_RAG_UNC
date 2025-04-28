@@ -11,9 +11,6 @@ from tqdm import tqdm, trange
 
 from utils.general_utils import set_seed
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
-from src_adaptive.dataset import BaseDataset
-
-# from src_adaptive.retrieve import BM25, Rerank
 from src_mcts.generate_node import Generator
 from src_mcts.MCTS_backbone import MCTS_Searcher
 from src_mcts.MCTS_reasoning_v2 import Reasoning_MCTS_Node
@@ -82,17 +79,17 @@ def mcts_generation(args):
     challenging_samples = ['test_24', 'test_27', 'test_47', 'test_52', 'test_64']
     generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
     for i, sample in enumerate(tqdm(test_dataset)):
-        if i == 5:
-            break
+        # if i == 5:
+        #     break
         qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
         question = question.strip()
         if question[-1] != '?':
             question += '?'
         
-        # if qid in challenging_samples:
-        if qid in generated_qids:
-            print(f"The MCTS for query {qid} has been already generated")
-        else:
+        if qid in challenging_samples:
+        # if qid in generated_qids:
+        #     print(f"The MCTS for query {qid} has been already generated")
+        # else:
             print(f"Generating MCTS for query {qid} ...")
             #! build an MCTS searcher
             mcts_searcher = MCTS_Searcher(

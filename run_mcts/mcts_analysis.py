@@ -4,6 +4,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import json
 import torch
 import argparse
+import json
+import matplotlib.pyplot as plt
+from collections import Counter
 
 def load_jsonl(file_path):
     data = {}
@@ -11,7 +14,11 @@ def load_jsonl(file_path):
         for line in f:
             item = json.loads(line)
             qid = item['qid']
-            em = item['em']
+            
+            if 'em' in list(item.keys()):
+                em = item['em']
+            else:
+                em = item['EM']
             data[qid] = em
     return data
 
@@ -50,16 +57,52 @@ def categorize_qids(file_a_path, file_b_path):
     }
 
 
+def plot_num_retrieval(file_path, output_png):
+    lengths = []
+
+    with open(file_path, 'r') as f:
+        for line in f:
+            data = json.loads(line)
+            path = data['path']
+            
+            if isinstance(path, list):
+                path_length = len(path) - 1
+            elif isinstance(path, str):
+                path_length = len(path) - 1
+            else:
+                continue  # Skip if path is not string or list
+            lengths.append(path_length)
+
+    print(f"Avg: {sum(lengths) / len(lengths)}")
+
+    length_counter = Counter(lengths)
+    sorted_lengths = sorted(length_counter.items())
+    x, y = zip(*sorted_lengths)
+    
+    plt.figure(figsize=(8, 5))
+    plt.bar(x, y)
+    plt.xlabel('Path Length')
+    plt.ylabel('Number of Samples')
+    plt.title('Distribution of Path Lengths')
+    # plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(output_png)
+    print(f"Plot saved to {output_png}")
+
+
 def mcts_analysis():
     # === Read files ============
-    file_a_path = 'run_output/run_4 (search_r1)/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo/bamboogle_test/rerank_l6/inference_results.jsonl' # File one -> Search-R1 results
-    file_b_path = 'run_output/run_5 (edited_prompt_roll4)/Qwen2.5-7B-Instruct/bamboogle_test/rerank_l6/rc_discriminate_results_v2.jsonl'   # File two -> mine results
+    # file_a_path = 'run_output/run_4 (search_r1)/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo/hotpotqa_dev/rerank_l6/inference_results.jsonl' # File one -> Search-R1 results
+    # file_b_path = 'run_output/run_5 (edited_prompt_roll4)/Qwen2.5-7B-Instruct/hotpotqa_dev/rerank_l6/rc_discriminate_results_v2.jsonl'   # File two -> mine results
     
-    output = categorize_qids(file_a_path, file_b_path)
-    for key, value in output.items():
-        print(f"{key}: {len(value)} | {value}")
+    # output = categorize_qids(file_a_path, file_b_path)
+    # for key, value in output.items():
+    #     print(f"{key}: {len(value)} | {value}")
+    
     # print(output)
-    
+    file_path = "run_output/run_4 (search_r1)/Qwen2.5-7B-Instruct/2wikimultihopqa_dev/rerank_l6/path_results.jsonl"
+    output_png = "ret_num_dist.png"
+    plot_num_retrieval(file_path, output_png)
 
 # Example usage:
 # result = categorize_qids('file_a.jsonl', 'file_b.jsonl')
@@ -69,27 +112,7 @@ def mcts_analysis():
     
     
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    # Model
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--max_new_token', type=int, default=1024)
-    
-    # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
-        'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
-    ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
-    
-    # Retriever
-    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
-        'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
-    ])
-    args = parser.parse_args()
-
-
-    
+if __name__ == "__main__":    
     mcts_analysis()
     
     
