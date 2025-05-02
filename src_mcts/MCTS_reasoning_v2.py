@@ -26,7 +26,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
         gt_reasoning_steps: List[str] = None,
         answer_candidates: List[str] = None,
         generator: Generator = None,
-        node_value: float = None,
+        node_reward: float = None,
+        scores = None,
         max_depth_allowed: int = None,
         
         # --- My Actions ---------------------
@@ -53,8 +54,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
         try:
             assert depth is not None
             assert node_type is not None
-            if node_value is not None:
-                assert node_value > 0, breakpoint()
+            if node_reward is not None:
+                assert node_reward > 0, breakpoint()
         
             if node_type is Node_Type.USER_QUESTION:
                 assert depth == 0
@@ -62,7 +63,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     attr is None
                     for attr in [
                         parent,
-                        node_value,
+                        node_reward,
+                        scores,
                         think,
                         critique,
                         search_query,
@@ -95,7 +97,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         gt_reasoning_steps,
                         answer_candidates,
                         max_depth_allowed,
-                        node_value,
+                        node_reward,
+                        scores,
                         answer,   
                         critique,
                     ]
@@ -131,7 +134,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     attr is not None
                     for attr in [
                         parent,
-                        node_value,
+                        node_reward,
+                        scores,
                         think,
                         answer,
                     ]
@@ -149,7 +153,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         gt_reasoning_steps,
                         answer_candidates,
                         max_depth_allowed,
-                        node_value,
+                        node_reward,
+                        scores,
                         answer,  
                         think, 
                     ]
@@ -185,7 +190,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     attr is not None
                     for attr in [
                         parent,
-                        node_value,
+                        node_reward,
+                        scores,
                         critique,
                         answer,
                     ]
@@ -201,7 +207,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
         self.children: List["Reasoning_MCTS_Node"] = []
         self.depth = depth
         self.node_type = node_type
-        self.node_value = node_value
+        self.node_reward = node_reward
+        self.scores = scores
         self.think = think
         self.critique = critique
         self.search_query = search_query
@@ -260,7 +267,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     "think_answer": {
                         "think": think,
                         "answer": answer,
-                        "value": node_value
+                        "node_reward": node_reward,
+                        "scores": scores,
                     }
                 }
             elif node_type is Node_Type.CRITIQUE_SEARCH:
@@ -276,7 +284,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     "critique_answer": {
                         "critique": critique,
                         "answer": answer,
-                        "value": node_value
+                        "node_reward": node_reward,
                     }
                 }
         
@@ -320,7 +328,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
         
         def do_action_think_answer():
             print(f"---- Generating think answer for node {self.id}...")
-            think, answer, value = self.generator.generate_think_answer(solution_trace=self.solution_trace)
+            think, answer, node_reward, scores = self.generator.generate_think_answer(solution_trace=self.solution_trace)
             self.children.append(
                 Reasoning_MCTS_Node(
                     parent=self,
@@ -328,7 +336,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     node_type=Node_Type.THINK_ANSWER,
                     think=think,
                     answer=answer,
-                    node_value=value
+                    node_reward=node_reward,
+                    scores=scores
                 )
             )
     
@@ -356,7 +365,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     node_type=Node_Type.CRITIQUE_ANSWER,
                     critique=critique,
                     answer=answer,
-                    node_value=value
+                    sc_value=value
                 )
             )
     
@@ -406,8 +415,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
 
     def calculate_reward(self):
         if self.is_valid_leaf_node():
-            assert self.node_value is not None, breakpoint()
-            return self.node_value
+            assert self.node_reward is not None, breakpoint()
+            return self.node_reward
         else:
             return 0
 

@@ -4,7 +4,7 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
-#SBATCH --time=3:00:00
+#SBATCH --time=2:00:00
 #SBATCH --mem=16GB
 #SBATCH --output=script_logging/slurm_%A.out
 
@@ -14,15 +14,15 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 ### === Set variables ==========================
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="2wikimultihopqa"
-subsec="dev"
-fraction_of_data_to_use=500.0
+dataset="bamboogle"
+subsec="test"
+fraction_of_data_to_use=1.0
 retriever_name="rerank_l6"
 index_path="data/search_r1_files/bm25"
 retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
 num_rollouts=4
 max_depth_allowed=4
-run="run_5 (edited_prompt_roll4)"
+run="run_16 (with_unc_roll4)"
 
 srun python $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
     --model_name_or_path "$model_name_or_path" \

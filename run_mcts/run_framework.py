@@ -114,7 +114,7 @@ if __name__ == "__main__":
     ### === Run Steps ============================
     set_seed(args.seed)
     mcts_generation(args)
-    rc_discrimination(args)
+    # rc_discrimination(args)
     # mcts_evaluation(args)
     
     # python run_mcts/run_framework.py

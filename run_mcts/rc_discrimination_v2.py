@@ -643,7 +643,9 @@ def rc_discrimination(args):
                 last_depth_key = list(trace_.keys())[-1]
                 last_node_type = list(trace_[last_depth_key].keys())[0] 
                 final_answer = trace_[last_depth_key][last_node_type]["answer"]
-                final_answer_reward = trace_[last_depth_key][last_node_type]["value"]
+                # final_answer_reward = trace_[last_depth_key][last_node_type]["node_reward"]
+                final_answer_reward = 10 - trace_[last_depth_key][last_node_type]['scores'][1]['param']['PE']['uncertainty']
+                
                 masked_trace_text_list = rag_mask_solution_trace(
                     trace_text,
                     num_return=args.num_masked_solution_traces,
@@ -670,7 +672,7 @@ def rc_discrimination(args):
             most_confident_answer = max(answer2candidates.keys(), key=lambda x: answer2confidence[x])
             highest_confidence = answer2confidence[most_confident_answer]
             assert highest_confidence > 0
-            
+            print(answer2confidence)
             # === Decision
             if highest_confidence > args.threshold:
                 print("You are very confident. Skipping...")
@@ -711,7 +713,7 @@ if __name__ == "__main__":
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='e5', choices=[
+    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
@@ -734,7 +736,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_5 (edited_prompt_roll4)')
+    parser.add_argument('--run', type=str, default='run_16 (with_unc_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -761,9 +763,9 @@ if __name__ == "__main__":
     parser.add_argument("--rc_mode", type=str, default="mid", choices=["loose", "mid", "strict", "maj"])
     parser.add_argument("--rc_temperature", type=float, default=1.0)
     parser.add_argument("--rc_n_completions", type=int, default=1)
-    parser.add_argument("--rc_criteria", type=str, default="freq", choices=["freq", "reward"])
+    parser.add_argument("--rc_criteria", type=str, default="reward", choices=["freq", "reward"])
     parser.add_argument("--threshold", type=float, default=0.999)
-    parser.add_argument("--extend_rc_mode", type=str, default="reasoning_consistency", choices=["reasoning_consistency", "BoN", "majority_vote"])
+    parser.add_argument("--extend_rc_mode", type=str, default="majority_vote", choices=["reasoning_consistency", "BoN", "majority_vote"])
     parser.add_argument("--best_of", type=int, default=5)
     # parser.add_argument("--max_num_seqs", type=int, default=2)
     

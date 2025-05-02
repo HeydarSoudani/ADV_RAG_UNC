@@ -99,7 +99,7 @@ def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None,
         space = " " * num_indent * node.depth
 
         attributes = f"Q: {round(mcts_searcher.Q[node], 2)}" + "; " + f"N: {mcts_searcher.N[node]}" + "; "
-        attributes += f"V: {round(node.node_value, 2)}" if node.node_value is not None else "V: None"
+        attributes += f"V: {round(node.node_reward, 2)}" if node.node_reward is not None else "V: None"
 
         uct_value = "UCT: " + str(
             round(mcts_searcher._compute_uct(parent_node=parent_node, node=node, rollout_id=rollout_id), 2)

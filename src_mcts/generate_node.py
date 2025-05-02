@@ -6,17 +6,17 @@ import re
 import spacy
 import torch
 import random
+import numpy as np
 import transformers
 from typing import List, Dict, Tuple
 from transformers import AutoModelForCausalLM, AutoTokenizer
-# import TruthTorchLM as ttlm
 
 
 from run_searchr1.inference import get_think, get_query, get_answer, get_critique, _passages2string, StopOnSequence
 from utils.general_utils import read_txt
 from utils.adaptive_utils import fix_tokenizer_chat
-from src_adaptive.templetes import SYSTEM_PROMPT_SHORTFORM
-from src_mcts import examplers
+from src_mcts.uncertainty_estimator import UncertaintyEstimator
+from src_mcts.passege_utility import PassageUtility
 
 nlp = spacy.load("en_core_web_sm")
 
@@ -62,6 +62,23 @@ examples = [
     }
 ]
 
+def get_context(solution_trace, args, nlevel=-1):
+    all_docs = []
+    for item_idx in solution_trace:
+        solution_item = solution_trace[item_idx]
+        node_keys = list(solution_item.keys())
+        node_type = node_keys[0]
+        if node_type == 'think_search':
+            all_docs.extend(solution_item[node_type]['retrieved_documents'])
+    
+    if (len(all_docs) == 0) or (nlevel == -1) or (len(all_docs) < int(args.retrieval_topk * nlevel)):
+        return all_docs
+    else:
+        return all_docs[-args.retrieval_topk * nlevel:]
+    
+def inverse_sigmoid(x, k=1.0):
+    return 1 / (1 + np.exp(k * ( x + 3.0)))    
+
 class Counter:
     def __init__(self):
         self.retrieve = 0
@@ -91,6 +108,7 @@ class Generator:
         self.retriever = retriever
         self.mcts_type = mcts_type
         self.counter = Counter()
+        # self.passage_utility = PassageUtility(args)
                 
         # --- Define model ------------
         self.generation_model = AutoModelForCausalLM.from_pretrained(
@@ -102,8 +120,16 @@ class Generator:
             args.model_name_or_path,
             # use_fast=False
         )
+        # self.tokenizer.pad_token = self.tokenizer.eos_token
         self.eos_token_ids = self.generation_model.config.eos_token_id
         self.mcts_num_last_votes = args.mcts_num_last_votes
+        
+        # --- Define UE model ----------
+        self.uncertainty_estimator = UncertaintyEstimator(
+            model=self.generation_model,
+            tokenizer=self.tokenizer,
+            args=args,
+        )
         
         # Prompts
         self.semantic_equivalence_prompt = read_txt(self.args.semantic_equivalence_prompt_file)
@@ -115,6 +141,7 @@ class Generator:
         self.search_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(search_target_sequences, self.tokenizer)])
         self.answer_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(answer_target_sequences, self.tokenizer)])
 
+    # === LLM Generation ==========
     def generate(self,
         input_text,
         max_new_tokens,
@@ -482,32 +509,67 @@ class Generator:
         return thinks, search_query, retrieved_docs
     
     def generate_think_answer(self, solution_trace: Dict[int, Dict[str, str]]):
+        user_question = solution_trace[0]['user_question']
+        
         ### = Do generation
         input_prompt_text = self.get_prompt_text('think_answer', solution_trace)
         initial_output = self.generate_(input_prompt_text, self.answer_stopping_criteria)[0] 
         if self.args.use_counter:
             self.counter.add_generate(initial_output, self.tokenizer)
-        print('\n\n')
-        print(input_prompt_text)
-        print('\n-------')
-        print(initial_output)
+        # print('\n\n')
+        # print(input_prompt_text)
+        # print('\n-------')
+        # print(initial_output)
         
         ### = Post-processing
         think, most_likely_answer = self.think_answer_postprocessing(solution_trace, input_prompt_text, initial_output)
-        # value = 0.9
         
-        ### = Generate more 
-        user_question = solution_trace[0]['user_question']
+        ### = Uncertainty Estimation
+        context = get_context(solution_trace, self.args, nlevel=-1)
+        if len(context) > 0:
+            ue_scores_cont = self.uncertainty_estimator.estimate(
+                context = context,
+                question = user_question,
+                generation_type = "new_generations"
+            )
+            ue_scores_param = self.uncertainty_estimator.estimate(
+                context = [],
+                question = user_question,
+                generation_type = "existing_generations",
+                generated_texts = ue_scores_cont['generated_texts']
+                # generated_texts=[most_likely_answer]
+            )
+        else:
+            ue_scores_param = self.uncertainty_estimator.estimate(
+                context = [],
+                question = user_question,
+                generation_type = "new_generations",
+            )
+            ue_scores_cont = ue_scores_param
+        
+        ue_scores = {
+            'param': ue_scores_param["scores"],
+            'cont': ue_scores_cont["scores"]
+        }
+        
+        ### = Passage utility 
+        # pu_score = self.passage_utility(context, user_question, most_likely_answer)
+        pu_score = (0.0, 0.0)
+        
+        ### = Get self-consistency
         input_prompt_text_ = input_prompt_text + f'<think> {think} </think>\n'
         output_list = self.generate_(input_prompt_text_, self.answer_stopping_criteria, num_return=self.mcts_num_last_votes)
         answer_list = [get_answer(output) for output in output_list]
         answer_list_ = [most_likely_answer] if len(answer_list) == 0 else [ans for ans in answer_list if ans]
         if len(answer_list_) > 0:
-            answer, value = self._get_most_likely_answer(user_query=user_question, output_list=answer_list_)
+            answer, sc_value = self._get_most_likely_answer(user_query=user_question, output_list=answer_list_)
         else:
-            value = 0.001
+            sc_value = 0.001
         
-        return think, most_likely_answer, value
+        # reward = inverse_sigmoid(ue_scores['cont']['SE']['uncertainty'], k=0.8)
+        reward = sc_value
+        
+        return think, most_likely_answer, reward, (sc_value, ue_scores, pu_score)
 
     def generate_critique_search(self, solution_trace: Dict[int, Dict[str, str]]):
         ### = Do generation
@@ -631,7 +693,7 @@ class Generator:
                 print(f"Failed to generate the 'most-likely answer' after all retries for query {qid}")
         most_likely_answer = '' if most_likely_answer == None else most_likely_answer
         
-        return thinks, most_likely_answer
+        return thinks, most_likely_answer.strip()
 
     def critique_search_postprocessing(self, solution_trace, input_prompt_text, output):
         qid = solution_trace[0]['qid']
