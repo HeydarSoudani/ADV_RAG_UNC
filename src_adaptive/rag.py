@@ -5,16 +5,18 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import spacy
 import torch
+import random
 import numpy as np
 from math import exp
 
-# from src_adaptive.generate_dragin import BasicGenerator
+from src_adaptive import examplers
 from src_adaptive.generate_chat_template import BasicGenerator
-from src_adaptive.retrieve import BM25, Rerank, PositiveRet, NegativeRet
+from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from src_adaptive.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_REGENERATE, SYSTEM_PROMPT_SHORTFORM
+# from src_adaptive.generate_dragin import BasicGenerator
+# from src_adaptive.retrieve import BM25, Rerank, PositiveRet, NegativeRet
 
 nlp = spacy.load("en_core_web_sm")
-
 
 class Counter:
     def __init__(self):
@@ -40,7 +42,6 @@ class Counter:
             "sentence_count": self.sentence - other_counter.sentence 
         }
 
-
 class BasicRAG:
     def __init__(self, args):
         # args = args.__dict__ 
@@ -48,23 +49,38 @@ class BasicRAG:
         self.counter = Counter()
         self.generator = BasicGenerator(args)
         
-        if args.retriever_model == 'bm25':
-            self.retriever = BM25(args)
-        elif args.retriever_model == 'rerank':
-            self.retriever = Rerank(args)
-        elif args.retriever_model == 'positive':
-            self.retriever = PositiveRet(args)
-        elif args.retriever_model == 'negative':
-            self.retriever = NegativeRet(args)
+        # === Static Retriever ===================== 
+        if args.retriever_name == 'bm25':
+            self.retriever = BM25Retriever(args)  
+        elif args.retriever_name == 'contriever':
+            self.retriever = ContrieverRetriever(args)
+        elif args.retriever_name in ['rerank_l6', 'rerank_l12']:
+            self.retriever = RerankRetriever(args)
+        elif args.retriever_name in ['e5', 'bge']:
+            self.retriever = DenseRetriever(args)
         
-    def retrieve(self, queries, qids, pos_contexts, neg_contexts, topk=1):
-        self.counter.retrieve += 1
-        docs, docids, scores = self.retriever.retrieve(
-            queries=queries, qids=qids,
-            pos_contexts=pos_contexts, neg_contexts=neg_contexts,
-            topk=topk
+        # === Fewshot examples ====================== 
+        # try:
+        #     examplers_ = getattr(examplers, f'{args.dataset}_exps')
+        # except AttributeError:
+        #     raise ValueError(f"The dataset '{args.dataset}' does not exist in the 'examplers' module.")
+        examplers_ = getattr(examplers, f'hotpotqa_exps')
+        self.fewshot_examplers = (
+            random.sample(examplers_, args.fewshot)
+            if len(examplers_) >= args.fewshot
+            else examplers_
         )
-        return docs, docids, scores
+        
+    # def retrieve(self, queries, qids, pos_contexts, neg_contexts, topk=1):
+    #     self.counter.retrieve += 1
+    #     retrieved_docs = self.retriever.search(queries)
+        
+    #     docs, docids, scores = self.retriever.retrieve(
+    #         queries=queries, qids=qids,
+    #         pos_contexts=pos_contexts, neg_contexts=neg_contexts,
+    #         topk=topk
+    #     )
+    #     return docs, docids, scores
         
     def get_top_sentence(self, text):
         sentences = [sent.text.strip() for sent in nlp(text).sents]
@@ -76,8 +92,8 @@ class BasicRAG:
         sentences = [sent for sent in sentences if len(sent) > 0]
         return sentences[-1] if len(sentences) > 0 else "" 
        
-    def reinference(self, question, fewshot_examplers, pred, max_new_tokens=20):
-        user_prompt = self.generator.format_longform(question, fewshot_examplers, [])
+    def reinference(self, question, pred, max_new_tokens=20):
+        user_prompt = self.generator.format_longform(question, self.fewshot_examplers, [])
         user_prompt += f" {pred}"
         text, _, _ = self.generator.generate(
             user_prompt, max_new_tokens,
@@ -90,10 +106,10 @@ class NoRAG(BasicRAG):
     def __init__(self, args):
         super().__init__(args)
     
-    def inference(self, question, qid, fewshot_examplers, pos_contexts, neg_contexts):
+    def inference(self, question, fewshot_examplers):
         prompt = self.generator.format_longform(question, fewshot_examplers, [])
         text, _, _ = self.generator.generate(
-            prompt, self.args.generate_max_length,
+            prompt, self.args.max_new_token,
             system_prompt=SYSTEM_PROMPT_LONGFORM
         )
         if self.args.use_counter:
@@ -105,11 +121,14 @@ class SingleRAG(BasicRAG):
     def __init__(self, args):
         super().__init__(args)
     
-    def inference(self, question, qid, fewshot_examplers, pos_contexts, neg_contexts):
-        docs, _, _ = self.retrieve([question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
-        prompt = self.generator.format_longform(question, fewshot_examplers, docs[0])
+    def inference(self, question):
+        retrieved_docs = self.retriever.search(question)
+        if self.args.use_counter == True:
+            self.counter.retrieve += 1
+        
+        prompt = self.generator.format_longform(question, self.fewshot_examplers, retrieved_docs)
         text, _, _ = self.generator.generate(
-            prompt, self.args.generate_max_length,
+            prompt, self.args.max_new_token,
             system_prompt=SYSTEM_PROMPT_LONGFORM
         )
         if self.args.use_counter == True:
@@ -121,13 +140,16 @@ class FixLengthRAG(BasicRAG):
     def __init__(self, args):
         super().__init__(args)
     
-    def inference(self, question, qid, fewshot_examplers, pos_contexts, neg_contexts):
+    def inference(self, question):
         text = ""
         retrieve_question = question
         while True:
             old_len = len(text)
-            docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
-            prompt = self.generator.format_longform(question, fewshot_examplers, docs[0])
+            # docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
+            retrieved_docs = self.retriever.search(retrieve_question)
+            if self.args.use_counter == True:
+                self.counter.retrieve += 1
+            prompt = self.generator.format_longform(question, self.fewshot_examplers, retrieved_docs)
             prompt += text
             
             if self.args.rag_method == "fix_length_retrieval":
@@ -138,7 +160,7 @@ class FixLengthRAG(BasicRAG):
                 retrieve_question = new_text.strip()
                 
             elif self.args.rag_method == "fix_sentence_retrieval":
-                new_text, _, _ = self.generator.generate(prompt, self.args.generate_max_length, system_prompt=SYSTEM_PROMPT_LONGFORM)
+                new_text, _, _ = self.generator.generate(prompt, self.args.max_new_token, system_prompt=SYSTEM_PROMPT_LONGFORM)
                 if self.args.use_counter:
                     self.counter.add_generate(new_text, self.generator.tokenizer)
                 new_text = new_text.strip()
@@ -153,7 +175,7 @@ class FixLengthRAG(BasicRAG):
                 raise NotImplementedError
 
             tokens_count = len(self.generator.tokenizer.encode(text))
-            if tokens_count > self.args.generate_max_length or len(text) <= old_len or "the answer is" in text:
+            if tokens_count > self.args.max_new_token or len(text) <= old_len or "the answer is" in text:
                 break
         
         return text, None, None
@@ -283,17 +305,17 @@ class FLARE_RAG(BasicRAG):
         # No hallucination
         return text, None, False
     
-    def inference(self, question, qid, fewshot_examplers, pos_contexts, neg_contexts):
+    def inference(self, question):
         num_hallucination = 0
         generation_path = []
         
         text = ""
         while True:
             old_len = len(text)
-            prompt = self.generator.format_longform(question, fewshot_examplers, [])
+            prompt = self.generator.format_longform(question, self.fewshot_examplers, [])
             new_text, tokens_text, logprobs = self.generator.generate(
                 prompt,
-                self.args.generate_max_length,
+                self.args.max_new_token,
                 system_prompt=SYSTEM_PROMPT_LONGFORM,
                 return_logprobs=True
             )
@@ -319,12 +341,16 @@ class FLARE_RAG(BasicRAG):
                 else:
                     raise NotImplemented
 
-                docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
-                prompt = self.generator.format_longform(question, fewshot_examplers, docs[0])
+                # docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
+                retrieved_docs = self.retriever.search(retrieve_question)
+                if self.args.use_counter == True:
+                    self.counter.retrieve += 1
+                
+                prompt = self.generator.format_longform(question, self.fewshot_examplers, retrieved_docs)
                 prompt += " " + text + " " + ptext.strip()
                 new_text, _, _ = self.generator.generate(
                     prompt,
-                    self.args.generate_max_length,
+                    self.args.max_new_token,
                     system_prompt=SYSTEM_PROMPT_LONGFORM
                 )
                 if self.args.use_counter == True:
@@ -333,7 +359,7 @@ class FLARE_RAG(BasicRAG):
                 text = text.strip() + " " + ptext.strip() + " " + new_text.strip()
         
             tokens_count = len(self.generator.tokenizer.encode(text))
-            if tokens_count > self.args.generate_max_length or len(text) <= old_len or "the answer is" in text:
+            if tokens_count > self.args.max_new_token or len(text) <= old_len or "the answer is" in text:
                 break
         
         return text, num_hallucination, generation_path
@@ -398,7 +424,6 @@ class DRAGIN_RAG(BasicRAG):
                 return True, prev, tokens[tl:tr], thres
             
         return False, text, None, None
-
 
     def keep_real_words(self, prev_text, curr_tokens, curr_hit):
         
@@ -498,7 +523,7 @@ class DRAGIN_RAG(BasicRAG):
         last_n_sentence = ' '.join(last_n_tokens)
         return last_n_sentence
     
-    def inference(self, question, qid, fewshot_examplers, pos_contexts, neg_contexts):
+    def inference(self, question):
         num_hallucination = 0
         generation_path = []
         
@@ -506,12 +531,12 @@ class DRAGIN_RAG(BasicRAG):
         text = ""
         while True:
             old_len = len(text)
-            prompt = self.generator.format_longform(question, fewshot_examplers, [], add_case=False)
+            prompt = self.generator.format_longform(question, self.fewshot_examplers, [], add_case=False)
             tmp_li = [case, text]
             prompt += " ".join(s for s in tmp_li if len(s) > 0)
             
             new_text, tokens, attns, logprobs, entropies = self.generator.generate_attn(
-                prompt, self.args.generate_max_length,
+                prompt, self.args.max_new_token,
                 system_prompt=SYSTEM_PROMPT_LONGFORM,
                 use_entropy = self.args.rag_method == "dragin",
             )
@@ -555,13 +580,16 @@ class DRAGIN_RAG(BasicRAG):
                 
                 generation_path[-1]['retrieve_question'] = retrieve_question
                 
-                docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
-                prompt = self.generator.format_longform(question, fewshot_examplers, docs[0], add_case=False)
+                retrieved_docs = self.retriever.search(retrieve_question)
+                if self.args.use_counter == True:
+                    self.counter.retrieve += 1
+                # docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
+                prompt = self.generator.format_longform(question, self.fewshot_examplers, retrieved_docs, add_case=False)
                 tmp_li = [case, text, ptext.strip()]
                 prompt += " ".join(s for s in tmp_li if len(s) > 0)
                 new_text, _, _ = self.generator.generate(
                     prompt,
-                    self.args.generate_max_length,
+                    self.args.max_new_token,
                     system_prompt=SYSTEM_PROMPT_LONGFORM
                 )
                 if self.args.use_counter == True:
@@ -570,7 +598,7 @@ class DRAGIN_RAG(BasicRAG):
                 text = text.strip() + " " + ptext.strip() + " " + new_text.strip()
             
             tokens_count = len(self.generator.tokenizer.encode(text))
-            if tokens_count > self.args.generate_max_length or len(text) <= old_len or "the answer is" in text:
+            if tokens_count > self.args.max_new_token or len(text) <= old_len or "the answer is" in text:
                 break
         
         return text, num_hallucination, generation_path

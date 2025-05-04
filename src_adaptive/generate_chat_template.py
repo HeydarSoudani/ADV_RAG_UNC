@@ -7,6 +7,7 @@ from math import exp
 from scipy.special import softmax
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 
+from run_searchr1.inference import _passages2string
 from utils.adaptive_utils import fix_tokenizer_chat
 from src_adaptive.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_SHORTFORM, SYSTEM_PROMPT_REGENERATE
 
@@ -104,7 +105,6 @@ class BasicGenerator:
                 assert len(tokens_text[0]) == len(logprobs[0])
                 
         return generated_texts[0], tokens_text[0], logprobs[0]
-    
     
     def generate_attn(self,
         input_text,
@@ -252,7 +252,6 @@ class BasicGenerator:
           
           
         return text, seqlist, attns, seqlogprobs, seqentropies
-        
     
     def format_longform(self, question, fewshot_examplers, docs, add_case=True):
         if len(fewshot_examplers) > 0:
@@ -264,9 +263,7 @@ class BasicGenerator:
         
         if len(docs) > 0:
             prompt += "Below are some relevant documents that may help answer the question:\n"
-            for i, doc in enumerate(docs):
-                prompt += f"[{i+1}] {doc}\n"
-            prompt += "\n"
+            prompt += _passages2string(docs) + '\n'
         
         prompt += "Now, answer the following question EXACTLY in the format of the examples above.\n"
         prompt += "DO NOT add any introductory phrases, explanations, or extra text.\n\n"

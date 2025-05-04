@@ -3,7 +3,7 @@ import random
 from tqdm import tqdm
 from datasets import Dataset
 
-from data import examplers
+from src_adaptive import examplers
 
 BASE_DIR = '/home/hsoudani/ADV_RAG_UNC'
 
