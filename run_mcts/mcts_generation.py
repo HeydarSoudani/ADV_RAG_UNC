@@ -76,10 +76,10 @@ def mcts_generation(args):
     
     
     # === Generation =============================
-    challenging_samples = ['test_24', 'test_27', 'test_47', 'test_52', 'test_64']
+    challenging_samples = ['test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_83']
     generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
     for i, sample in enumerate(tqdm(test_dataset)):
-        # if i == 60:
+        # if i == 3:
         #     break
         qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
         question = question.strip()
@@ -113,6 +113,8 @@ def mcts_generation(args):
                 answer_candidates=[],
                 max_depth_allowed=args.max_depth_allowed,
                 enable_potential_score=args.enable_potential_score,
+                enable_critique=args.enable_critique,
+                enable_doc_generation=args.enable_doc_generation,
             )
             
             model_solutions = []
@@ -148,27 +150,27 @@ def mcts_generation(args):
                     f.write(json.dumps(item) + "\n")
 
             #! record conf analysis 
-            un_object = {}
-            for node in all_solution_nodes:
-                depth = len(node.solution_trace) -1
-                # all_keys = list(node.solution_trace.keys())
-                # print(all_keys)
-                last_key = max(list(node.solution_trace.keys()))
-                # print(node.solution_trace)
-                un_object[depth] = {
+            # un_object = {}
+            # for node in all_solution_nodes:
+            #     depth = len(node.solution_trace) -1
+            #     # all_keys = list(node.solution_trace.keys())
+            #     # print(all_keys)
+            #     last_key = max(list(node.solution_trace.keys()))
+            #     # print(node.solution_trace)
+            #     un_object[depth] = {
                     
-                    "ue_param": node.solution_trace[last_key]["think_answer"]["scores"][1]["param"]["PE"]["uncertainty"],
-                    "ue_cont": node.solution_trace[last_key]["think_answer"]["scores"][1]["cont"]["PE"]["uncertainty"],
-                    "prediction": node.solution_trace[last_key]["think_answer"]["answer"],
-                    "reward": node.solution_trace[last_key]["think_answer"]["node_reward"]
-                }
-            # print(un_object)
-            sorted_data = dict(sorted(un_object.items(), key=lambda item: int(item[0])))
-            print('-' * 40)
-            print(f'Gt: {all_solution_nodes[0].solution_trace[0]['ground_truth']}')
-            for key, value in sorted_data.items():
-                print(f"D {key} | {value['ue_param']:.3f} | {value['ue_cont']:.3f} | {value['reward']:.3f} | {value['prediction']}")
-            print('-' * 40)
+            #         "ue_param": node.solution_trace[last_key]["think_answer"]["scores"][1]["param"]["PE"]["uncertainty"],
+            #         "ue_cont": node.solution_trace[last_key]["think_answer"]["scores"][1]["cont"]["PE"]["uncertainty"],
+            #         "prediction": node.solution_trace[last_key]["think_answer"]["answer"],
+            #         "reward": node.solution_trace[last_key]["think_answer"]["node_reward"]
+            #     }
+            # # print(un_object)
+            # sorted_data = dict(sorted(un_object.items(), key=lambda item: int(item[0])))
+            # print('-' * 40)
+            # print(f'Gt: {all_solution_nodes[0].solution_trace[0]['ground_truth']}')
+            # for key, value in sorted_data.items():
+            #     print(f"D {key} | {value['ue_param']:.3f} | {value['ue_cont']:.3f} | {value['reward']:.3f} | {value['prediction']}")
+            # print('-' * 40)
 
 
 
@@ -220,22 +222,23 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_15 (reward_se_roll4)')
+    parser.add_argument('--run', type=str, default='run_10 (gen_doc_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
     
     # MCTS ---
     parser.add_argument("--enable_critique", action="store_true", help="")
+    parser.add_argument("--enable_doc_generation", action="store_false", help="")
     parser.add_argument("--verbose", action="store_true", help="extra login")
     parser.add_argument("--mcts_discount_factor", type=float, default=1.0)
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
     parser.add_argument("--num_rollouts", type=int, default=4)
-    parser.add_argument("--max_depth_allowed", type=int, default=10)
+    parser.add_argument("--max_depth_allowed", type=int, default=4)
     parser.add_argument("--num_votes", type=int, default=1)
-    parser.add_argument("--mcts_num_last_votes", type=int, default=1)
+    parser.add_argument("--mcts_num_last_votes", type=int, default=5)
     parser.add_argument("--enable_potential_score", action="store_true")
     
     # Discrimination ---

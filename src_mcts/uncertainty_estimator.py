@@ -118,11 +118,12 @@ class UncertaintyEstimator:
             model_output = self.model.generate(
                 **inputs,
                 num_return_sequences=self.number_of_generations,
-                do_sample=True,
                 return_dict_in_generate=True,
                 output_logits=True,
                 eos_token_id=eos_token_id,
                 pad_token_id=pad_token_id,
+                do_sample=True,
+                temperature=1.0
             )
             model_output.past_key_values = None
             model_output.sequences = model_output.sequences.cpu()

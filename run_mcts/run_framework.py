@@ -58,6 +58,7 @@ if __name__ == "__main__":
     
     # MCTS ---
     parser.add_argument("--enable_critique", action="store_true", help="")
+    parser.add_argument("--enable_doc_generation", action="store_true", help="")
     parser.add_argument("--verbose", action="store_true", help="extra login")
     parser.add_argument("--mcts_discount_factor", type=float, default=1.0)
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)

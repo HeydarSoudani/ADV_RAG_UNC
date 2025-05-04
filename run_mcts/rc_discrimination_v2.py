@@ -18,7 +18,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from run_searchr1.inference import StopOnSequence, get_answer, _passages2string
 from run_mcts.searchr1_discrimination import SemanticEquivalenceGenerator
 from src_mcts.generate_node import Generator
-from run_searchr1.correctness import em_score
+from run_searchr1.correctness import em_score, normalize_answer
 from utils.general_utils import set_seed, read_jsonl
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 
@@ -241,6 +241,15 @@ class Discriminator:
     def _filter_white_space(self, candidates: list[Candidate]) -> list[Candidate]:
         candidates = [c for c in candidates if c.final_answer.strip()]
         return candidates
+
+    def _filter_specific_words(self, candidates: list[Candidate]) -> list[Candidate]:
+        words = ['not enough information', 'not enough information provided', 'unknown', 'more information needed', 'none', 'not specified in the given information', 'information not specified', 'no direct information available in current context', 'no direct information available in the knowledge base.']
+        filtered_candidates = []
+        for c in candidates:
+            normalized_c = normalize_answer(c.final_answer)
+            if not any(w in normalized_c for w in words):
+                filtered_candidates.append(c)
+        return filtered_candidates
 
     def _filter_reasoning_consistency(self, question: str, candidates: list[Candidate], aux={}) -> list[Candidate]:
         assert all(
@@ -583,6 +592,7 @@ class Discriminator:
         prefiltered_candidates = self._filter_none(candidates)
         prefiltered_candidates = self._filter_long(prefiltered_candidates)
         prefiltered_candidates = self._filter_white_space(prefiltered_candidates)
+        prefiltered_candidates = self._filter_specific_words(prefiltered_candidates)
         print(f"==> Pre-filtered answers: {[c.final_answer for c in prefiltered_candidates]}")
         
         # select the final trajectory through Reasoning Consistency
@@ -643,8 +653,9 @@ def rc_discrimination(args):
                 last_depth_key = list(trace_.keys())[-1]
                 last_node_type = list(trace_[last_depth_key].keys())[0] 
                 final_answer = trace_[last_depth_key][last_node_type]["answer"]
-                # final_answer_reward = trace_[last_depth_key][last_node_type]["node_reward"]
-                final_answer_reward = 10 - trace_[last_depth_key][last_node_type]['scores'][1]['param']['PE']['uncertainty']
+                # final_answer_reward = trace_[last_depth_key][last_node_type]["value"]
+                final_answer_reward = trace_[last_depth_key][last_node_type]["node_reward"]
+                # final_answer_reward = 10 - trace_[last_depth_key][last_node_type]['scores'][1]['param']['PE']['uncertainty']
                 
                 masked_trace_text_list = rag_mask_solution_trace(
                     trace_text,
@@ -736,7 +747,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_16 (with_unc_roll4)')
+    parser.add_argument('--run', type=str, default='run_9 (doc_gen_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -763,7 +774,7 @@ if __name__ == "__main__":
     parser.add_argument("--rc_mode", type=str, default="mid", choices=["loose", "mid", "strict", "maj"])
     parser.add_argument("--rc_temperature", type=float, default=1.0)
     parser.add_argument("--rc_n_completions", type=int, default=1)
-    parser.add_argument("--rc_criteria", type=str, default="reward", choices=["freq", "reward"])
+    parser.add_argument("--rc_criteria", type=str, default="freq", choices=["freq", "reward"])
     parser.add_argument("--threshold", type=float, default=0.999)
     parser.add_argument("--extend_rc_mode", type=str, default="majority_vote", choices=["reasoning_consistency", "BoN", "majority_vote"])
     parser.add_argument("--best_of", type=int, default=5)

@@ -18,6 +18,7 @@ class Node_Type(Enum):
     SUBQ_DIRECT_ANSWER = "SUBQ_DIRECT_ANSWER"
     SUBQ_RAG_ANSWER = "SUBQ_RAG_ANSWER"
     
+    THINK_GENERATE = "THINK_GENERATE"
     THINK_SERACH = "THINK_SERACH"
     THINK_ANSWER = "THINK_ANSWER"
     CRITIQUE_SEARCH = "CRITIQUE_SEARCH"
@@ -134,6 +135,8 @@ def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None,
         elif node.node_type is Node_Type.REPHRASED_QUERY:
             node_details += f"Rep-Query: {node.rephrased_query}" + "\n" + space + " " * len(node_info)
     
+        elif node.node_type is Node_Type.THINK_GENERATE:
+            node_details += f"Search: {node.search_query} | Think: {node.think.replace("\n", " ")} | Doc: {node.generated_documents}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.THINK_SERACH:
             node_details += f"Search: {node.search_query} | Think: {node.think.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.THINK_ANSWER:

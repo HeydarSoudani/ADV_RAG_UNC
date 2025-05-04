@@ -66,6 +66,14 @@ def get_answer(text):
     else:
         return None
 
+def get_document(text):
+    pattern = re.compile(r"<document>(.*?)</document>", re.DOTALL)
+    matches = pattern.findall(text)
+    if matches:
+        return matches[-1]
+    else:
+        return None
+
 def get_critique(text):
     pattern = re.compile(r"<critique>(.*?)</critique>", re.DOTALL)
     matches = pattern.findall(text)
@@ -84,6 +92,13 @@ def _passages2string(retrieval_result):
         title = content.split("\n")[0]
         text = "\n".join(content.split("\n")[1:])
         format_reference += f"Doc {idx+1} (Title: {title}) {text}\n"
+    return format_reference
+
+def _passages2string_v2(retrieval_result):
+    # print(retrieval_result)
+    format_reference = ''
+    for idx, text in enumerate(retrieval_result):
+        format_reference += f"Doc {idx+1} {text}\n"
     return format_reference
 
 # For server retrieval
@@ -281,13 +296,13 @@ def searchr1_inference(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='2wikimultihopqa', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
