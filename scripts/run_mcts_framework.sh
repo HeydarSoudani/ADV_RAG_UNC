@@ -22,7 +22,7 @@ index_path="data/search_r1_files/bm25"
 retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
 num_rollouts=4
 max_depth_allowed=4
-run="run_5 (edited_prompt_roll4)"
+run="run_9 (doc_gen_roll4)"
 
 srun python $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
     --model_name_or_path "$model_name_or_path" \

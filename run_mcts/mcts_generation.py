@@ -199,17 +199,19 @@ if __name__ == "__main__":
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
-        'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
+    parser.add_argument('--retriever_name', type=str, default='reasonir', choices=[
+        'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge', 'reasonir'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
-    parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
+    parser.add_argument('--index_path', type=str, default='data/search_r1_files/e5_Flat.index', choices=[
         'data/search_r1_files/bm25',          # For BM25 & Rerank
         'data/search_r1_files/e5_Flat.index', # For E5
+        '', # For ReasonIR
     ])
-    parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
+    parser.add_argument("--retrieval_model_path", type=str, default="reasonir/ReasonIR-8B", choices=[
         "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank
-        "intfloat/e5-base-v2" # For E5
+        "intfloat/e5-base-v2",  # For E5
+        "reasonir/ReasonIR-8B", # For ReasonIR
     ])
     parser.add_argument('--retrieval_topk', type=int, default=3)
     parser.add_argument('--faiss_gpu', action='store_false', help='Use GPU for computation')
@@ -222,7 +224,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_10 (gen_doc_roll4)')
+    parser.add_argument('--run', type=str, default='run_9 (doc_gen_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
