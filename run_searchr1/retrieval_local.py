@@ -31,7 +31,7 @@ def load_docs(corpus, doc_idxs):
 
 def load_model(model_path: str, use_fp16: bool = False):
     model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-    model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+    model = AutoModel.from_pretrained(model_path, trust_remote_code=True, torch_dtype="auto")
     model.eval()
     model.cuda()
     if use_fp16: 
@@ -99,6 +99,13 @@ class Encoder:
                 **inputs, decoder_input_ids=decoder_input_ids, return_dict=True
             )
             query_emb = output.last_hidden_state[:, 0, :]
+        elif "ReasonIR" in type(self.model).__name__:
+            # query_emb = self.model.encode(query_list)
+            output = self.model(**inputs, return_dict=True)
+            query_emb = pooling(None,
+                                output.last_hidden_state,
+                                inputs['attention_mask'],
+                                self.pooling_method)
         else:
             output = self.model(**inputs, return_dict=True)
             query_emb = pooling(output.pooler_output,

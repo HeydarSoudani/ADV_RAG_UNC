@@ -24,10 +24,10 @@ hf_hub_download(
     local_dir=args.save_path,
 )
 
-repo_id = "PeterJinGo/wiki-18-bm25-index"
-snapshot_download(
-    repo_id=repo_id,
-    allow_patterns="bm25/*",
-    repo_type="dataset",
-    local_dir=args.save_path,
-)
+# repo_id = "PeterJinGo/wiki-18-bm25-index"
+# snapshot_download(
+#     repo_id=repo_id,
+#     allow_patterns="bm25/*",
+#     repo_type="dataset",
+#     local_dir=args.save_path,
+# )

@@ -195,9 +195,10 @@ class Index_Builder:
 
         for start_idx in tqdm(range(0, len(self.corpus), self.batch_size), desc='Inference Embeddings:'):
 
-            batch_data_title = self.corpus[start_idx:start_idx+self.batch_size]['title']
-            batch_data_text = self.corpus[start_idx:start_idx+self.batch_size]['text']
-            batch_data = ['"' + title + '"\n' + text for title, text in zip(batch_data_title, batch_data_text)]
+            # batch_data_title = self.corpus[start_idx:start_idx+self.batch_size]['title']
+            # batch_data_text = self.corpus[start_idx:start_idx+self.batch_size]['text']
+            # batch_data = ['"' + title + '"\n' + text for title, text in zip(batch_data_title, batch_data_text)]
+            batch_data = self.corpus[start_idx:start_idx+self.batch_size]['contents']
 
             if self.retrieval_method == "e5":
                 batch_data = [f"passage: {doc}" for doc in batch_data]
@@ -213,7 +214,8 @@ class Index_Builder:
             inputs = {k: v.cuda() for k, v in inputs.items()}
 
             #TODO: support encoder-only T5 model
-            if "T5" in type(self.encoder).__name__:
+            # if "T5" in type(self.encoder).__name__:
+            if "t5" in self.retrieval_method:
                 # T5-based retrieval model
                 decoder_input_ids = torch.zeros(
                     (inputs['input_ids'].shape[0], 1), dtype=torch.long
@@ -222,7 +224,13 @@ class Index_Builder:
                     **inputs, decoder_input_ids=decoder_input_ids, return_dict=True
                 )
                 embeddings = output.last_hidden_state[:, 0, :]
-
+            
+            elif "reasonir" in self.retrieval_method:
+                output = self.encoder(**inputs, return_dict=True)
+                embeddings = pooling(None,
+                                    output.last_hidden_state,
+                                    inputs['attention_mask'],
+                                    self.pooling_method)
             else:
                 output = self.encoder(**inputs, return_dict=True)
                 embeddings = pooling(output.pooler_output, 
@@ -284,30 +292,29 @@ class Index_Builder:
         faiss.write_index(faiss_index, self.index_save_path)
         print("Finish!")
 
-
 MODEL2POOLING = {
     "e5": "mean",
     "bge": "cls",
     "contriever": "mean",
-    'jina': 'mean'
+    'jina': 'mean',
+    "reasonir": 'mean'
 }
-
 
 def main():
     parser = argparse.ArgumentParser(description = "Creating index.")
 
     # Basic parameters
-    parser.add_argument('--retrieval_method', type=str)
-    parser.add_argument('--model_path', type=str, default=None)
-    parser.add_argument('--corpus_path', type=str)
-    parser.add_argument('--save_dir', default= 'indexes/',type=str)
+    parser.add_argument('--retrieval_method', type=str, default='reasonir')
+    parser.add_argument('--model_path', type=str, default='reasonir/ReasonIR-8B')
+    parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
+    parser.add_argument('--save_dir', default= 'data/search_r1_files',type=str)
 
     # Parameters for building dense index
-    parser.add_argument('--max_length', type=int, default=180)
-    parser.add_argument('--batch_size', type=int, default=512)
+    parser.add_argument('--max_length', type=int, default=256)
+    parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--use_fp16', default=False, action='store_true')
-    parser.add_argument('--pooling_method', type=str, default=None)
-    parser.add_argument('--faiss_type',default=None,type=str)
+    parser.add_argument('--pooling_method', type=str, default='mean')
+    parser.add_argument('--faiss_type',default='Flat',type=str)
     parser.add_argument('--embedding_path', default=None, type=str)
     parser.add_argument('--save_embedding', action='store_true', default=False)
     parser.add_argument('--faiss_gpu', default=False, action='store_true')
@@ -346,3 +353,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+    
+# python run_searchr1/index_builder.py

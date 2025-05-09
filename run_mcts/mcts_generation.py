@@ -67,7 +67,7 @@ def mcts_generation(args):
         retriever = ContrieverRetriever(args)
     elif args.retriever_name in ['rerank_l6', 'rerank_l12']:
         retriever = RerankRetriever(args)
-    elif args.retriever_name in ['e5', 'bge']:
+    elif args.retriever_name in ['e5', 'bge', 'reasonir']:
         retriever = DenseRetriever(args)
     
     
@@ -79,8 +79,8 @@ def mcts_generation(args):
     challenging_samples = ['test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_83']
     generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
     for i, sample in enumerate(tqdm(test_dataset)):
-        # if i == 3:
-        #     break
+        if i == 5:
+            break
         qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
         question = question.strip()
         if question[-1] != '?':
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--max_new_token', type=int, default=1024)
+    parser.add_argument('--max_new_tokens', type=int, default=512)
     
     # Dataset
     parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
@@ -203,10 +203,10 @@ if __name__ == "__main__":
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge', 'reasonir'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
-    parser.add_argument('--index_path', type=str, default='data/search_r1_files/e5_Flat.index', choices=[
+    parser.add_argument('--index_path', type=str, default='data/search_r1_files/reasonir_Flat.index', choices=[
         'data/search_r1_files/bm25',          # For BM25 & Rerank
         'data/search_r1_files/e5_Flat.index', # For E5
-        '', # For ReasonIR
+        'data/search_r1_files/reasonir_Flat.index', # For ReasonIR
     ])
     parser.add_argument("--retrieval_model_path", type=str, default="reasonir/ReasonIR-8B", choices=[
         "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank
@@ -224,14 +224,14 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_9 (doc_gen_roll4)')
+    parser.add_argument('--run', type=str, default='run_12 (test_reasonir_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
     
     # MCTS ---
     parser.add_argument("--enable_critique", action="store_true", help="")
-    parser.add_argument("--enable_doc_generation", action="store_false", help="")
+    parser.add_argument("--enable_doc_generation", action="store_true", help="")
     parser.add_argument("--verbose", action="store_true", help="extra login")
     parser.add_argument("--mcts_discount_factor", type=float, default=1.0)
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
@@ -239,8 +239,8 @@ if __name__ == "__main__":
     parser.add_argument("--save_tree", action="store_true")
     parser.add_argument("--num_rollouts", type=int, default=4)
     parser.add_argument("--max_depth_allowed", type=int, default=4)
-    parser.add_argument("--num_votes", type=int, default=1)
-    parser.add_argument("--mcts_num_last_votes", type=int, default=5)
+    parser.add_argument("--num_votes", type=int, default=2)
+    parser.add_argument("--mcts_num_last_votes", type=int, default=2)
     parser.add_argument("--enable_potential_score", action="store_true")
     
     # Discrimination ---

@@ -196,7 +196,7 @@ def searchr1_inference(args):
     em_evaluation = generated_em
     with jsonlines.open(args.inference_results_file, mode='a') as inf_file, jsonlines.open(args.path_results_file, mode='a') as path_file:
         for i, sample in enumerate(tqdm(test_dataset)):
-            # if i == 10:
+            # if i == 20:
             #     break
             qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
             question = question.strip()
@@ -303,22 +303,22 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='musique', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=500.0)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
+    parser.add_argument('--retriever_name', type=str, default='e5', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
-    parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
+    parser.add_argument('--index_path', type=str, default='data/search_r1_files/e5_Flat.index', choices=[
         'data/search_r1_files/bm25',          # For BM25 & Rerank
         'data/search_r1_files/e5_Flat.index', # For E5
     ])
-    parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
+    parser.add_argument("--retrieval_model_path", type=str, default="intfloat/e5-base-v2", choices=[
         "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank
         "intfloat/e5-base-v2" # For E5
     ])
@@ -333,7 +333,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_4 (search_r1)')
+    parser.add_argument('--run', type=str, default='run_20 (search_r1_full)')
     parser.add_argument("--seed", type=int, default=10)
     
     args = parser.parse_args()

@@ -16,7 +16,7 @@ class UncertaintyEstimator:
         self.args = args
         self.model = model
         self.tokenizer = tokenizer
-        self.number_of_generations=10
+        self.number_of_generations=args.num_votes
         self.system_prompt = system_prompt
         self.ue_methods_ = {
             "confidence": Confidence(),

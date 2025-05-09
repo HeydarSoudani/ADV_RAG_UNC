@@ -594,8 +594,8 @@ class Generator:
             if self.args.use_counter:
                 self.counter.retrieve += 1
         else:
-            retrieved_docs = []
-              
+            retrieved_docs = []  
+        
         return thinks, search_query, retrieved_docs
     
     def generate_think_answer(self, solution_trace: Dict[int, Dict[str, str]]):
@@ -603,7 +603,11 @@ class Generator:
         
         ### = Do generation
         input_prompt_text = self.get_prompt_text('think_answer', solution_trace)
-        initial_output = self.generate_(input_prompt_text, self.answer_stopping_criteria)[0] 
+        initial_output = self.generate_(
+            input_prompt_text,
+            self.answer_stopping_criteria,
+            max_new_tokens=self.args.max_new_tokens
+        )[0] 
         if self.args.use_counter:
             self.counter.add_generate(initial_output, self.tokenizer)
         # print('\n\n')
@@ -615,32 +619,33 @@ class Generator:
         think, most_likely_answer = self.think_answer_postprocessing(solution_trace, input_prompt_text, initial_output)
         
         ### = Uncertainty Estimation
-        context = get_context(solution_trace, self.args, nlevel=-1)
-        if len(context) > 0:
-            ue_scores_cont = self.uncertainty_estimator.estimate(
-                context = context,
-                question = user_question,
-                generation_type = "new_generations"
-            )
-            ue_scores_param = self.uncertainty_estimator.estimate(
-                context = [],
-                question = user_question,
-                generation_type = "existing_generations",
-                generated_texts = ue_scores_cont['generated_texts']
-                # generated_texts=[most_likely_answer]
-            )
-        else:
-            ue_scores_param = self.uncertainty_estimator.estimate(
-                context = [],
-                question = user_question,
-                generation_type = "new_generations",
-            )
-            ue_scores_cont = ue_scores_param
+        # context = get_context(solution_trace, self.args, nlevel=-1)
+        # if len(context) > 0:
+        #     ue_scores_cont = self.uncertainty_estimator.estimate(
+        #         context = context,
+        #         question = user_question,
+        #         generation_type = "new_generations"
+        #     )
+        #     ue_scores_param = self.uncertainty_estimator.estimate(
+        #         context = [],
+        #         question = user_question,
+        #         generation_type = "existing_generations",
+        #         generated_texts = ue_scores_cont['generated_texts']
+        #         # generated_texts=[most_likely_answer]
+        #     )
+        # else:
+        #     ue_scores_param = self.uncertainty_estimator.estimate(
+        #         context = [],
+        #         question = user_question,
+        #         generation_type = "new_generations",
+        #     )
+        #     ue_scores_cont = ue_scores_param
         
-        ue_scores = {
-            'param': ue_scores_param["scores"],
-            'cont': ue_scores_cont["scores"]
-        }
+        # ue_scores = {
+        #     'param': ue_scores_param["scores"],
+        #     'cont': ue_scores_cont["scores"]
+        # }
+        ue_scores=None
         
         ### = Passage utility 
         # pu_score = self.passage_utility(context, user_question, most_likely_answer)

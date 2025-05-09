@@ -98,8 +98,10 @@ def mcts_analysis():
     
     output = categorize_qids(file_a_path, file_b_path)
     for key, value in output.items():
-        # print(f"{key}: {len(value)} | {value}")
-        print(f"{key}: {len(value)}")
+        print(f"{key}: {len(value)} | {value}")
+        print('\n')
+        
+        # print(f"{key}: {len(value)}")
     
     # print(output)
     # file_path = "run_output/run_4 (search_r1)/Qwen2.5-7B-Instruct/2wikimultihopqa_dev/rerank_l6/path_results.jsonl"
