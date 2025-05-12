@@ -102,7 +102,7 @@ class Counter:
 
 class Generator:
     """Generator generates children nodes"""
-    def __init__(self, args, retriever, mcts_type="generation") -> None:
+    def __init__(self, args, retriever, generator, tokenizer, mcts_type="generation") -> None:
         self.args = args
         self.retriever = retriever
         self.mcts_type = mcts_type
@@ -110,18 +110,11 @@ class Generator:
         # self.passage_utility = PassageUtility(args)
                 
         # --- Define model ------------
-        self.generation_model = AutoModelForCausalLM.from_pretrained(
-            args.model_name_or_path,
-            torch_dtype=torch.bfloat16,
-            device_map='auto'
-        )
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            args.model_name_or_path,
-            # use_fast=False
-        )
-        # self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.generation_model = generator
+        self.tokenizer = tokenizer
         self.eos_token_ids = self.generation_model.config.eos_token_id
         self.mcts_num_last_votes = args.mcts_num_last_votes
+        # self.tokenizer.pad_token = self.tokenizer.eos_token
         
         # --- Define UE model ----------
         self.uncertainty_estimator = UncertaintyEstimator(
@@ -217,7 +210,7 @@ class Generator:
         max_new_tokens=1024,
         num_return:int = 1,
         temperature:float = 1.0,
-        do_sample:bool = False
+        do_sample:bool = True
     ):
         if self.tokenizer.chat_template:
             input_prompt = self.tokenizer.apply_chat_template(
@@ -238,8 +231,8 @@ class Generator:
                     max_new_tokens=max_new_tokens,
                     stopping_criteria=stopping_criteria,
                     pad_token_id=self.tokenizer.eos_token_id,
-                    do_sample=True,
-                    temperature=1.0
+                    temperature=temperature,
+                    do_sample=do_sample,
                 )
                 generated_tokens = outputs[0][input_ids.shape[1]:]
                 output_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)

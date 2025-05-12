@@ -9,10 +9,12 @@ import torch
 import requests
 import datasets
 import argparse
-import jsonlines
 import numpy as np
 import transformers
-from tqdm import tqdm, trange
+from tqdm import tqdm
+import time
+from accelerate import Accelerator
+from accelerate.utils import gather_object
 
 from utils.general_utils import set_seed
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
@@ -40,7 +42,6 @@ class StopOnSequence(transformers.StoppingCriteria):
                 return True
 
         return False
-
 
 def get_think(text):
     pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
@@ -114,14 +115,29 @@ def search(query: str):
     return _passages2string(results[0])
 
 def searchr1_inference(args):
-    print("\n== Search R1 Inference ...")
-    print(f"""
-        Model name:  {args.model_name_or_path}
-        Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
-        Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
-        Seed:        {args.seed}
-        Run:         {args.run}
-    """.replace('        ', ''))
+    # === MultiGPU setup =======================
+    accelerator = Accelerator()
+    device = accelerator.device
+    
+    if accelerator.is_main_process:
+        print("\n== Search R1 Inference ...")
+        print(f"""
+            Model name:  {args.model_name_or_path}
+            Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
+            Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
+            Seed:        {args.seed}
+            Run:         {args.run}
+        """.replace('        ', ''))
+    
+        # === Define CUDA device =======
+        # args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            print(f"Number of available GPUs: {torch.cuda.device_count()}")
+            for i in range(torch.cuda.device_count()):
+                print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+        else:
+            print("CUDA is not available. No GPUs detected.")
+        print('\n')
     
     # === Dataset ===============================
     dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', args.dataset)
@@ -145,16 +161,18 @@ def searchr1_inference(args):
     else:
         test_dataset = test_dataset_
     
-    sample_index = 0
-    print(f"Length of Dataset: {len(test_dataset)}")
-    print(f"Dataset example {sample_index}:")
-    print(f"Id:             {test_dataset[sample_index]['id']}")
-    print(f"Question:       {test_dataset[sample_index]['question']}")
-    print(f"Answers:        {test_dataset[sample_index]['golden_answers']}")
+    if accelerator.is_main_process:
+        sample_index = 0
+        print(f"Length of Dataset: {len(test_dataset)}")
+        print(f"Dataset example {sample_index}:")
+        print(f"Id:             {test_dataset[sample_index]['id']}")
+        print(f"Question:       {test_dataset[sample_index]['question']}")
+        print(f"Answers:        {test_dataset[sample_index]['golden_answers']}")
+    
     
     # === generator Model ======================
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
-    model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16, device_map="auto")
+    model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16).to(device)
     target_sequences = ["</search>", " </search>", "</search>\n", " </search>\n", "</search>\n\n", " </search>\n\n"]
     stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(target_sequences, tokenizer)])
     curr_eos = [151645, 151643] # for Qwen2.5 series models
@@ -162,6 +180,7 @@ def searchr1_inference(args):
 
 
     # === Static Retriever ===================== 
+    # if accelerator.is_main_process:
     if args.retriever_name == 'bm25':
         retriever = BM25Retriever(args)  
     elif args.retriever_name == 'contriever':
@@ -171,14 +190,12 @@ def searchr1_inference(args):
     elif args.retriever_name in ['e5', 'bge']:
         retriever = DenseRetriever(args)
 
-
     # === Prompt ===============================
     prompt = """Answer the given question. \
     You must conduct reasoning inside <think> and </think> first every time you get new information. \
     After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. \
     You can search as many times as your want. \
     If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}\n"""
-
 
     # === Read existing data ===================
     generated_qids = []
@@ -190,14 +207,16 @@ def searchr1_inference(args):
                 if 'qid' in data:
                     generated_qids.append(data['qid'])
                     generated_em.append(data['em'])
-    
+    generated_qids = set(generated_qids)
+    filtered_dataset = test_dataset.filter(lambda example: example['id'] not in generated_qids)
     
     # === Inference ============================
     em_evaluation = generated_em
-    with jsonlines.open(args.inference_results_file, mode='a') as inf_file, jsonlines.open(args.path_results_file, mode='a') as path_file:
-        for i, sample in enumerate(tqdm(test_dataset)):
-            # if i == 20:
-            #     break
+    accelerator.wait_for_everyone() # sync GPUs
+    with accelerator.split_between_processes(filtered_dataset) as test_dataset_shard:
+        
+        inference_results, path_results = [], []
+        for i, sample in enumerate(tqdm(test_dataset_shard)):
             qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
             question = question.strip()
             if question[-1] != '?':
@@ -205,93 +224,105 @@ def searchr1_inference(args):
                 
             if qid in generated_qids:
                 print(f"The answer for query {qid} has been already generated")
-            else:
-                input_prompt = prompt.format(question=question)
-                if tokenizer.chat_template:
-                    input_prompt = tokenizer.apply_chat_template(
-                        [{"role": "user", "content": input_prompt}],
-                        add_generation_prompt=True,
-                        tokenize=False
-                    )
+                continue # already processed
             
-                cnt = 0
-                path = []
-                while True:
-                    input_ids = tokenizer.encode(input_prompt, return_tensors='pt').to(args.device)
-                    attention_mask = torch.ones_like(input_ids)
-                    
-                    # Generate text with the stopping criteria
-                    outputs = model.generate(
-                        input_ids,
-                        attention_mask=attention_mask,
-                        max_new_tokens=args.max_new_token,
-                        stopping_criteria=stopping_criteria,
-                        pad_token_id=tokenizer.eos_token_id,
-                        do_sample=True,
-                        temperature=0.7
-                    )
+            input_prompt = prompt.format(question=question)
+            if tokenizer.chat_template:
+                input_prompt = tokenizer.apply_chat_template(
+                    [{"role": "user", "content": input_prompt}],
+                    add_generation_prompt=True,
+                    tokenize=False
+                )
+        
+            path, cnt = [], 0
+            while True:
+                input_ids = tokenizer.encode(input_prompt, return_tensors='pt').to(device)
+                attention_mask = torch.ones_like(input_ids)
+                
+                # Generate text with the stopping criteria
+                outputs = model.generate(
+                    input_ids,
+                    attention_mask=attention_mask,
+                    max_new_tokens=args.max_new_token,
+                    stopping_criteria=stopping_criteria,
+                    pad_token_id=tokenizer.eos_token_id,
+                    do_sample=True,
+                    temperature=0.7
+                )
 
-                    if outputs[0][-1].item() in curr_eos:
-                        generated_tokens = outputs[0][input_ids.shape[1]:]
-                        output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-                        break
-
+                if outputs[0][-1].item() in curr_eos:
                     generated_tokens = outputs[0][input_ids.shape[1]:]
                     output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-                    
-                    tmp_query = get_query(tokenizer.decode(outputs[0], skip_special_tokens=True))
-                    if tmp_query:
-                        search_docs = retriever.search(tmp_query)
-                        search_results = _passages2string(search_docs)
-                    else:
-                        search_docs = []
-                        search_results = ''
+                    break
 
-                    path.append({
-                        'think': get_think(output_text),
-                        'search_query': tmp_query,
-                        'docs': search_docs
-                    })
-
-                    search_text = curr_search_template.format(output_text=output_text, search_results=search_results)
-                    input_prompt += search_text
-                    cnt += 1
-                
-                one_step_think = get_think(output_text)
-                pred_answer = get_answer(output_text)
-                if pred_answer != None:
-                    correctness_em = em_score(pred_answer, gt_answers)
-                    correctness_f1 = f1_score(pred_answer, gt_answers)
+                generated_tokens = outputs[0][input_ids.shape[1]:]
+                output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            
+                tmp_query = get_query(tokenizer.decode(outputs[0], skip_special_tokens=True))
+                if tmp_query:
+                    search_docs = retriever.search(tmp_query)
+                    search_results = _passages2string(search_docs)
                 else:
-                    correctness_em = 0
-                    correctness_f1 = {'f1': 0, 'precision': 0, 'recall': 0}
-                
-                em_evaluation.append(correctness_em)
-                path.append({'think': one_step_think, 'answer': pred_answer})
-                
-                # Save to files
-                item1 = {
-                    "qid": qid,
-                    "query": question,
-                    "gt_answers": gt_answers,
-                    "pred_answer": pred_answer,
-                    "em": correctness_em,
-                    "f1": correctness_f1
-                }
-                inf_file.write(item1)
-                item2 = {
-                    "qid": qid,
-                    "query": question,
-                    "gt_answers": gt_answers,
-                    "pred_answer": pred_answer,
-                    "path": path
-                }
-                path_file.write(item2)
+                    search_docs, search_results = [], ''
 
-    # === Print results ========================
-    print("\nEvaluation Result:")
-    # print(em_evaluation)
-    print(f"EM: {np.mean(em_evaluation)*100}")
+                path.append({
+                    'think': get_think(output_text),
+                    'search_query': tmp_query,
+                    'docs': search_docs
+                })
+
+                search_text = curr_search_template.format(output_text=output_text, search_results=search_results)
+                input_prompt += search_text
+                cnt += 1
+            
+            one_step_think = get_think(output_text)
+            pred_answer = get_answer(output_text)
+            path.append({'think': one_step_think, 'answer': pred_answer})
+            if pred_answer:
+                correctness_em = em_score(pred_answer, gt_answers)
+                correctness_f1 = f1_score(pred_answer, gt_answers)
+            else:
+                correctness_em = 0
+                correctness_f1 = {'f1': 0, 'precision': 0, 'recall': 0}
+            
+            item1 = {
+                "qid": qid,
+                "query": question,
+                "gt_answers": gt_answers,
+                "pred_answer": pred_answer,
+                "em": correctness_em,
+                "f1": correctness_f1
+            }
+            item2 = {
+                "qid": qid,
+                "query": question,
+                "gt_answers": gt_answers,
+                "pred_answer": pred_answer,
+                "path": path
+            }
+            inference_results.append(item1)
+            path_results.append(item2)
+            em_evaluation.append(correctness_em)
+    
+    
+    inference_results_gathered = gather_object(inference_results)
+    path_results_gathered = gather_object(path_results)
+    em_evaluation_gathered = gather_object(em_evaluation)
+    
+    if accelerator.is_main_process:
+        # --- Save results
+        with open(args.inference_results_file, "a", encoding="utf-8") as inf_f:
+            for item in inference_results_gathered:
+                inf_f.write(json.dumps(item) + "\n")
+        
+        with open(args.path_results_file, "a", encoding="utf-8") as pth_f:
+            for item in path_results_gathered:
+                pth_f.write(json.dumps(item) + "\n")
+    
+        # --- Print results
+        print("\nEvaluation Result:")
+        print(em_evaluation_gathered)
+        print(f"EM: {np.mean(em_evaluation_gathered)*100}")
 
 
 if __name__ == "__main__":
@@ -303,10 +334,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
@@ -333,7 +364,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_20 (search_r1_full)')
+    parser.add_argument('--run', type=str, default='run_22 (search_r1_mgpu)')
     parser.add_argument("--seed", type=int, default=10)
     
     args = parser.parse_args()
@@ -341,20 +372,10 @@ if __name__ == "__main__":
     # === Files ====================
     args.output_dir = f"run_output/{args.run}" 
     model_ = args.model_name_or_path.split('/')[-1]
-    output_dir = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
-    args.inference_results_file = f"{output_dir}/inference_results.jsonl"
-    args.path_results_file = f"{output_dir}/path_results.jsonl"
-    os.makedirs(output_dir, exist_ok=True)
-    
-    
-    # === Define CUDA device =======
-    args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
-    if torch.cuda.is_available():
-        print(f"Number of available GPUs: {torch.cuda.device_count()}")
-        for i in range(torch.cuda.device_count()):
-            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-    else:
-        print("CUDA is not available. No GPUs detected.")
+    args.output_dir = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
+    args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
+    args.path_results_file = f"{args.output_dir}/path_results.jsonl"
+    os.makedirs(args.output_dir, exist_ok=True)
         
     ### === Run Steps =============
     set_seed(args.seed)
@@ -362,4 +383,5 @@ if __name__ == "__main__":
     
     
     # python run_searchr1/inference.py
-    
+    # accelerate launch --multi_gpu --num_processes 2 run_searchr1/inference.py
+    # accelerate launch --num_processes 1 run_searchr1/inference.py

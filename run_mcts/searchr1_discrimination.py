@@ -28,14 +28,14 @@ def options2string_(options_list):
 
 
 class SemanticEquivalenceGenerator:
-    def __init__(self, args, model=None, tokenizer=None):
+    def __init__(self, args, generator=None, tokenizer=None):
         self.args = args
         self.prompt = read_txt(args.semantic_equivalence_prompt_file)
-        if model == None and tokenizer==None:
+        if generator == None and tokenizer==None:
             self.model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16, device_map='auto')
             self.tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
         else: 
-            self.model = model
+            self.model = generator
             self.tokenizer = tokenizer
         
         self.eos_token_ids = self.model.config.eos_token_id

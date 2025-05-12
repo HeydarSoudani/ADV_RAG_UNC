@@ -8,6 +8,7 @@ import torch
 import argparse
 import datasets
 from tqdm import tqdm, trange
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from utils.general_utils import set_seed
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
@@ -35,12 +36,16 @@ def mcts_generation(args):
 
     # === Dataset ===============================
     dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', args.dataset)
-    if 'test' in dataset:
-        print(f'Using the {args.dataset} test dataset...')
-        test_dataset_ = dataset['test']
-    elif 'dev' in dataset:
-        print(f'Using the {args.dataset} dev dataset...')
-        test_dataset_ = dataset['dev']
+    if args.subsec == 'train' and 'train' in dataset:
+        print(f'Using the {args.dataset} train dataset...')
+        test_dataset_ = dataset['train']
+    else:
+        if 'test' in dataset:
+            print(f'Using the {args.dataset} test dataset...')
+            test_dataset_ = dataset['test']
+        elif 'dev' in dataset:
+            print(f'Using the {args.dataset} dev dataset...')
+            test_dataset_ = dataset['dev']
     
     if args.fraction_of_data_to_use < 1.0:
         shuffled_dataset = test_dataset_.shuffle(seed=args.seed)
@@ -71,8 +76,17 @@ def mcts_generation(args):
         retriever = DenseRetriever(args)
     
     
-    # === Model Definition ======================    
-    node_generator = Generator(args, retriever)
+    # === LLM Generator ==========================
+    generator = AutoModelForCausalLM.from_pretrained(
+            args.model_name_or_path,
+            torch_dtype=torch.bfloat16,
+            device_map='auto'
+        )
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
+    
+    
+    # === Node Generator =========================
+    node_generator = Generator(args, retriever, generator, tokenizer)
     
     
     # === Generation =============================
@@ -191,24 +205,24 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=512)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=500.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='reasonir', choices=[
+    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge', 'reasonir'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
-    parser.add_argument('--index_path', type=str, default='data/search_r1_files/reasonir_Flat.index', choices=[
+    parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
         'data/search_r1_files/bm25',          # For BM25 & Rerank
         'data/search_r1_files/e5_Flat.index', # For E5
         'data/search_r1_files/reasonir_Flat.index', # For ReasonIR
     ])
-    parser.add_argument("--retrieval_model_path", type=str, default="reasonir/ReasonIR-8B", choices=[
+    parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
         "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank
         "intfloat/e5-base-v2",  # For E5
         "reasonir/ReasonIR-8B", # For ReasonIR
@@ -224,7 +238,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_12 (test_reasonir_roll4)')
+    parser.add_argument('--run', type=str, default='run_5 (edited_prompt_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')

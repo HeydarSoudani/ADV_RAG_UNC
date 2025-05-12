@@ -213,11 +213,22 @@ class DenseRetriever(BaseRetriever):
         print('loading index ...')
         self.index = faiss.read_index(self.index_path)
         if config.faiss_gpu:
-            print('Using faiss_gpu ...')
-            co = faiss.GpuMultipleClonerOptions()
+            print("Using FAISS with GPU ...")
+            # --- Multi-GPUs
+            # co = faiss.GpuMultipleClonerOptions()
+            # co.useFloat16 = True
+            # co.shard = True
+            # self.index = faiss.index_cpu_to_all_gpus(self.index, co=co)
+
+            # --- Single-GPU
+            device_id = torch.cuda.current_device()
+            print(f'Using faiss_gpu on process {device_id}...')
+            res = faiss.StandardGpuResources() # Get GPU resource for this device
+            co = faiss.GpuClonerOptions()
             co.useFloat16 = True
-            co.shard = True
-            self.index = faiss.index_cpu_to_all_gpus(self.index, co=co)
+            self.index = faiss.index_cpu_to_gpu(res, device_id, self.index, co)
+
+
 
         print('loading corpus ...')
         self.corpus = load_corpus(self.corpus_path)

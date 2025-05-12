@@ -10,7 +10,7 @@ import numpy as np
 
 from utils.general_utils import set_seed
 from src_adaptive.evaluate import CorrectnessEval
-from run_searchr1.correctness import em_score, em_score_v2
+from run_searchr1.correctness import em_score, em_score_v2, subem_score
 
 
 def mcts_evaluation(args):
@@ -31,10 +31,11 @@ def mcts_evaluation(args):
             data = json.loads(line)
             gt_answers = data['gt_answers']
             
-            # pred_answer = data['winner_answer']
+            pred_answer = data['winner_answer']
             # em_socre = em_score(pred_answer, gt_answers)
-            pred_answers = data['pred_answers']
-            em_socre = em_score_v2(pred_answers, gt_answers)
+            # pred_answers = data['pred_answers']
+            # em_socre = em_score_v2(pred_answers, gt_answers)
+            em_socre = subem_score(pred_answer, gt_answers)
             
             em_evaluation.append(em_socre)
             
@@ -52,10 +53,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=512)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
@@ -82,7 +83,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_9 (doc_gen_roll4)')
+    parser.add_argument('--run', type=str, default='run_5 (edited_prompt_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')

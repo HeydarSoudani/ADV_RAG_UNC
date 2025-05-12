@@ -692,7 +692,7 @@ def rc_discrimination(args):
                 winner_answer_ = discriminator.select(question, all_candidates, gt_answers)
                 winner_answer = winner_answer_.final_answer if winner_answer_ != None else ''
             
-            correctness_em = em_score(winner_answer, gt_answers[0])
+            correctness_em = em_score(winner_answer, gt_answers)
             em_evaluation.append(correctness_em)
             item = {
                 "qid": qid,
@@ -717,10 +717,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=512)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
@@ -747,7 +747,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_9 (doc_gen_roll4)')
+    parser.add_argument('--run', type=str, default='run_7 (new_setup_roll8)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
