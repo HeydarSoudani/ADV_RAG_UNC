@@ -110,7 +110,6 @@ def ragc_discrimination(args):
             print("CUDA is not available. No GPUs detected.")
         print('\n')    
 
-
     # === Load files ===========================
     entries = os.listdir(args.generation_trees_results_dir)
     query_ids = [entry for entry in entries if os.path.isdir(os.path.join(args.generation_trees_results_dir, entry))]
@@ -132,7 +131,6 @@ def ragc_discrimination(args):
     generated_qids = set(generated_qids)
     filtered_list = [item for item in sorted_query_ids if item not in generated_qids]
 
-    
     # === generator Model ======================
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
     generator = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16).to(device)
@@ -493,8 +491,8 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    ragc_discrimination(args)
-    # merge_result_files(args)
+    # ragc_discrimination(args)
+    merge_result_files(args)
     
     # python run_mcts/ragc_discrimination.py
     # accelerate launch --multi_gpu --num_processes 2 run_mcts/ragc_discrimination.py

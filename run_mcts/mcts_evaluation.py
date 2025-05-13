@@ -32,10 +32,10 @@ def mcts_evaluation(args):
             gt_answers = data['gt_answers']
             
             pred_answer = data['winner_answer']
-            # em_socre = em_score(pred_answer, gt_answers)
+            em_socre = em_score(pred_answer, gt_answers)
             # pred_answers = data['pred_answers']
             # em_socre = em_score_v2(pred_answers, gt_answers)
-            em_socre = subem_score(pred_answer, gt_answers)
+            # em_socre = subem_score(pred_answer, gt_answers)
             
             em_evaluation.append(em_socre)
             
@@ -121,7 +121,7 @@ if __name__ == "__main__":
     args.output_dir = f"run_output/{args.run}" 
     model_ = args.model_name_or_path.split('/')[-1]
     args.generation_trees_results_dir = f'{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/generation_trees'
-    args.discriminate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/rc_discriminate_results_v2.jsonl"
+    args.discriminate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/llm_selector_discriminate_results.jsonl" # llm_selector_discriminate_results rc_discriminate_results_v2
     args.evaluate_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/evaluate_results.jsonl"
     args.statistics_results_file = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}/statistics_results.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)

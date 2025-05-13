@@ -32,7 +32,6 @@ def em_score(prediction, golden_answers):
             break
     return score
 
-
 def subem_score(prediction, golden_answers):
     if isinstance(golden_answers, str):
         golden_answers = [golden_answers]
@@ -45,21 +44,18 @@ def subem_score(prediction, golden_answers):
             break
     return score
 
-
 def em_score_v2(predictions, golden_answers):
     if isinstance(golden_answers, str):
         golden_answers = [golden_answers]
     if isinstance(predictions, str):
         predictions = [predictions]
-    
-    normalized_golden = [normalize_answer(ans) for ans in golden_answers]
-    
-    for pred in predictions:
-        normalized_pred = normalize_answer(pred)
-        if normalized_pred in normalized_golden:
-            return 1
+    normalized_predictions = [normalize_answer(prediction) for prediction in predictions]
+    for golden_answer in golden_answers:
+        normalized_golden = normalize_answer(golden_answer)
+        for pred in normalized_predictions:
+            if normalized_golden == pred:
+                return 1
     return 0
-
 
 
 def f1_score(prediction, ground_truth):
