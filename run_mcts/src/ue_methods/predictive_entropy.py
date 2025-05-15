@@ -1,5 +1,5 @@
 from .ue_method import UEMethod
-from src_mcts.scoring_methods import ScoringMethod, LengthNormalizedScoring
+from run_mcts.src.scoring_methods import ScoringMethod, LengthNormalizedScoring
 import numpy as np
 
 

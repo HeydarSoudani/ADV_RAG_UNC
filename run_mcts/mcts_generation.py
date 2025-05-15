@@ -7,31 +7,42 @@ import json
 import torch
 import argparse
 import datasets
+import transformers
 from tqdm import tqdm, trange
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from accelerate import Accelerator
 
 from utils.general_utils import set_seed
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
-from src_mcts.generate_node import Generator
-from src_mcts.MCTS_backbone import MCTS_Searcher
-from src_mcts.MCTS_reasoning_v2 import Reasoning_MCTS_Node
-from utils.mcts_utils import (
-    Node_Type,
-    stochastic_find_best_solution,
-    print_tree_from_root
-)
+from run_mcts.src.generate_node import Generator
+from run_mcts.src.MCTS_backbone import MCTS_Searcher
+from run_mcts.src.MCTS_reasoning_v2 import Reasoning_MCTS_Node
+from utils.mcts_utils import Node_Type, stochastic_find_best_solution, print_tree_from_root
 
 
 def mcts_generation(args):
-    print("\n== MCTS Generation ...")
-    print(f"""
-        Model name:  {args.model_name_or_path}
-        Dataset:     {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
-        Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
-        Rollouts:    {args.num_rollouts}
-        Seed:        {args.seed}
-        Run:         {args.run}
-    """.replace('        ', ''))
+    # === MultiGPU setup =======================
+    accelerator = Accelerator()
+    device = accelerator.device
+    
+    if accelerator.is_main_process:
+        print("\n== MCTS Generation ...")
+        print(f"""
+            Model name:  {args.model_name_or_path}
+            Dataset:     {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
+            Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
+            Rollouts:    {args.num_rollouts}
+            Seed:        {args.seed}
+            Run:         {args.run}
+        """.replace('        ', ''))
+        
+        # --- Define CUDA device
+        if torch.cuda.is_available():
+            print(f"Number of available GPUs: {torch.cuda.device_count()}")
+            for i in range(torch.cuda.device_count()):
+                print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+        else:
+            print("CUDA is not available. No GPUs detected.")
+        print('\n')
 
 
     # === Dataset ===============================
@@ -57,12 +68,13 @@ def mcts_generation(args):
     else:
         test_dataset = test_dataset_
     
-    sample_index = 0
-    print(f"Length of Dataset: {len(test_dataset)}")
-    print(f"Dataset example {sample_index}:")
-    print(f"Id:             {test_dataset[sample_index]['id']}")
-    print(f"Question:       {test_dataset[sample_index]['question']}")
-    print(f"Answers:        {test_dataset[sample_index]['golden_answers']}")
+    if accelerator.is_main_process:
+        sample_index = 0
+        print(f"Length of Dataset: {len(test_dataset)}")
+        print(f"Dataset example {sample_index}:")
+        print(f"Id:             {test_dataset[sample_index]['id']}")
+        print(f"Question:       {test_dataset[sample_index]['question']}")
+        print(f"Answers:        {test_dataset[sample_index]['golden_answers']}")
 
     
     # === Static Retriever ===================== 
@@ -77,34 +89,30 @@ def mcts_generation(args):
     
     
     # === LLM Generator ==========================
-    generator = AutoModelForCausalLM.from_pretrained(
-            args.model_name_or_path,
-            torch_dtype=torch.bfloat16,
-            device_map='auto'
-        )
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-    
-    
-    # === Node Generator =========================
+    tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
+    generator = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16).to(device)
     node_generator = Generator(args, retriever, generator, tokenizer)
     
     
-    # === Generation =============================
+    # === Read existing data =====================
     challenging_samples = ['test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_83']
     generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
-    for i, sample in enumerate(tqdm(test_dataset)):
-        if i == 5:
-            break
-        qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
-        question = question.strip()
-        if question[-1] != '?':
-            question += '?'
-        
-        # if qid in challenging_samples:
-        if qid in generated_qids:
-            print(f"The MCTS for query {qid} has been already generated")
-        else:
+    filtered_dataset = test_dataset.filter(lambda example: example['id'] not in generated_qids)
+    
+    
+    # === Generation =============================
+    accelerator.wait_for_everyone()
+    with accelerator.split_between_processes(filtered_dataset) as test_dataset_shard:
+        for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
+            qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
             print(f"Generating MCTS for query {qid} ...")
+            question = question.strip()
+            if question[-1] != '?':
+                question += '?'
+            
+            # if i == 8:
+            #     break
+            
             #! build an MCTS searcher
             mcts_searcher = MCTS_Searcher(
                 exploration_weight=args.mcts_exploration_weight,
@@ -187,7 +195,6 @@ def mcts_generation(args):
             # print('-' * 40)
 
 
-
     # === Save results ===========================
     reuslts_dict = {
         'Tokens': node_generator.counter.token / len(dataset),
@@ -205,11 +212,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=512)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=500.0)
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
     # Retriever
@@ -238,7 +245,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_5 (edited_prompt_roll4)')
+    parser.add_argument('--run', type=str, default='run_23 (mcts_cna_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -302,6 +309,7 @@ if __name__ == "__main__":
     
     
     # python run_mcts/mcts_generation.py
+    # accelerate launch --multi_gpu  run_mcts/mcts_generation.py
     
 
 

@@ -53,7 +53,7 @@ def _filter_white_space(candidates: list[str]) -> list[str]:
     return candidates
 
 def _filter_specific_words(candidates: list[str]) -> list[str]:
-    words = ['not enough information provided', 'unknown', 'more information needed', 'none', 'not specified in the given information', 'information not specified', 'no direct information available in current context', 'no direct information available in the knowledge base.']
+    words = ['can not answer', 'CAN NOT ANSWER', 'not enough information provided', 'unknown', 'more information needed', 'none', 'not specified in the given information', 'information not specified', 'no direct information available in current context', 'no direct information available in the knowledge base.']
     filtered_candidates = []
     for c in candidates:
         normalized_c = normalize_answer(c)

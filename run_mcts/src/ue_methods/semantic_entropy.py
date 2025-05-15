@@ -8,7 +8,7 @@ from transformers import (
     DebertaTokenizer,
 )
 from .ue_method import UEMethod
-from src_mcts.scoring_methods import ScoringMethod, LengthNormalizedScoring
+from run_mcts.src.scoring_methods import ScoringMethod, LengthNormalizedScoring
 from utils.general_utils import bidirectional_entailment_clustering
 
 

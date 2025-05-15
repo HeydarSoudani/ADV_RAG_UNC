@@ -11,7 +11,7 @@ from transformers import (
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src_mcts.templates import ENTAILMENT_PROMPT, DEFAULT_SYSTEM_PROMPT
+from run_mcts.src.templates import ENTAILMENT_PROMPT, DEFAULT_SYSTEM_PROMPT
 
 def set_seed(seed):
     torch.manual_seed(seed)

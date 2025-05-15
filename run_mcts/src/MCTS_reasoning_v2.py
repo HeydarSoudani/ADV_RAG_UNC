@@ -1,13 +1,9 @@
 from copy import deepcopy
-from typing import List, Dict, Tuple
+from typing import List, Dict
 
-from src_mcts.MCTS_backbone import MCTS_Node
-from src_mcts.generate_node import Generator
-from utils.mcts_utils import (
-    Node_Type,
-    reach_terminal_subquestion
-)
-
+from run_mcts.src.MCTS_backbone import MCTS_Node
+from run_mcts.src.generate_node import Generator
+from utils.mcts_utils import Node_Type, reach_terminal_subquestion
 
 
 class Reasoning_MCTS_Node(MCTS_Node):

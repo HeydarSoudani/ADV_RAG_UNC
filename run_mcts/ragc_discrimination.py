@@ -6,7 +6,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
 import torch
-import logging
+import random
 import argparse
 import numpy as np
 import transformers
@@ -17,7 +17,7 @@ import glob
 from tqdm import tqdm
 from collections import defaultdict
 from typing import List, Dict, Tuple
-from src_mcts.generate_node import Generator
+from run_mcts.src.generate_node import Generator
 from copy import deepcopy
 
 from utils.general_utils import set_seed, read_jsonl, read_txt
@@ -25,7 +25,7 @@ from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, Rer
 from run_searchr1.correctness import em_score, f1_score
 from run_searchr1.inference import get_think, get_query, get_answer, _passages2string, StopOnSequence
 from searchr1_discrimination import SemanticEquivalenceGenerator
-from src_mcts.generate_paraphrase import SearchQueryGenerator, ThinkGenerator, get_paraphrased_query, get_paraphrased_think
+from run_mcts.src.generate_paraphrase import SearchQueryGenerator, ThinkGenerator, get_paraphrased_query, get_paraphrased_think
 from run_mcts.sr1_critique_discrimination import _filter_long, _filter_none, _filter_specific_words, _filter_white_space
 
 
@@ -53,6 +53,12 @@ class Candidate:
     def __str__(self):
         return f"Candidate {self.trace_id}: {self.final_answer} | {self.rag_confidence}"
 
+    def get_rag_confidence(self):
+        sorted_keys = sorted(self.trace_obj.keys(), key=int)
+        preds = [item[sorted_keys[-1]]['think_answer']['answer'] for item in self.masked_trace_retrieval_list]
+        self.rag_confidence = sum(1 for item in preds if item is not None and em_score(item, self.final_answer)) / len(preds)
+        return self.rag_confidence
+
     def to_dict(self):
         return {
             "trace_id": self.trace_id,
@@ -62,12 +68,6 @@ class Candidate:
             "trace_obj": self.trace_obj,
             "masked_trace_retrieval_list": self.masked_trace_retrieval_list
         }
-        
-    def get_rag_confidence(self):
-        sorted_keys = sorted(self.trace_obj.keys(), key=int)
-        preds = [item[sorted_keys[-1]]['think_answer']['answer'] for item in self.masked_trace_retrieval_list]
-        self.rag_confidence = sum(1 for item in preds if item is not None and em_score(item, self.final_answer)) / len(preds)
-        return self.rag_confidence
 
     def to_search_queries(self):
         sorted_keys = sorted(self.trace_obj.keys(), key=int)
@@ -76,8 +76,7 @@ class Candidate:
             para = [item[sorted_keys[-1]]['think_answer']['think'] for item in self.masked_trace_retrieval_list]    
         else:
             org = self.trace_obj[sorted_keys[-2]]['think_search']['search_query']
-            para = [item[sorted_keys[-2]]['think_search']['search_query'] for item in self.masked_trace_retrieval_list]    
-        
+            para = [item[sorted_keys[-2]]['think_search']['search_query'] for item in self.masked_trace_retrieval_list]
         return f"Candidate {self.trace_id}:\nOriginal: {org}\n{para}"
         
     def to_prediction(self):
@@ -207,45 +206,79 @@ def ragc_discrimination(args):
             }
 
         def process_with_search(sorted_keys, final_value):
-            last_search_index, last_think_search = None, None
-            for key in sorted_keys:
-                if "think_search" in trace[key]:
-                    last_search_index = key
-                    last_think_search = trace[key]["think_search"]
+            # TODO: more randomness in this function
+            
+            print(trace)
+            print('-------')
+            think_search_indices = [k for k, v in trace.items() if "think_search" in v]
+            think_answer_index = list(trace.keys())[-1]
+            print(think_search_indices)
+            print(think_answer_index)
+            print('-------')
+            
+            paraphrased_traces = []
+            selected_indices = random.choices(think_search_indices, k=5)  # change to random.sample(...) if needed
+            selected_indices_group = [(x, selected_indices.count(x)) for x in sorted(set(selected_indices))]
 
-            if last_think_search is None:
-                return []
+            print(selected_indices)
+            print('-------')
+            
+            
+            for (selected_index, repeat) in selected_indices_group:
+                selected_int = int(selected_index)
+                original_sq = trace[selected_int]["think_search"].get('search_query', '')
+                print(original_sq)
+                print('-------')
+                
+                if original_sq:
+                    sq_prompt = sq_generator.get_instruction(original_sq, n=repeat)
+                    sq_output = sq_generator.generate(sq_prompt, temperature=1.0)[0]
+                    paraphrased_queries = get_paraphrased_query(sq_output) # TODO: check if it's not None
 
-            original_sq = last_think_search.get('search_query', '')
-            before_think_search = {k: trace[k] for k in sorted_keys if k < last_search_index}
-            input_text = node_generator.get_prompt_text('think_answer', before_think_search)
-            input_text += f"<think> {last_think_search['think']} </think>\n"
-
-            paraphrased_queries = []
-            if original_sq:
-                sq_prompt = sq_generator.get_instruction(original_sq, n=num_return)
-                sq_output = sq_generator.generate(sq_prompt)[0]
-                paraphrased_queries = get_paraphrased_query(sq_output)
-
-            result = []
-            for pq in paraphrased_queries:
-                retrieved_docs = retriever.search(pq)
-                input_text_pq = input_text + f"<search> {pq} </search>\n"
-                input_text_pq += f"<information> {_passages2string(retrieved_docs)}</information>\n"
-                output = node_generator.generate_(input_text_pq, node_generator.answer_stopping_criteria)[0]
-
-                trace_copy = deepcopy(before_think_search)
-                trace_copy[last_search_index] = {
-                    "think_search": {
-                        "think": last_think_search['think'],
-                        "search_query": pq,
-                        "retrieved_documents": retrieved_docs
+                    print(paraphrased_queries)
+                    print('-------')  
+                
+                for paraphrased_query in paraphrased_queries:
+                    new_trace = {}
+   
+                    # Keep steps before and including the selected one
+                    for i in range(selected_int):
+                        new_trace[i] = deepcopy(trace[i])
+            
+                    retrieved_docs = retriever.search(paraphrased_query) if paraphrased_query else []    
+                    new_trace[selected_int] = {
+                        "think_search": {
+                            "think": trace[selected_int]["think_search"].get('think', ''),
+                            "search_query": paraphrased_query,
+                            "retrieved_documents": retrieved_docs,
+                        }
                     }
-                }
-                trace_copy[last_search_index + 1] = build_think_answer_entry(get_think(output), get_answer(output), final_value)
-                result.append(trace_copy)
-
-            return result
+                
+                    # Next think_search steps
+                    for i in range(selected_int+1, think_answer_index):
+                        thinks, search_query, ret_docs = node_generator.generate_think_search(new_trace)
+                        new_trace[i] = {
+                            "think_search": {
+                                "think": thinks,
+                                "search_query": search_query,
+                                "retrieved_documents": ret_docs
+                            }
+                        }
+                    
+                    # Last step
+                    think, most_likely_answer, reward, _ = node_generator.generate_think_answer(new_trace)
+                    new_trace[think_answer_index] = {
+                        "think_answer": {
+                            "think": think,
+                            "answer": most_likely_answer,
+                            "node_reward": reward,
+                            "scores": (0.0, 0.0, 0.0)
+                        }
+                    }
+                    paraphrased_traces.append(new_trace)
+                
+            
+            return paraphrased_traces
 
         def process_without_search(final_value):
             original_think = trace[1]["think_answer"].get('think', '')
@@ -283,7 +316,7 @@ def ragc_discrimination(args):
         
         # results = []
         ranked_discriminate_results_file = f"{args.discriminate_results_dir}/ragc_discriminate_results_rank{accelerator.process_index}.jsonl"
-        with open(ranked_discriminate_results_file, "a") as ranked_f:
+        with open(ranked_discriminate_results_file, "w") as ranked_f:
             for idx, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
                 final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
                 all_traces = read_jsonl(final_solutions_file)  
@@ -292,6 +325,9 @@ def ragc_discrimination(args):
                 question = question.strip()
                 if question[-1] != '?':
                     question += '?'
+                
+                if idx == 6:
+                    break
                 
                 all_candidates = []
                 for trace_id, trace in enumerate(all_traces):
@@ -314,7 +350,6 @@ def ragc_discrimination(args):
                     candidate = Candidate(trace_, final_answer, trace_id, trace_reward=final_answer_reward)
                     all_candidates.append(candidate)
                     # print(candidate)
-                    # print(candidate.to_dict())
                     # print(candidate.to_search_queries())
                 
                 if len(all_candidates) > 0:
@@ -337,12 +372,16 @@ def ragc_discrimination(args):
                         winner_confidence = highest_confidence
                         item["pred_answers"] = [(c.final_answer, winner_confidence) for c in all_candidates]
                     else:
-                        for c in all_candidates:
+                        for i, c in enumerate(all_candidates):
+                            # if i == 1:
+                            #     break
+                            print('\n\n===============')
                             c.masked_trace_retrieval_list = deepcopy(rag_mask_solution_trace(
                                 c.trace_obj,
                                 num_return=args.num_masked_solution_traces,
                             ))
                             c.get_rag_confidence()
+                            print(c.to_dict())
                             print(f"[Rank {accelerator.process_index}] {c.to_prediction()}")
                         winner_answer, winner_confidence = max(
                             ((c.final_answer, c.rag_confidence) for c in all_candidates),
@@ -370,7 +409,6 @@ def ragc_discrimination(args):
                     }
                     
                 ranked_f.write(json.dumps(item) + "\n")
-                # results.append(item)
                 em_evaluation.append(correctness_em)
 
     # results_gathered = gather_object(results)
@@ -410,10 +448,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=512)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -491,12 +529,12 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    # ragc_discrimination(args)
-    merge_result_files(args)
+    ragc_discrimination(args)
+    # merge_result_files(args)
     
     # python run_mcts/ragc_discrimination.py
     # accelerate launch --multi_gpu --num_processes 2 run_mcts/ragc_discrimination.py
-    # accelerate launch --multi_gpu  run_mcts/ragc_discrimination.py
+    # accelerate launch --multi_gpu run_mcts/ragc_discrimination.py
 
 
 
@@ -508,6 +546,48 @@ if __name__ == "__main__":
 
 
 
+
+
+
+
+
+            # last_search_index, last_think_search = None, None
+            # for key in sorted_keys:
+            #     if "think_search" in trace[key]:
+            #         last_search_index = key
+            #         last_think_search = trace[key]["think_search"]
+
+            # if last_think_search is None:
+            #     return []
+
+            # original_sq = last_think_search.get('search_query', '')
+            # before_think_search = {k: trace[k] for k in sorted_keys if k < last_search_index}
+            # input_text = node_generator.get_prompt_text('think_answer', before_think_search)
+            # input_text += f"<think> {last_think_search['think']} </think>\n"
+
+            # paraphrased_queries = []
+            # if original_sq:
+            #     sq_prompt = sq_generator.get_instruction(original_sq, n=num_return)
+            #     sq_output = sq_generator.generate(sq_prompt)[0]
+            #     paraphrased_queries = get_paraphrased_query(sq_output)
+
+            # result = []
+            # for pq in paraphrased_queries:
+            #     retrieved_docs = retriever.search(pq)
+            #     input_text_pq = input_text + f"<search> {pq} </search>\n"
+            #     input_text_pq += f"<information> {_passages2string(retrieved_docs)}</information>\n"
+            #     output = node_generator.generate_(input_text_pq, node_generator.answer_stopping_criteria)[0]
+
+            #     trace_copy = deepcopy(before_think_search)
+            #     trace_copy[last_search_index] = {
+            #         "think_search": {
+            #             "think": last_think_search['think'],
+            #             "search_query": pq,
+            #             "retrieved_documents": retrieved_docs
+            #         }
+            #     }
+            #     trace_copy[last_search_index + 1] = build_think_answer_entry(get_think(output), get_answer(output), final_value)
+            #     result.append(trace_copy)
 
 
 

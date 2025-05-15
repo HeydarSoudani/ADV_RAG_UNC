@@ -21,10 +21,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=512)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_5 (edited_prompt_roll4)')
+    parser.add_argument('--run', type=str, default='run_23 (mcts_cna_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -87,8 +87,8 @@ if __name__ == "__main__":
     parser.add_argument("--threshold", type=float, default=0.999)
     parser.add_argument("--extend_rc_mode", type=str, default="majority_vote", choices=["original", "BoN", "majority_vote"])
     parser.add_argument("--best_of", type=int, default=5)
-    
     args = parser.parse_args()
+    
     
     # === Files ==================================
     model_ = args.model_name_or_path.split('/')[-1]
@@ -98,28 +98,17 @@ if __name__ == "__main__":
     args.discriminate_results_dir = f"{output_dir}"
     args.discriminate_results_file = f"{output_dir}/ragc_discriminate_results.jsonl"
     args.evaluate_results_file = f"{output_dir}/evaluate_results.jsonl"
-    
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
     
     # === Prompt files ===========================
     args.query_decomposition_prompt_file = "prompts_mcts/query_decomposition_prompt_template.txt"
     args.semantic_equivalence_prompt_file = "prompts_mcts/semantic_equivalence_prompt_template.txt"
     
-    ### === Define CUDA device =================== 
-    args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
-    if torch.cuda.is_available():
-        print(f"Number of available GPUs: {torch.cuda.device_count()}")
-        for i in range(torch.cuda.device_count()):
-            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-    else:
-        print("CUDA is not available. No GPUs detected.")
-        
-    
     ### === Run Steps ============================
     set_seed(args.seed)
-    # mcts_generation(args)
+    mcts_generation(args)
     # rc_discrimination(args)
-    ragc_discrimination(args)
+    # ragc_discrimination(args)
     # mcts_evaluation(args)
     
     # python run_mcts/run_framework.py

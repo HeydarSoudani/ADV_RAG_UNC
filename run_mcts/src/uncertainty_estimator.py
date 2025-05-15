@@ -4,12 +4,12 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import torch
 
-from src_mcts.ue_methods import (
+from run_mcts.src.ue_methods import (
     Entropy, LogTokU, 
     Confidence, PredictiveEntropy, SemanticEntropy,
     MARS
 )
-from src_mcts.templates import DEFAULT_SYSTEM_PROMPT
+from run_mcts.src.templates import DEFAULT_SYSTEM_PROMPT
 
 class UncertaintyEstimator:
     def __init__(self, model, tokenizer, args, system_prompt:str = DEFAULT_SYSTEM_PROMPT):

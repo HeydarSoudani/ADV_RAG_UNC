@@ -4,7 +4,7 @@ import torch
 from typing import Union
 from transformers import PreTrainedModel, PreTrainedTokenizer, PreTrainedTokenizerFast
 from .ue_method import UEMethod
-from src_mcts.scoring_methods import ScoringMethod, LengthNormalizedScoring
+from run_mcts.src.scoring_methods import ScoringMethod, LengthNormalizedScoring
 
 class LogTokU(UEMethod):
     def __init__(self, scoring_function : ScoringMethod = LengthNormalizedScoring()):#normalization, 

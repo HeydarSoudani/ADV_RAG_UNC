@@ -17,7 +17,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from run_searchr1.inference import StopOnSequence, get_answer, _passages2string
 from run_mcts.searchr1_discrimination import SemanticEquivalenceGenerator
-from src_mcts.generate_node import Generator
+from run_mcts.src.generate_node import Generator
 from run_searchr1.correctness import em_score, normalize_answer
 from utils.general_utils import set_seed, read_jsonl
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
@@ -243,7 +243,7 @@ class Discriminator:
         return candidates
 
     def _filter_specific_words(self, candidates: list[Candidate]) -> list[Candidate]:
-        words = ['not enough information', 'not enough information provided', 'unknown', 'more information needed', 'none', 'not specified in the given information', 'information not specified', 'no direct information available in current context', 'no direct information available in the knowledge base.']
+        words = ['can not answer', 'CAN NOT ANSWER', 'not enough information', 'not enough information provided', 'unknown', 'more information needed', 'none', 'not specified in the given information', 'information not specified', 'no direct information available in current context', 'no direct information available in the knowledge base.']
         filtered_candidates = []
         for c in candidates:
             normalized_c = normalize_answer(c.final_answer)
@@ -747,7 +747,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_7 (new_setup_roll8)')
+    parser.add_argument('--run', type=str, default='run_23 (mcts_cna_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')

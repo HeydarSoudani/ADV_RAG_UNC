@@ -4,29 +4,21 @@ import re
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import glob
 import json
 import torch
-import logging
 import argparse
 import numpy as np
 import transformers
 from accelerate import Accelerator
 from accelerate.utils import gather_object
-import glob
-import random
-
 from tqdm import tqdm
-from collections import defaultdict
 from typing import List, Dict, Tuple
-from src_mcts.generate_node import Generator
-from copy import deepcopy
-
 from utils.general_utils import set_seed, read_jsonl, read_txt
 from run_searchr1.correctness import normalize_answer, em_score, f1_score
 from run_searchr1.inference import get_think, get_query, get_answer, _passages2string, StopOnSequence
 from searchr1_discrimination import SemanticEquivalenceGenerator
 from run_mcts.sr1_critique_discrimination import _filter_long, _filter_none, _filter_specific_words, _filter_white_space
-
 
 
 class CandidateSelector:
@@ -119,8 +111,6 @@ class CandidateSelector:
         input_text += '<think> your reasoning here </think>\n'
         input_text += '<answer> your selected answer here </answer>\n'
         input_text += 'Do NOT include any additional text, introductions, or formatting outside these tags.\n'
-
-
 
         if len(docs) > 0:
             input_text += f"\n<information>\n"
@@ -425,7 +415,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_5 (edited_prompt_roll4)')
+    parser.add_argument('--run', type=str, default='run_23 (mcts_cna_roll4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -471,8 +461,8 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    llm_selector_discrimination(args)
-    # merge_result_files(args)
+    # llm_selector_discrimination(args)
+    merge_result_files(args)
     
     # python run_mcts/llm_selector_discrimination.py
     # accelerate launch --multi_gpu --num_processes 2 run_mcts/llm_selector_discrimination.py

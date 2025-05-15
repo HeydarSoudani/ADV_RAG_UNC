@@ -1,5 +1,5 @@
 from .ue_method import UEMethod
-from src_mcts.scoring_methods import ScoringMethod, LengthNormalizedScoring
+from run_mcts.src.scoring_methods import ScoringMethod, LengthNormalizedScoring
 
 class Confidence(UEMethod):
     def __init__(self, scoring_function : ScoringMethod = LengthNormalizedScoring()):#normalization, 

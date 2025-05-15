@@ -8,7 +8,7 @@ from transformers import (
 )
 
 from .ue_method import UEMethod
-from src_mcts.scoring_methods import ScoringMethod, LengthNormalizedScoring
+from run_mcts.src.scoring_methods import ScoringMethod, LengthNormalizedScoring
 
 
 class MARS(UEMethod):

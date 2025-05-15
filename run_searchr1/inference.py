@@ -17,8 +17,8 @@ from accelerate import Accelerator
 from accelerate.utils import gather_object
 
 from utils.general_utils import set_seed
-from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from run_searchr1.correctness import em_score, f1_score
+from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 
 
 # Define the custom stopping criterion
@@ -169,7 +169,6 @@ def searchr1_inference(args):
         print(f"Question:       {test_dataset[sample_index]['question']}")
         print(f"Answers:        {test_dataset[sample_index]['golden_answers']}")
     
-    
     # === generator Model ======================
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
     model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16).to(device)
@@ -178,9 +177,7 @@ def searchr1_inference(args):
     curr_eos = [151645, 151643] # for Qwen2.5 series models
     curr_search_template = '\n\n{output_text}<information>{search_results}</information>\n\n'
 
-
-    # === Static Retriever ===================== 
-    # if accelerator.is_main_process:
+    # === Static Retriever =====================
     if args.retriever_name == 'bm25':
         retriever = BM25Retriever(args)  
     elif args.retriever_name == 'contriever':
@@ -216,7 +213,7 @@ def searchr1_inference(args):
     with accelerator.split_between_processes(filtered_dataset) as test_dataset_shard:
         
         inference_results, path_results = [], []
-        for i, sample in enumerate(tqdm(test_dataset_shard)):
+        for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
             qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
             question = question.strip()
             if question[-1] != '?':
@@ -329,8 +326,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
-    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    
+    parser.add_argument('--paraphrase_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
@@ -362,9 +358,12 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
+    # RAG-consistency
+    parser.add_argument("--num_rag_generations", type=int, default=10)
+    
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_22 (search_r1_mgpu)')
+    parser.add_argument('--run', type=str, default='run_4 (search_r1)')
     parser.add_argument("--seed", type=int, default=10)
     
     args = parser.parse_args()
@@ -375,6 +374,8 @@ if __name__ == "__main__":
     args.output_dir = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
     args.path_results_file = f"{args.output_dir}/path_results.jsonl"
+    args.rag_consistency_results_file = f"{args.output_dir}/rag_consistency_results.jsonl"
+    args.rag_consistency_paths_file = f"{args.output_dir}/rag_consistency_paths.jsonl"
     os.makedirs(args.output_dir, exist_ok=True)
         
     ### === Run Steps =============

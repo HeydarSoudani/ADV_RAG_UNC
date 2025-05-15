@@ -9,7 +9,6 @@ import argparse
 import numpy as np
 
 from utils.general_utils import set_seed
-from src_adaptive.evaluate import CorrectnessEval
 from run_searchr1.correctness import em_score, em_score_v2, subem_score
 
 
@@ -31,10 +30,10 @@ def mcts_evaluation(args):
             data = json.loads(line)
             gt_answers = data['gt_answers']
             
-            pred_answer = data['winner_answer']
-            em_socre = em_score(pred_answer, gt_answers)
-            # pred_answers = data['pred_answers']
-            # em_socre = em_score_v2(pred_answers, gt_answers)
+            # pred_answer = data['winner_answer']
+            # em_socre = em_score(pred_answer, gt_answers)
+            pred_answers = data['pred_answers']
+            em_socre = em_score_v2(pred_answers, gt_answers)
             # em_socre = subem_score(pred_answer, gt_answers)
             
             em_evaluation.append(em_socre)

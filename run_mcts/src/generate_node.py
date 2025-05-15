@@ -5,17 +5,15 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import re
 import spacy
 import torch
-import random
 import numpy as np
 import transformers
 from typing import List, Dict, Tuple
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from run_searchr1.inference import get_think, get_query, get_answer, get_critique, get_document, _passages2string, StopOnSequence, _passages2string_v2
 from utils.general_utils import read_txt
 from utils.adaptive_utils import fix_tokenizer_chat
-from src_mcts.uncertainty_estimator import UncertaintyEstimator
-from src_mcts.passege_utility import PassageUtility
+from run_mcts.src.uncertainty_estimator import UncertaintyEstimator
+from run_mcts.src.passege_utility import PassageUtility
 
 nlp = spacy.load("en_core_web_sm")
 
@@ -369,7 +367,6 @@ class Generator:
             input_text += 'You are in the THINK-SEARCH stage.\n'
             input_text += 'Your goal is to identify what specific information is missing and required to move closer to the answer.\n'
             input_text += 'DO NOT attempt to answer the question yet.\n'
-            # input_text += 'After reasoning, provide a search query inside one <search> and </search> tag.\n'
             input_text += 'The search query should be precise and focused.\n'
             input_text += 'All reasoning must be enclosed within ONE and ONLY ONE pair of <think> and </think> tags.\n'
             input_text += 'Only include the following tags in this exact order:\n'
@@ -377,6 +374,7 @@ class Generator:
             input_text += '<search> search query </search>\n'
         
         elif node_type == 'think_answer':
+            # normal version
             input_text += 'You are in the THINK-ANSWER stage.\n'
             input_text += 'Use your internal knowledge and any available <information> content to reason toward the answer.\n'
             input_text += 'Do NOT generate or modify <information> tags in your output.\n'
@@ -386,6 +384,20 @@ class Generator:
             input_text += 'Only include the following tags in this exact order:\n'
             input_text += '<think> one complete reasoning step leading to the final answer </think>\n'
             input_text += '<answer> final answer </answer>\n'
+        
+            # With can not answer
+            # input_text += 'You are in the THINK-ANSWER stage.\n'
+            # input_text += 'Use your internal knowledge and any available <information> content to reason toward the answer.\n'
+            # input_text += 'Do NOT generate or modify <information> tags in your output.\n'
+            # input_text += 'Ensure your reasoning is directly connected to the provided information and leads logically to the final answer.\n'
+            # input_text += 'If you are still uncertain after reasoning, output "CAN NOT ANSWER" inside the <answer> tag.\n'
+            # input_text += 'Otherwise, the final answer must be short, concise, and to the point.\n'
+            # input_text += 'All reasoning must be enclosed within ONE and ONLY ONE pair of <think> and </think> tags.\n'
+            # input_text += 'Only include the following tags in this exact order:\n'
+            # input_text += '<think> one complete reasoning step leading to the final answer </think>\n'
+            # input_text += '<answer> final answer or CAN NOT ANSWER </answer>\n'
+
+        
         
         elif node_type == 'critique_search':
             input_text += 'You are in the CRITIQUE-SEARCH stage.\n'
