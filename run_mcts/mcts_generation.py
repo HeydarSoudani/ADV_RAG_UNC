@@ -30,7 +30,7 @@ def mcts_generation(args):
             Model name:  {args.model_name_or_path}
             Dataset:     {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
             Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
-            Rollouts:    {args.num_rollouts}
+            Rollouts:    {args.num_rollouts} ({args.max_depth_allowed})
             Seed:        {args.seed}
             Run:         {args.run}
         """.replace('        ', ''))
@@ -105,14 +105,12 @@ def mcts_generation(args):
     with accelerator.split_between_processes(filtered_dataset) as test_dataset_shard:
         for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
             qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
-            print(f"Generating MCTS for query {qid} ...")
+            print(f"[Rank {accelerator.process_index}] Generating MCTS for query {qid} ...")
             question = question.strip()
             if question[-1] != '?':
                 question += '?'
-            
-            # if i == 8:
+            # if i == 3:
             #     break
-            
             #! build an MCTS searcher
             mcts_searcher = MCTS_Searcher(
                 exploration_weight=args.mcts_exploration_weight,
@@ -195,14 +193,14 @@ def mcts_generation(args):
             # print('-' * 40)
 
 
-    # === Save results ===========================
-    reuslts_dict = {
-        'Tokens': node_generator.counter.token / len(dataset),
-        'Sentences': node_generator.counter.sentence / len(dataset),
-        'Retrieves': node_generator.counter.retrieve / len(dataset)
-    }
-    with open(args.statistics_results_file, 'w') as file:
-        json.dump(reuslts_dict, file, indent=4)
+    # # === Save results ===========================
+    # reuslts_dict = {
+    #     'Tokens': node_generator.counter.token / len(dataset),
+    #     'Sentences': node_generator.counter.sentence / len(dataset),
+    #     'Retrieves': node_generator.counter.retrieve / len(dataset)
+    # }
+    # with open(args.statistics_results_file, 'w') as file:
+    #     json.dump(reuslts_dict, file, indent=4)
 
 
 if __name__ == "__main__":
@@ -259,7 +257,7 @@ if __name__ == "__main__":
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
     parser.add_argument("--num_rollouts", type=int, default=4)
-    parser.add_argument("--max_depth_allowed", type=int, default=4)
+    parser.add_argument("--max_depth_allowed", type=int, default=6)
     parser.add_argument("--num_votes", type=int, default=2)
     parser.add_argument("--mcts_num_last_votes", type=int, default=2)
     parser.add_argument("--enable_potential_score", action="store_true")

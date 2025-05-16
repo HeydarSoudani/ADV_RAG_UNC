@@ -5,33 +5,60 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
+import glob
 import torch
 import argparse
 import datasets
 from tqdm import tqdm
+from accelerate import Accelerator
+from accelerate.utils import gather_object
 
-
-from src_adaptive.dataset import BaseDataset
-from src_adaptive.rag import *
-from src_adaptive.evaluate import CorrectnessEval
+from run_adaptive.src.rag import *
 from utils.general_utils import set_seed
+from run_searchr1.correctness import em_score, f1_score
+
+
+def get_answer(text):
+    parts = text.split("the answer is", 1)  # Split at the first occurrence
+    pred = parts[1].strip() if len(parts) > 1 else ""
+    pattern = r"\.?</s>"
+    pred = re.sub(pattern, "", pred)
+    return pred
 
 
 def adaptive_generation(args):
-    print("\n== Adaptive Generation ...")
-    print(f"""
-        Model name:  {args.model_name_or_path}
-        Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
-        RAG Method:  {args.rag_method} 
-        Retriever:   {args.retriever_name}
-        Hallu_thre:  {args.hallucination_threshold}
-        Seed:        {args.seed}
-    """.replace('        ', ''))
+    # === MultiGPU setup =======================
+    accelerator = Accelerator()
+    device = accelerator.device
+    
+    if accelerator.is_main_process:
+        print("\n== Adaptive Generation ...")
+        print(f"""
+            Model name:  {args.model_name_or_path}
+            Dataset:     {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
+            RAG Method:  {args.rag_method}
+            Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
+            Hallu_thre:  {args.hallucination_threshold}
+            Seed:        {args.seed}
+            Run:         {args.run}
+        """.replace('        ', ''))
+        # === Define CUDA device =======
+        # args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            print(f"Number of available GPUs: {torch.cuda.device_count()}")
+            for i in range(torch.cuda.device_count()):
+                print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+        else:
+            print("CUDA is not available. No GPUs detected.")
+        print('\n')
     
     
     # === Dataset ===============================
     dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', args.dataset)
-    if 'test' in dataset:
+    if args.subsec == 'train' and 'train' in dataset:
+        print(f'Using the {args.dataset} train dataset...')
+        test_dataset_ = dataset['train']
+    elif 'test' in dataset:
         print(f'Using the {args.dataset} test dataset...')
         test_dataset_ = dataset['test']
     elif 'dev' in dataset:
@@ -48,115 +75,114 @@ def adaptive_generation(args):
     else:
         test_dataset = test_dataset_
     
-    sample_index = 0
-    print(f"Length of Dataset: {len(test_dataset)}")
-    print(f"Dataset example {sample_index}:")
-    print(f"Id:             {test_dataset[sample_index]['id']}")
-    print(f"Question:       {test_dataset[sample_index]['question']}")
-    print(f"Answers:        {test_dataset[sample_index]['golden_answers']}")
+    if accelerator.is_main_process:
+        sample_index = 0
+        print(f"Length of Dataset: {len(test_dataset)}")
+        print(f"Dataset example {sample_index}:")
+        print(f"Id:             {test_dataset[sample_index]['id']}")
+        print(f"Question:       {test_dataset[sample_index]['question']}")
+        print(f"Answers:        {test_dataset[sample_index]['golden_answers']}")
 
 
-    # === Dataset & Metric Setup ================
-    correctness = CorrectnessEval()
+    # === Read existing data ===================
+    generated_qids = []
+    generated_em = []
+    if os.path.exists(args.inference_results_file):
+        with open(args.inference_results_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                data = json.loads(line)
+                if 'qid' in data:
+                    generated_qids.append(data['qid'])
+                    generated_em.append(data['em'])
+    generated_qids = set(generated_qids)
+    filtered_dataset = test_dataset.filter(lambda example: example['id'] not in generated_qids)
+
 
     # === Select RAG Method =====================
     if args.rag_method == "no_retrieval":
-        model = NoRAG(args)
+        model = NoRAG(args, device)
     elif args.rag_method == "single_retrieval":
-        model = SingleRAG(args)
+        model = SingleRAG(args, device)
     elif args.rag_method in ["fix_length_retrieval", "fix_sentence_retrieval"]:
-        model = FixLengthRAG(args)
+        model = FixLengthRAG(args, device)
     elif args.rag_method == 'flare':
-        model = FLARE_RAG(args)
+        model = FLARE_RAG(args, device)
     elif args.rag_method == 'dragin':
-        model = DRAGIN_RAG(args)
+        model = DRAGIN_RAG(args, device)
     else:
         raise NotImplementedError
-    
-    
-    # === Generation ============================
-    def get_answer(text):
-        parts = text.split("the answer is", 1)  # Split at the first occurrence
-        pred = parts[1].strip() if len(parts) > 1 else ""
-        pattern = r"\.?</s>"
-        pred = re.sub(pattern, "", pred)
-        return pred
-    
-    correctness_res = {
-        'EM': [],
-        'F1': [],
-        'Recall': [],
-        'Precision': [],
-    }
-    os.makedirs(os.path.dirname(args.generations_output_file), exist_ok=True)
-    
-    with open(args.generations_output_file, 'w', encoding='utf-8') as g_file, open(args.generation_path_output_file, 'w', encoding='utf-8') as gp_file:
-        for i, sample in enumerate(tqdm(test_dataset)):
-            
-            # if i == 5:
-            #     break
-            
-            qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
-            question = question.strip()
-            if question[-1] != '?':
-                question += '?'
-            
-            cot, n_halluc, gen_path = model.inference(question)
-            cot = cot.strip()
-            
-            final_ans = ""
-            if "the answer is" not in cot:
-                tmp = model.reinference(question, cot).strip()  
-                final_ans = get_answer(tmp) if "the answer is" in tmp else tmp
-            else:
-                final_ans = get_answer(cot)
-            em_socre = correctness.exact_match_score(final_ans, gt_answers)
-            f1_score = correctness.f1_score(final_ans, gt_answers)
-                        
-            g_item = {
-                "qid": qid,
-                "question": question,
-                "em_score": em_socre['correct'],
-                "f1_score": f1_score,
-                "gold_answer": gt_answers,
-                "pred": final_ans,
-                "cot": cot,
+
+
+    # === Inference ============================
+    em_evaluation = generated_em
+    accelerator.wait_for_everyone()
+    with accelerator.split_between_processes(filtered_dataset) as test_dataset_shard:
+        inference_results_file_ranked = f"{args.output_dir}/inference_results_rank{accelerator.process_index}.jsonl"
+        with open(inference_results_file_ranked, 'w') as res_f:
+            for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
+                # if i == 5:
+                #     break
+                qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
+                question = question.strip()
+                if question[-1] != '?':
+                    question += '?'
                 
-            }
-            g_file.write(json.dumps(g_item, ensure_ascii=False) + '\n')
-            
-            if args.rag_method in ['flare', 'dragin']:
-                gp_item = {
+                cot, n_halluc, gen_path = model.inference(question)
+                cot = cot.strip()
+                
+                pred_answer = ""
+                if "the answer is" not in cot:
+                    tmp = model.reinference(question, cot).strip()  
+                    pred_answer = get_answer(tmp) if "the answer is" in tmp else tmp
+                else:
+                    pred_answer = get_answer(cot)
+                correctness_em = em_score(pred_answer, gt_answers)
+                correctness_f1 = f1_score(pred_answer, gt_answers)
+                            
+                item = {
                     "qid": qid,
-                    "question": question,
-                    "gold_answer": gt_answers,
-                    "pred": final_ans,
+                    "query": question,
+                    "gt_answers": gt_answers,
+                    "pred_answer": pred_answer,
+                    "em": correctness_em,
+                    "f1": correctness_f1,
+                    "path": cot,
                     "n_hallucination": n_halluc,
-                    "generation_path": gen_path
-                    
+                    "generation_path": gen_path,
                 }
-                gp_file.write(json.dumps(gp_item, ensure_ascii=False) + '\n')
-            
-            correctness_res['EM'].append(em_socre['correct'])
-            correctness_res['F1'].append(f1_score['f1'])
-            correctness_res['Recall'].append(f1_score['recall'])
-            correctness_res['Precision'].append(f1_score['precision'])
+                res_f.write(json.dumps(item) + '\n')
+                em_evaluation.append(correctness_em)
+
+
+    em_evaluation_gathered = gather_object(em_evaluation)
+    if accelerator.is_main_process:
+        print("\nEvaluation Result:")
+        print(f"EM: {np.mean(em_evaluation_gathered)*100}")
 
 
     # === Save results ==========================
-    reuslts_dict = {
-        'EM': np.mean(correctness_res['EM'])*100,
-        'F1': np.mean(correctness_res['F1'])*100,
-        'Recall': np.mean(correctness_res['Recall'])*100,
-        'Precision': np.mean(correctness_res['Precision'])*100,
-        'retrieve_count': model.counter.retrieve / len(dataset),
-        'generate_count': model.counter.generate / len(dataset),
-        'hallucinated_count': model.counter.hallucinated / len(dataset),
-        'token_count': model.counter.token / len(dataset),
-        'sentence_count': model.counter.sentence / len(dataset),
-    }
-    with open(args.results_output_file, 'w') as file:
-        json.dump(reuslts_dict, file, indent=4)
+    # reuslts_dict = {
+    #     'retrieve_count': model.counter.retrieve / len(dataset),
+    #     'generate_count': model.counter.generate / len(dataset),
+    #     'hallucinated_count': model.counter.hallucinated / len(dataset),
+    #     'token_count': model.counter.token / len(dataset),
+    #     'sentence_count': model.counter.sentence / len(dataset),
+    # }
+    # with open(args.results_output_file, 'w') as file:
+    #     json.dump(reuslts_dict, file, indent=4)
+
+def merge_result_files(args):
+    results_shard_files = f"{args.output_dir}/inference_results_rank*.jsonl"
+    results_shard_files = sorted(glob.glob(results_shard_files))
+    with open(args.inference_results_file, "a") as fout:
+        for shard_file in results_shard_files:
+            if shard_file == args.inference_results_file:
+                continue
+            with open(shard_file, "r") as fin:
+                for line in fin:
+                    fout.write(line)
+            os.remove(shard_file)
+            print(f"Deleted shard file: {shard_file}")
 
 
 if __name__ == "__main__":
@@ -196,13 +222,6 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
-    # Others
-    parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_11 (test_adaptive_rag)')
-    parser.add_argument("--seed", type=int, default=10)
-    parser.add_argument("--retry", type=int, default=3)
-    parser.add_argument('--use_counter', action='store_false')
-    
     # RAG setup
     parser.add_argument('--rag_method', type=str, default='dragin', choices=[
         'no_retrieval', 'single_retrieval',
@@ -220,34 +239,41 @@ if __name__ == "__main__":
     parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
     parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
     
+    # Others
+    parser.add_argument('--device', type=int, default=0)
+    parser.add_argument('--run', type=str, default='run_11 (test_adaptive_rag)')
+    parser.add_argument("--seed", type=int, default=10)
+    parser.add_argument("--retry", type=int, default=3)
+    parser.add_argument('--use_counter', action='store_false')
+    
     args = parser.parse_args()
     
     # === Files ====================
     model_ = args.model_name_or_path.split('/')[-1]
     if args.rag_method == 'no_retrieval':
-        output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}"
+        args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}"
     else:
-        output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"
-    os.makedirs(output_dir, exist_ok=True)
-    args.generations_output_file = f'{output_dir}/generations.jsonl'
-    args.results_output_file = f'{output_dir}/results.json'
-    args.generation_path_output_file = f'{output_dir}/generation_path.jsonl'
+        args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"
+    os.makedirs(args.output_dir, exist_ok=True)
+    args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
+    os.makedirs(os.path.dirname(args.output_dir), exist_ok=True)
     
-
     ### === Define CUDA device =================== 
-    args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
-    if torch.cuda.is_available():
-        print(f"Number of available GPUs: {torch.cuda.device_count()}")
-        for i in range(torch.cuda.device_count()):
-            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-    else:
-        print("CUDA is not available. No GPUs detected.")
+    # args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
+    # if torch.cuda.is_available():
+    #     print(f"Number of available GPUs: {torch.cuda.device_count()}")
+    #     for i in range(torch.cuda.device_count()):
+    #         print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+    # else:
+    #     print("CUDA is not available. No GPUs detected.")
         
     
     ### === Run Steps ============================
     set_seed(args.seed)
     adaptive_generation(args)
-    
-    
+        
     # python run_adaptive/adaptive_generation.py
+    # accelerate launch --multi_gpu run_adaptive/adaptive_generation.py
+    # accelerate launch --multi_gpu --num_processes 2 run_adaptive/adaptive_generation.py
+    # accelerate launch --num_processes 1 run_adaptive/adaptive_generation.py
 

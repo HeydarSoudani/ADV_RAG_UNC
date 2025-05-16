@@ -9,18 +9,18 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 
 from run_searchr1.inference import _passages2string
 from utils.adaptive_utils import fix_tokenizer_chat
-from src_adaptive.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_SHORTFORM, SYSTEM_PROMPT_REGENERATE
+from run_adaptive.src.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_SHORTFORM, SYSTEM_PROMPT_REGENERATE
 
 
 class BasicGenerator:
-    def __init__(self, args):
+    def __init__(self, args, device):
         self.args = args
         self.generator = AutoModelForCausalLM.from_pretrained(
             args.model_name_or_path,
             torch_dtype=torch.bfloat16,
             attn_implementation="eager",
-            device_map='auto'
-        )
+            # device_map='auto'
+        ).to(device)
         self.tokenizer = AutoTokenizer.from_pretrained(
             args.model_name_or_path,
             use_fast=False
@@ -33,7 +33,6 @@ class BasicGenerator:
             self.space_token = "▁"
         else:
             self.space_token = self.tokenizer.tokenize(' ')[0]
-    
     
     def generate(self,
         input_text,
@@ -271,9 +270,6 @@ class BasicGenerator:
             prompt += f"Question: {question}\nAnswer:"
         
         return prompt
-    
-    
-    
     
     
     # def format_shortform(self, question, fewshot_examplers, docs, add_case=True):

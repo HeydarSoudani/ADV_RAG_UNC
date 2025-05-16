@@ -33,6 +33,7 @@ class BlackBoxUncertainty:
                 self.model_for_entailment = model_for_entailment
     
     def num_semantic_set_uncertainty(self, question, generated_texts):
+        # torch.cuda.empty_cache()
         uncertainty_score = calculate_U_num_set(
             generated_texts,
             question,

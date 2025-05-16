@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 
-import re
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-import json
 import torch
-import requests
-import datasets
 import argparse
-import numpy as np
-import transformers
-from tqdm import tqdm
-import time
-from accelerate import Accelerator
-from accelerate.utils import gather_object
 
 from utils.general_utils import set_seed
-
 from run_searchr1.inference import searchr1_inference
 from run_searchr1.rag_consistency import searchr1_rag_consistency
-
 
 
 if __name__ == "__main__":
@@ -67,6 +55,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--run', type=str, default='run_4 (search_r1)')
     parser.add_argument("--seed", type=int, default=10)
+    parser.add_argument("--retry", type=int, default=3)
     
     args = parser.parse_args()
     
@@ -75,9 +64,7 @@ if __name__ == "__main__":
     model_ = args.model_name_or_path.split('/')[-1]
     args.output_dir = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
-    args.path_results_file = f"{args.output_dir}/path_results.jsonl"
     args.rag_consistency_results_file = f"{args.output_dir}/rag_consistency_results.jsonl"
-    args.rag_consistency_paths_file = f"{args.output_dir}/rag_consistency_paths.jsonl"
     os.makedirs(args.output_dir, exist_ok=True)
     
     # === Define CUDA device =======
@@ -92,8 +79,8 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    # searchr1_inference(args)
-    searchr1_rag_consistency(args)
+    searchr1_inference(args)
+    # searchr1_rag_consistency(args)
     
     
     # python run_searchr1/inference.py

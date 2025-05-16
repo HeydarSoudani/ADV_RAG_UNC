@@ -5,6 +5,7 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
+import glob
 import torch
 import requests
 import datasets
@@ -12,7 +13,6 @@ import argparse
 import numpy as np
 import transformers
 from tqdm import tqdm
-import time
 from accelerate import Accelerator
 from accelerate.utils import gather_object
 
@@ -123,7 +123,7 @@ def searchr1_inference(args):
         print("\n== Search R1 Inference ...")
         print(f"""
             Model name:  {args.model_name_or_path}
-            Dataset:     {args.dataset}/{args.subsec} ({args.fraction_of_data_to_use})
+            Dataset:     {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
             Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
             Seed:        {args.seed}
             Run:         {args.run}
@@ -189,10 +189,10 @@ def searchr1_inference(args):
 
     # === Prompt ===============================
     prompt = """Answer the given question. \
-    You must conduct reasoning inside <think> and </think> first every time you get new information. \
-    After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. \
-    You can search as many times as your want. \
-    If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}\n"""
+You must conduct reasoning inside <think> and </think> first every time you get new information. \
+After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. \
+You can search as many times as your want. \
+If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}\n"""
 
     # === Read existing data ===================
     generated_qids = []
@@ -209,123 +209,115 @@ def searchr1_inference(args):
     
     # === Inference ============================
     em_evaluation = generated_em
-    accelerator.wait_for_everyone() # sync GPUs
+    accelerator.wait_for_everyone()
     with accelerator.split_between_processes(filtered_dataset) as test_dataset_shard:
         
-        inference_results, path_results = [], []
-        for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
-            qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
-            question = question.strip()
-            if question[-1] != '?':
-                question += '?'
-                
-            if qid in generated_qids:
-                print(f"The answer for query {qid} has been already generated")
-                continue # already processed
+        inference_results_file_ranked = f"{args.output_dir}/inference_results_rank{accelerator.process_index}.jsonl"
+        with open(inference_results_file_ranked, "w") as res_f:
             
-            input_prompt = prompt.format(question=question)
-            if tokenizer.chat_template:
-                input_prompt = tokenizer.apply_chat_template(
-                    [{"role": "user", "content": input_prompt}],
-                    add_generation_prompt=True,
-                    tokenize=False
-                )
-        
-            path, cnt = [], 0
-            while True:
-                input_ids = tokenizer.encode(input_prompt, return_tensors='pt').to(device)
-                attention_mask = torch.ones_like(input_ids)
-                
-                # Generate text with the stopping criteria
-                outputs = model.generate(
-                    input_ids,
-                    attention_mask=attention_mask,
-                    max_new_tokens=args.max_new_token,
-                    stopping_criteria=stopping_criteria,
-                    pad_token_id=tokenizer.eos_token_id,
-                    do_sample=True,
-                    temperature=0.7
-                )
+            for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
+                # if i == 20:
+                #     break
+                qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
+                question = question.strip()
+                if question[-1] != '?':
+                    question += '?'
+                    
+                input_prompt = prompt.format(question=question)
+                if tokenizer.chat_template:
+                    input_prompt = tokenizer.apply_chat_template(
+                        [{"role": "user", "content": input_prompt}],
+                        add_generation_prompt=True,
+                        tokenize=False
+                    )
+            
+                path, cnt = [], 0
+                while True:
+                    input_ids = tokenizer.encode(input_prompt, return_tensors='pt').to(device)
+                    attention_mask = torch.ones_like(input_ids)
+                    
+                    outputs = model.generate(
+                        input_ids,
+                        attention_mask=attention_mask,
+                        max_new_tokens=args.max_new_token,
+                        stopping_criteria=stopping_criteria,
+                        pad_token_id=tokenizer.eos_token_id,
+                        do_sample=True,
+                        temperature=0.7
+                    )
 
-                if outputs[0][-1].item() in curr_eos:
+                    if outputs[0][-1].item() in curr_eos:
+                        generated_tokens = outputs[0][input_ids.shape[1]:]
+                        output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                        break
+
                     generated_tokens = outputs[0][input_ids.shape[1]:]
                     output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-                    break
+                
+                    tmp_query = get_query(tokenizer.decode(outputs[0], skip_special_tokens=True))
+                    if tmp_query:
+                        search_docs = retriever.search(tmp_query)
+                        search_results = _passages2string(search_docs)
+                    else:
+                        search_docs, search_results = [], ''
 
-                generated_tokens = outputs[0][input_ids.shape[1]:]
-                output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-            
-                tmp_query = get_query(tokenizer.decode(outputs[0], skip_special_tokens=True))
-                if tmp_query:
-                    search_docs = retriever.search(tmp_query)
-                    search_results = _passages2string(search_docs)
+                    path.append({
+                        'think': get_think(output_text),
+                        'search_query': tmp_query,
+                        'docs': search_docs
+                    })
+
+                    search_text = curr_search_template.format(output_text=output_text, search_results=search_results)
+                    input_prompt += search_text
+                    cnt += 1
+                
+                one_step_think = get_think(output_text)
+                pred_answer = get_answer(output_text)
+                path.append({'think': one_step_think, 'answer': pred_answer})
+                if pred_answer:
+                    correctness_em = em_score(pred_answer, gt_answers)
+                    correctness_f1 = f1_score(pred_answer, gt_answers)
                 else:
-                    search_docs, search_results = [], ''
-
-                path.append({
-                    'think': get_think(output_text),
-                    'search_query': tmp_query,
-                    'docs': search_docs
-                })
-
-                search_text = curr_search_template.format(output_text=output_text, search_results=search_results)
-                input_prompt += search_text
-                cnt += 1
-            
-            one_step_think = get_think(output_text)
-            pred_answer = get_answer(output_text)
-            path.append({'think': one_step_think, 'answer': pred_answer})
-            if pred_answer:
-                correctness_em = em_score(pred_answer, gt_answers)
-                correctness_f1 = f1_score(pred_answer, gt_answers)
-            else:
-                correctness_em = 0
-                correctness_f1 = {'f1': 0, 'precision': 0, 'recall': 0}
-            
-            item1 = {
-                "qid": qid,
-                "query": question,
-                "gt_answers": gt_answers,
-                "pred_answer": pred_answer,
-                "em": correctness_em,
-                "f1": correctness_f1
-            }
-            item2 = {
-                "qid": qid,
-                "query": question,
-                "gt_answers": gt_answers,
-                "pred_answer": pred_answer,
-                "path": path
-            }
-            inference_results.append(item1)
-            path_results.append(item2)
-            em_evaluation.append(correctness_em)
-    
-    
-    inference_results_gathered = gather_object(inference_results)
-    path_results_gathered = gather_object(path_results)
-    em_evaluation_gathered = gather_object(em_evaluation)
-    
-    if accelerator.is_main_process:
-        # --- Save results
-        with open(args.inference_results_file, "a", encoding="utf-8") as inf_f:
-            for item in inference_results_gathered:
-                inf_f.write(json.dumps(item) + "\n")
+                    correctness_em = 0
+                    correctness_f1 = {'f1': 0, 'precision': 0, 'recall': 0}
+                
+                item = {
+                    "qid": qid,
+                    "query": question,
+                    "gt_answers": gt_answers,
+                    "pred_answer": pred_answer,
+                    "em": correctness_em,
+                    "f1": correctness_f1,
+                    "path": path
+                }
+                res_f.write(json.dumps(item) + "\n")
+                em_evaluation.append(correctness_em)
         
-        with open(args.path_results_file, "a", encoding="utf-8") as pth_f:
-            for item in path_results_gathered:
-                pth_f.write(json.dumps(item) + "\n")
-    
-        # --- Print results
+    em_evaluation_gathered = gather_object(em_evaluation)
+    if accelerator.is_main_process:
         print("\nEvaluation Result:")
-        print(em_evaluation_gathered)
+        # print(em_evaluation_gathered)
         print(f"EM: {np.mean(em_evaluation_gathered)*100}")
+
+
+def merge_result_files(args):
+    results_shard_files = f"{args.output_dir}/inference_results_rank*.jsonl"
+    results_shard_files = sorted(glob.glob(results_shard_files))
+    with open(args.inference_results_file, "a") as fout:
+        for shard_file in results_shard_files:
+            if shard_file == args.inference_results_file:
+                continue
+            with open(shard_file, "r") as fin:
+                for line in fin:
+                    fout.write(line)
+            os.remove(shard_file)
+            print(f"Deleted shard file: {shard_file}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--paraphrase_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_token', type=int, default=1024)
     
@@ -334,18 +326,18 @@ if __name__ == "__main__":
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     
     # Retriever
-    parser.add_argument('--retriever_name', type=str, default='e5', choices=[
+    parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
-    parser.add_argument('--index_path', type=str, default='data/search_r1_files/e5_Flat.index', choices=[
+    parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
         'data/search_r1_files/bm25',          # For BM25 & Rerank
         'data/search_r1_files/e5_Flat.index', # For E5
     ])
-    parser.add_argument("--retrieval_model_path", type=str, default="intfloat/e5-base-v2", choices=[
+    parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
         "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank
         "intfloat/e5-base-v2" # For E5
     ])
@@ -363,8 +355,9 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_4 (search_r1)')
+    parser.add_argument('--run', type=str, default='run_1 (searchr1_2k)')
     parser.add_argument("--seed", type=int, default=10)
+    parser.add_argument("--retry", type=int, default=3)
     
     args = parser.parse_args()
     
@@ -373,16 +366,14 @@ if __name__ == "__main__":
     model_ = args.model_name_or_path.split('/')[-1]
     args.output_dir = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
-    args.path_results_file = f"{args.output_dir}/path_results.jsonl"
     args.rag_consistency_results_file = f"{args.output_dir}/rag_consistency_results.jsonl"
-    args.rag_consistency_paths_file = f"{args.output_dir}/rag_consistency_paths.jsonl"
     os.makedirs(args.output_dir, exist_ok=True)
         
     ### === Run Steps =============
     set_seed(args.seed)
     searchr1_inference(args)
-    
+    # merge_result_files(args)
     
     # python run_searchr1/inference.py
-    # accelerate launch --multi_gpu --num_processes 2 run_searchr1/inference.py
-    # accelerate launch --num_processes 1 run_searchr1/inference.py
+    # accelerate launch run_searchr1/inference.py
+    # accelerate launch --multi_gpu run_searchr1/inference.py

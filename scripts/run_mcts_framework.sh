@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus=3
+#SBATCH --gpus=2
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
-#SBATCH --time=5:00:00
-#SBATCH --mem=80GB
+#SBATCH --time=9:00:00
+#SBATCH --mem=40GB
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -16,13 +16,13 @@ module load Python/3.12.3-GCCcore-13.3.0
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 dataset="hotpotqa"
 subsec="dev"
-fraction_of_data_to_use=500.0
+fraction_of_data_to_use=2000.0
 retriever_name="rerank_l6"
 index_path="data/search_r1_files/bm25"
 retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
-num_rollouts=4
-max_depth_allowed=4
-run="run_23 (mcts_cna_roll4)"
+num_rollouts=8
+max_depth_allowed=10
+run="run_3 (mcts_2k_rollout8)"
 
 # srun python 
 accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \

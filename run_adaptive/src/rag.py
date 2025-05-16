@@ -1,5 +1,4 @@
 
-import re
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -9,12 +8,10 @@ import random
 import numpy as np
 from math import exp
 
-from src_adaptive import examplers
-from src_adaptive.generate_chat_template import BasicGenerator
+from run_adaptive.src import examplers
+from run_adaptive.src.generate_chat_template import BasicGenerator
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
-from src_adaptive.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_REGENERATE, SYSTEM_PROMPT_SHORTFORM
-# from src_adaptive.generate_dragin import BasicGenerator
-# from src_adaptive.retrieve import BM25, Rerank, PositiveRet, NegativeRet
+from run_adaptive.src.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_REGENERATE, SYSTEM_PROMPT_SHORTFORM
 
 nlp = spacy.load("en_core_web_sm")
 
@@ -43,11 +40,10 @@ class Counter:
         }
 
 class BasicRAG:
-    def __init__(self, args):
-        # args = args.__dict__ 
+    def __init__(self, args, device):
         self.args = args
         self.counter = Counter()
-        self.generator = BasicGenerator(args)
+        self.generator = BasicGenerator(args, device)
         
         # === Static Retriever ===================== 
         if args.retriever_name == 'bm25':
@@ -71,17 +67,6 @@ class BasicRAG:
             else examplers_
         )
         
-    # def retrieve(self, queries, qids, pos_contexts, neg_contexts, topk=1):
-    #     self.counter.retrieve += 1
-    #     retrieved_docs = self.retriever.search(queries)
-        
-    #     docs, docids, scores = self.retriever.retrieve(
-    #         queries=queries, qids=qids,
-    #         pos_contexts=pos_contexts, neg_contexts=neg_contexts,
-    #         topk=topk
-    #     )
-    #     return docs, docids, scores
-        
     def get_top_sentence(self, text):
         sentences = [sent.text.strip() for sent in nlp(text).sents]
         sentences = [sent for sent in sentences if len(sent) > 0]
@@ -103,8 +88,8 @@ class BasicRAG:
             
     
 class NoRAG(BasicRAG):
-    def __init__(self, args):
-        super().__init__(args)
+    def __init__(self, args, device):
+        super().__init__(args, device)
     
     def inference(self, question, fewshot_examplers):
         prompt = self.generator.format_longform(question, fewshot_examplers, [])
@@ -118,8 +103,8 @@ class NoRAG(BasicRAG):
     
     
 class SingleRAG(BasicRAG):
-    def __init__(self, args):
-        super().__init__(args)
+    def __init__(self, args, device):
+        super().__init__(args, device)
     
     def inference(self, question):
         retrieved_docs = self.retriever.search(question)
@@ -137,8 +122,8 @@ class SingleRAG(BasicRAG):
 
 
 class FixLengthRAG(BasicRAG):
-    def __init__(self, args):
-        super().__init__(args)
+    def __init__(self, args, device):
+        super().__init__(args, device)
     
     def inference(self, question):
         text = ""
@@ -182,8 +167,8 @@ class FixLengthRAG(BasicRAG):
   
     
 class FLARE_RAG(BasicRAG):
-    def __init__(self, args):
-        super().__init__(args)
+    def __init__(self, args, device):
+        super().__init__(args, device)
         self.modifier = self.modifier_token if args.modifier_method=='token' else self.modifier_entity
         
     def modifier_token(self, text, tokens, logprobs):
@@ -366,8 +351,8 @@ class FLARE_RAG(BasicRAG):
 
 
 class DRAGIN_RAG(BasicRAG):
-    def __init__(self, args):
-        super().__init__(args)
+    def __init__(self, args, device):
+        super().__init__(args, device)
     
     
     def get_sentence_token_indices(self, text, tokens):

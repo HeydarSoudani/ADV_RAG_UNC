@@ -12,8 +12,8 @@ from typing import List, Dict, Tuple
 from run_searchr1.inference import get_think, get_query, get_answer, get_critique, get_document, _passages2string, StopOnSequence, _passages2string_v2
 from utils.general_utils import read_txt
 from utils.adaptive_utils import fix_tokenizer_chat
-from run_mcts.src.uncertainty_estimator import UncertaintyEstimator
-from run_mcts.src.passege_utility import PassageUtility
+# from run_mcts.src.uncertainty_estimator import UncertaintyEstimator
+# from run_mcts.src.passege_utility import PassageUtility
 
 nlp = spacy.load("en_core_web_sm")
 
@@ -115,11 +115,11 @@ class Generator:
         # self.tokenizer.pad_token = self.tokenizer.eos_token
         
         # --- Define UE model ----------
-        self.uncertainty_estimator = UncertaintyEstimator(
-            model=self.generation_model,
-            tokenizer=self.tokenizer,
-            args=args,
-        )
+        # self.uncertainty_estimator = UncertaintyEstimator(
+        #     model=self.generation_model,
+        #     tokenizer=self.tokenizer,
+        #     args=args,
+        # )
         
         # Prompts
         self.semantic_equivalence_prompt = read_txt(self.args.semantic_equivalence_prompt_file)
@@ -207,7 +207,7 @@ class Generator:
         stopping_criteria,
         max_new_tokens=1024,
         num_return:int = 1,
-        temperature:float = 1.0,
+        temperature:float = 0.7,
         do_sample:bool = True
     ):
         if self.tokenizer.chat_template:
@@ -289,8 +289,8 @@ class Generator:
         stopping_criteria,
         max_new_tokens:int = 1024,
         num_return:int = 1,
-        temperature:float = 1.0,
-        do_sample:bool = False
+        temperature:float = 0.7,
+        do_sample:bool = True
     ):
         if self.tokenizer.chat_template:
             input_prompt = self.tokenizer.apply_chat_template(
@@ -311,8 +311,8 @@ class Generator:
                     max_new_tokens=max_new_tokens,
                     stopping_criteria=stopping_criteria,
                     pad_token_id=self.tokenizer.eos_token_id,
-                    do_sample=True,
-                    temperature=0.7
+                    temperature=temperature,
+                    do_sample=do_sample
                 )
                 generated_tokens = outputs[0][input_ids.shape[1]:]
                 output_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
@@ -730,13 +730,16 @@ class Generator:
         thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, output, re.DOTALL)]))
         search_query = get_query(output) 
         
-        ### = Check if regenerate needed
+        ### = Check if regeneration is needed
         if thinks == '':
-            print(f"Think is not provided for query {qid}")
+            print(f"Think is not provided for query {qid}!!!")
             for i in range(self.args.retry):
                 print(f"Think, try {i+1} ...")
-                output = self.generate_(input_prompt_text, self.search_stopping_criteria, temperature=0.7, do_sample=True)[0]
-                
+                output = self.generate_(
+                    input_prompt_text,
+                    self.search_stopping_criteria,
+                    temperature=1.0,
+                )[0]
                 thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, output, re.DOTALL)]))
                 if thinks != '':
                     search_query = get_query(output) 
@@ -749,7 +752,11 @@ class Generator:
             input_prompt_text_ = input_prompt_text + f'<think> {thinks} </think>\n'
             for i in range(self.args.retry):
                 print(f"Search Query, try {i+1} ...")
-                output = self.generate_(input_prompt_text_, self.search_stopping_criteria)[0]
+                output = self.generate_(
+                    input_prompt_text_,
+                    self.search_stopping_criteria,
+                    temperature=1.0,
+                )[0]
                 
                 search_query = get_query(output)
                 if search_query != None:
@@ -771,7 +778,11 @@ class Generator:
             print(f"Think is not provided for query {qid}")
             for i in range(self.args.retry):
                 print(f"Think, try {i+1} ...")
-                output = self.generate_(input_prompt_text, self.answer_stopping_criteria)[0]
+                output = self.generate_(
+                    input_prompt_text,
+                    self.answer_stopping_criteria,
+                    temperature=1.0,
+                )[0]
                 
                 thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, output, re.DOTALL)]))
                 if thinks != '':
@@ -785,7 +796,11 @@ class Generator:
             input_prompt_text_ = input_prompt_text + f'<think> {thinks} </think>\n'
             for i in range(self.args.retry):
                 print(f"The most-likely answer, try {i+1} ...")
-                output = self.generate_(input_prompt_text_, self.answer_stopping_criteria)[0]
+                output = self.generate_(
+                    input_prompt_text_,
+                    self.answer_stopping_criteria,
+                    temperature=1.0
+                )[0]
                 most_likely_answer = get_answer(output)
                 if most_likely_answer != None:
                     break

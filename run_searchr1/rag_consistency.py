@@ -19,7 +19,7 @@ from run_searchr1.inference import StopOnSequence, get_think, get_query, get_ans
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from run_mcts.src.generate_paraphrase import SearchQueryGenerator, ThinkGenerator, get_paraphrased_query, get_paraphrased_think
 from run_searchr1.src.ue_methods import BlackBoxUncertainty, PTrue
-
+from run_mcts.searchr1_discrimination import SemanticEquivalenceGenerator
 
 def searchr1_rag_consistency(args):
     # === MultiGPU setup =======================
@@ -182,7 +182,20 @@ If you find no further external knowledge needed, you can directly provide the a
                         original_sq = path[selected_index].get('search_query', '')
                         sq_prompt = sq_generator.get_instruction(original_sq, n=repeat)
                         sq_output = sq_generator.generate(sq_prompt, temperature=1.0)[0]
-                        paraphrased_queries = get_paraphrased_query(sq_output) # TODO: check if it's not None
+                        paraphrased_queries = get_paraphrased_query(sq_output)
+                        
+                        # check if paraphrased_queries are None
+                        if paraphrased_queries == None:
+                            print(f"Paraphrased queries are not provided for query {qid} ...")
+                            for i in range(args.retry):
+                                print(f"Think, try {i+1} ...")
+                                sq_output = sq_generator.generate(sq_prompt, temperature=1.2)[0]
+                                paraphrased_queries = get_paraphrased_query(sq_output)
+                                if paraphrased_queries != None:
+                                    break
+                            else:
+                                print(f"Failed to generate 'paraphrased queries' after all retries for query {qid}!!!")
+                                paraphrased_queries = []
                         
                         for paraphrased_query in paraphrased_queries:
                             # Before break point
@@ -255,8 +268,6 @@ If you find no further external knowledge needed, you can directly provide the a
                 
                 # --- Compute paths to confidence 
                 path_answers = [path[-1].get('answer', '') for path in consistency_paths]
-                rag_conf = sum(1 for item in path_answers if item is not None and em_score(item, pred_answer)) / len(path_answers)
-                # print(path_answers)
                 
                 # --- Save in file
                 correctness_em = em_score(pred_answer, gt_answers)
@@ -306,9 +317,31 @@ def merge_result_files(args):
             print(f"Deleted shard file: {shard_file}")
 
 def compute_uncertainty(args):
-    torch.cuda.empty_cache()
+    
+    def em_consistency(prediction, generated_texts):
+        return sum(1 for item in generated_texts if item is not None and em_score(item, prediction)) / len(generated_texts)
+    
+    def group_candidates_by_answer(se_model, question:str, candidates: list[str]):
+        """Return answer2candidates"""
+        answer2candidates = {}
+        for c in candidates:
+            has_existed = False
+            for existing_answer in answer2candidates.keys():
+                if se_model.check_answers_equiv(question, c, existing_answer):
+                    has_existed = True
+                    answer2candidates[str(existing_answer)].append(c)
+                    break
+
+            if not has_existed:
+                if str(c) in answer2candidates:
+                    answer2candidates[str(c)].append(c)
+                else:
+                    answer2candidates[str(c)] = [c]
+        return answer2candidates
+    
     ptrue_model = transformers.AutoModelForCausalLM.from_pretrained(args.paraphrase_model_name_or_path, torch_dtype=torch.bfloat16).to(args.device)
     ptrue_tokenizer = transformers.AutoTokenizer.from_pretrained(args.paraphrase_model_name_or_path)
+    # se_model = SemanticEquivalenceGenerator(args, ptrue_model, ptrue_tokenizer)
     
     bb_unc = BlackBoxUncertainty()
     ptrue_unc = PTrue(ptrue_model, ptrue_tokenizer)
@@ -317,32 +350,42 @@ def compute_uncertainty(args):
     correctness = []
     uncertainties = {
         # "p_true": [],
-        "num_semantic_set": [],
+        # "num_semantic_set": [],
         # "sum_eigen": [],
         # "eccentricity": [],
-        # "matrix_degree": [],
+        "matrix_degree": [],
+        # "em_conf": []
     }
     
     with open(args.rag_consistency_results_file, "r") as fin:
         for line in tqdm(fin):
             data = json.loads(line)
-            correctness.append(data["correctness_em"])
             question = data['query']
+            gt_answers = data['gt_answers']
             generated_texts = data['consistency_answers']
             prediction = data['pred_answer']
+            
+            ### Correctness: most-likely
+            correctness.append(data["correctness_em"])
+            ### Correctness: MV
+            # answer2candidates = group_candidates_by_answer(se_model, question, generated_texts)  
+            # majority_answer = max(answer2candidates, key=lambda k: len(answer2candidates[k]))
+            # correctness_em = em_score(majority_answer, gt_answers)
+            # correctness.append(correctness_em)
             
             # print(question)
             # print(generated_texts)
             # print(sum_eigen_unc.calculate_uncertainty(question, generated_texts))
             # uncertainties['p_true'].append(ptrue_unc.ptrue_uncertainty(question, generated_texts, prediction))
-            uncertainties['num_semantic_set'].append(bb_unc.num_semantic_set_uncertainty(question, random.sample(generated_texts, 6)))
-            # uncertainties['sum_eigen'].append(bb_unc.sum_eigen_uncertainty(question, random.sample(generated_texts, 6)))
+            # uncertainties['num_semantic_set'].append(bb_unc.num_semantic_set_uncertainty(question, generated_texts))
+            # uncertainties['sum_eigen'].append(bb_unc.sum_eigen_uncertainty(question, random.sample(generated_texts, 5)))
             # uncertainties['eccentricity'].append(bb_unc.eccentricity_uncertainty(question, random.sample(generated_texts, 5)))
-            # uncertainties['matrix_degree'].append(bb_unc.matrix_degree_uncertainty(question, random.sample(generated_texts, 6)))
-            
+            uncertainties['matrix_degree'].append(bb_unc.matrix_degree_uncertainty(question, generated_texts))
+            # uncertainties['em_conf'].append(em_consistency(prediction, generated_texts))
             
     for ue_title, ue_value in uncertainties.items():
         correlations[ue_title] = roc_auc_score([1 - c for c in correctness], ue_value) #1-correctness
+        # correlations[ue_title] = roc_auc_score(correctness, ue_value)
         
     print(correlations)
         
@@ -366,11 +409,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=500.0)
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
@@ -401,6 +444,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--run', type=str, default='run_4 (search_r1)')
     parser.add_argument("--seed", type=int, default=10)
+    parser.add_argument("--retry", type=int, default=3)
     args = parser.parse_args()
     
     # === Files ====================
@@ -408,11 +452,13 @@ if __name__ == "__main__":
     model_ = args.model_name_or_path.split('/')[-1]
     args.output_dir = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
-    args.path_results_file = f"{args.output_dir}/path_results.jsonl"
     args.rag_consistency_results_file = f"{args.output_dir}/rag_consistency_results.jsonl"
     args.rag_consistency_paths_file = f"{args.output_dir}/rag_consistency_paths.jsonl"
     os.makedirs(args.output_dir, exist_ok=True)
-        
+    
+    # === Prompt files ===========================
+    args.semantic_equivalence_prompt_file = "prompts_mcts/semantic_equivalence_prompt_template.txt"    
+    
     ### === Run Steps =============
     set_seed(args.seed)
     # searchr1_rag_consistency(args)

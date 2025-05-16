@@ -5,7 +5,6 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-import torch
 import argparse
 
 from utils.general_utils import set_seed
@@ -18,7 +17,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--max_new_tokens', type=int, default=512)
+    parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
     parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
@@ -54,7 +53,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_23 (mcts_cna_roll4)')
+    parser.add_argument('--run', type=str, default='run_2 (mcts_2k_rollout4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -68,7 +67,7 @@ if __name__ == "__main__":
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
     parser.add_argument("--num_rollouts", type=int, default=4)
-    parser.add_argument("--max_depth_allowed", type=int, default=4)
+    parser.add_argument("--max_depth_allowed", type=int, default=6)
     parser.add_argument("--num_votes", type=int, default=2)
     parser.add_argument("--mcts_num_last_votes", type=int, default=5)
     parser.add_argument("--enable_potential_score", action="store_true")
@@ -112,6 +111,6 @@ if __name__ == "__main__":
     # mcts_evaluation(args)
     
     # python run_mcts/run_framework.py
-    # accelerate launch --multi_gpu  run_mcts/run_framework.py
+    # accelerate launch --multi_gpu run_mcts/run_framework.py
     
 
