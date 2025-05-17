@@ -30,7 +30,6 @@ def adaptive_generation(args):
     # === MultiGPU setup =======================
     accelerator = Accelerator()
     device = accelerator.device
-    
     if accelerator.is_main_process:
         print("\n== Adaptive Generation ...")
         print(f"""
@@ -42,7 +41,7 @@ def adaptive_generation(args):
             Seed:        {args.seed}
             Run:         {args.run}
         """.replace('        ', ''))
-        # === Define CUDA device =======
+        # --- Define CUDA device
         # args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
         if torch.cuda.is_available():
             print(f"Number of available GPUs: {torch.cuda.device_count()}")
@@ -127,7 +126,7 @@ def adaptive_generation(args):
                 if question[-1] != '?':
                     question += '?'
                 
-                cot, n_halluc, gen_path = model.inference(question)
+                cot, n_halluc, gen_path, stat = model.inference(question)
                 cot = cot.strip()
                 
                 pred_answer = ""
@@ -147,29 +146,18 @@ def adaptive_generation(args):
                     "em": correctness_em,
                     "f1": correctness_f1,
                     "path": cot,
+                    "stat": stat,
                     "n_hallucination": n_halluc,
                     "generation_path": gen_path,
                 }
                 res_f.write(json.dumps(item) + '\n')
                 em_evaluation.append(correctness_em)
 
-
     em_evaluation_gathered = gather_object(em_evaluation)
     if accelerator.is_main_process:
         print("\nEvaluation Result:")
         print(f"EM: {np.mean(em_evaluation_gathered)*100}")
 
-
-    # === Save results ==========================
-    # reuslts_dict = {
-    #     'retrieve_count': model.counter.retrieve / len(dataset),
-    #     'generate_count': model.counter.generate / len(dataset),
-    #     'hallucinated_count': model.counter.hallucinated / len(dataset),
-    #     'token_count': model.counter.token / len(dataset),
-    #     'sentence_count': model.counter.sentence / len(dataset),
-    # }
-    # with open(args.results_output_file, 'w') as file:
-    #     json.dump(reuslts_dict, file, indent=4)
 
 def merge_result_files(args):
     results_shard_files = f"{args.output_dir}/inference_results_rank*.jsonl"
@@ -183,6 +171,18 @@ def merge_result_files(args):
                     fout.write(line)
             os.remove(shard_file)
             print(f"Deleted shard file: {shard_file}")
+
+
+def get_stat(args):
+    all_ret = []
+    with open(args.inference_results_file, 'r') as infile:
+        for line in infile:
+            stat = json.loads(line)['stat'] # (gen_count, ret_count, sent_count, token_count)
+            ret_count = stat[1]
+            if ret_count:
+                all_ret.append(ret_count)     
+    
+    print(f"\n# of retrieval: {np.mean(all_ret)}")
 
 
 if __name__ == "__main__":
@@ -235,13 +235,13 @@ if __name__ == "__main__":
         'real_words', 'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens',
     ])
     parser.add_argument('--sentence_solver', type=str, default='avg', choices=['avg', 'max', 'min'])          # for FLARE
-    parser.add_argument('--hallucination_threshold', type=float, default=2.0)                                # for FLARE & DRAGIN
+    parser.add_argument('--hallucination_threshold', type=float, default=0.4)                                 # for FLARE & DRAGIN
     parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
     parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_11 (test_adaptive_rag)')
+    parser.add_argument('--run', type=str, default='run_4 (adaptive_2k)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -270,7 +270,9 @@ if __name__ == "__main__":
     
     ### === Run Steps ============================
     set_seed(args.seed)
-    adaptive_generation(args)
+    # adaptive_generation(args)
+    # merge_result_files(args)
+    get_stat(args)
         
     # python run_adaptive/adaptive_generation.py
     # accelerate launch --multi_gpu run_adaptive/adaptive_generation.py

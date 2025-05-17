@@ -48,7 +48,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
-    # RAG setup
+    # Adaptive RAG setup
     parser.add_argument('--rag_method', type=str, default='dragin', choices=[
         'no_retrieval', 'single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
@@ -61,28 +61,38 @@ if __name__ == "__main__":
         'real_words', 'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens',
     ])
     parser.add_argument('--sentence_solver', type=str, default='avg', choices=['avg', 'max', 'min'])          # for FLARE
-    parser.add_argument('--hallucination_threshold', type=float, default=2.0)                                 # for FLARE & DRAGIN
+    parser.add_argument('--hallucination_threshold', type=float, default=1.8)                                 # for FLARE & DRAGIN
     parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
     parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_11 (test_adaptive_rag)')
+    parser.add_argument('--run', type=str, default='run_4 (adaptive_2k)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
     
     args = parser.parse_args()
     
-    ### === Define CUDA device =================== 
-    args.output_dir = f"run_output/{args.run}" 
-    args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
-    if torch.cuda.is_available():
-        print(f"Number of available GPUs: {torch.cuda.device_count()}")
-        for i in range(torch.cuda.device_count()):
-            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+    # === Files ====================
+    model_ = args.model_name_or_path.split('/')[-1]
+    if args.rag_method == 'no_retrieval':
+        args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}"
     else:
-        print("CUDA is not available. No GPUs detected.")
+        args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"
+    os.makedirs(args.output_dir, exist_ok=True)
+    args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
+    os.makedirs(os.path.dirname(args.output_dir), exist_ok=True)
+    
+    # ### === Define CUDA device =================== 
+    # args.output_dir = f"run_output/{args.run}" 
+    # args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
+    # if torch.cuda.is_available():
+    #     print(f"Number of available GPUs: {torch.cuda.device_count()}")
+    #     for i in range(torch.cuda.device_count()):
+    #         print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+    # else:
+    #     print("CUDA is not available. No GPUs detected.")
         
     
     ### === Run Steps ============================

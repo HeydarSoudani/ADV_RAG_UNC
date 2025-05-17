@@ -29,6 +29,8 @@ class Counter:
         self.token += len(ids)
         sentences = [sent.text for sent in nlp(text).sents]
         self.sentence += len(sentences)
+        
+        return len(sentences), len(ids)
 
     def calc(self, other_counter):
         return {
@@ -91,15 +93,19 @@ class NoRAG(BasicRAG):
     def __init__(self, args, device):
         super().__init__(args, device)
     
-    def inference(self, question, fewshot_examplers):
-        prompt = self.generator.format_longform(question, fewshot_examplers, [])
+    def inference(self, question):
+        prompt = self.generator.format_longform(question, self.fewshot_examplers, [])
         text, _, _ = self.generator.generate(
             prompt, self.args.max_new_token,
             system_prompt=SYSTEM_PROMPT_LONGFORM
         )
         if self.args.use_counter:
-            self.counter.add_generate(text, self.generator.tokenizer)
-        return text, None, None
+            sent_count, token_count = self.counter.add_generate(text, self.generator.tokenizer)
+        else:
+            sent_count, token_count = 0, 0
+        
+        # (ret, get, sent, token)
+        return text, None, None, (0, 1, sent_count, token_count)
     
     
 class SingleRAG(BasicRAG):
@@ -116,9 +122,12 @@ class SingleRAG(BasicRAG):
             prompt, self.args.max_new_token,
             system_prompt=SYSTEM_PROMPT_LONGFORM
         )
-        if self.args.use_counter == True:
-            self.counter.add_generate(text, self.generator.tokenizer)
-        return text, None, None
+        if self.args.use_counter:
+            sent_count, token_count = self.counter.add_generate(text, self.generator.tokenizer)
+        else:
+            sent_count, token_count = 0, 0
+            
+        return text, None, None, (1, 1, sent_count, token_count)
 
 
 class FixLengthRAG(BasicRAG):
@@ -126,28 +135,38 @@ class FixLengthRAG(BasicRAG):
         super().__init__(args, device)
     
     def inference(self, question):
+        gen_count, ret_count, sent_count, token_count = 0,0,0,0
         text = ""
         retrieve_question = question
         while True:
             old_len = len(text)
             # docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
             retrieved_docs = self.retriever.search(retrieve_question)
-            if self.args.use_counter == True:
+            if self.args.use_counter:
                 self.counter.retrieve += 1
+                ret_count += 1
             prompt = self.generator.format_longform(question, self.fewshot_examplers, retrieved_docs)
             prompt += text
             
             if self.args.rag_method == "fix_length_retrieval":
                 new_text, _, _ = self.generator.generate(prompt, self.args.generate_fix_length, system_prompt=SYSTEM_PROMPT_LONGFORM)
                 if self.args.use_counter:
-                    self.counter.add_generate(new_text, self.generator.tokenizer)
+                    sent_count_cur, token_count_cur = self.counter.add_generate(new_text, self.generator.tokenizer)
+                    gen_count += 1
+                    sent_count += sent_count_cur
+                    token_count += token_count_cur
+                    
                 text = text.strip() + " " + new_text.strip()
                 retrieve_question = new_text.strip()
                 
             elif self.args.rag_method == "fix_sentence_retrieval":
                 new_text, _, _ = self.generator.generate(prompt, self.args.max_new_token, system_prompt=SYSTEM_PROMPT_LONGFORM)
                 if self.args.use_counter:
-                    self.counter.add_generate(new_text, self.generator.tokenizer)
+                    sent_count_cur, token_count_cur = self.counter.add_generate(new_text, self.generator.tokenizer)
+                    gen_count += 1
+                    sent_count += sent_count_cur
+                    token_count += token_count_cur
+                    
                 new_text = new_text.strip()
                 sentences = list(nlp(new_text).sents)
                 sentences = [str(sent).strip() for sent in sentences]
@@ -163,7 +182,7 @@ class FixLengthRAG(BasicRAG):
             if tokens_count > self.args.max_new_token or len(text) <= old_len or "the answer is" in text:
                 break
         
-        return text, None, None
+        return text, None, None, (gen_count, ret_count, sent_count, token_count)
   
     
 class FLARE_RAG(BasicRAG):
@@ -291,10 +310,11 @@ class FLARE_RAG(BasicRAG):
         return text, None, False
     
     def inference(self, question):
+        gen_count, ret_count, sent_count, token_count = 0,0,0,0
+        text = ""
         num_hallucination = 0
         generation_path = []
         
-        text = ""
         while True:
             old_len = len(text)
             prompt = self.generator.format_longform(question, self.fewshot_examplers, [])
@@ -304,8 +324,11 @@ class FLARE_RAG(BasicRAG):
                 system_prompt=SYSTEM_PROMPT_LONGFORM,
                 return_logprobs=True
             )
-            if self.args.use_counter == True:
-                self.counter.add_generate(new_text, self.generator.tokenizer)
+            if self.args.use_counter:
+                sent_count_cur, token_count_cur = self.counter.add_generate(new_text, self.generator.tokenizer)
+                gen_count += 1
+                sent_count += sent_count_cur
+                token_count += token_count_cur
             
             ptext, curr, hallucination = self.modifier(new_text, tokens_text, logprobs)
             generation_path.append({
@@ -328,8 +351,9 @@ class FLARE_RAG(BasicRAG):
 
                 # docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
                 retrieved_docs = self.retriever.search(retrieve_question)
-                if self.args.use_counter == True:
+                if self.args.use_counter:
                     self.counter.retrieve += 1
+                    ret_count += 1
                 
                 prompt = self.generator.format_longform(question, self.fewshot_examplers, retrieved_docs)
                 prompt += " " + text + " " + ptext.strip()
@@ -338,8 +362,11 @@ class FLARE_RAG(BasicRAG):
                     self.args.max_new_token,
                     system_prompt=SYSTEM_PROMPT_LONGFORM
                 )
-                if self.args.use_counter == True:
-                    self.counter.add_generate(new_text, self.generator.tokenizer)
+                if self.args.use_counter:
+                    sent_count_cur, token_count_cur = self.counter.add_generate(new_text, self.generator.tokenizer)
+                    gen_count += 1
+                    sent_count += sent_count_cur
+                    token_count += token_count_cur
                     self.counter.hallucinated += 1
                 text = text.strip() + " " + ptext.strip() + " " + new_text.strip()
         
@@ -347,7 +374,7 @@ class FLARE_RAG(BasicRAG):
             if tokens_count > self.args.max_new_token or len(text) <= old_len or "the answer is" in text:
                 break
         
-        return text, num_hallucination, generation_path
+        return text, num_hallucination, generation_path, (gen_count, ret_count, sent_count, token_count)
 
 
 class DRAGIN_RAG(BasicRAG):
@@ -509,6 +536,7 @@ class DRAGIN_RAG(BasicRAG):
         return last_n_sentence
     
     def inference(self, question):
+        gen_count, ret_count, sent_count, token_count = 0,0,0,0
         num_hallucination = 0
         generation_path = []
         
@@ -525,8 +553,12 @@ class DRAGIN_RAG(BasicRAG):
                 system_prompt=SYSTEM_PROMPT_LONGFORM,
                 use_entropy = self.args.rag_method == "dragin",
             )
-            if self.args.use_counter == True:
-                self.counter.add_generate(new_text, self.generator.tokenizer)
+            if self.args.use_counter:
+                sent_count_cur, token_count_cur = self.counter.add_generate(new_text, self.generator.tokenizer)
+                gen_count += 1
+                sent_count += sent_count_cur
+                token_count += token_count_cur
+                
             weight = entropies if self.args.rag_method == "dragin" else [-v for v in logprobs]
             hallucination, ptext, curr_tokens, curr_hit =  self.modifier(new_text, tokens, attns, weight)
             generation_path.append({
@@ -568,6 +600,7 @@ class DRAGIN_RAG(BasicRAG):
                 retrieved_docs = self.retriever.search(retrieve_question)
                 if self.args.use_counter == True:
                     self.counter.retrieve += 1
+                    ret_count += 1
                 # docs, _, _ = self.retrieve([retrieve_question], [qid], [pos_contexts], [neg_contexts], topk=self.args.retrieve_topk)
                 prompt = self.generator.format_longform(question, self.fewshot_examplers, retrieved_docs, add_case=False)
                 tmp_li = [case, text, ptext.strip()]
@@ -577,8 +610,11 @@ class DRAGIN_RAG(BasicRAG):
                     self.args.max_new_token,
                     system_prompt=SYSTEM_PROMPT_LONGFORM
                 )
-                if self.args.use_counter == True:
-                    self.counter.add_generate(new_text, self.generator.tokenizer)
+                if self.args.use_counter:
+                    sent_count_cur, token_count_cur = self.counter.add_generate(new_text, self.generator.tokenizer)
+                    gen_count += 1
+                    sent_count += sent_count_cur
+                    token_count += token_count_cur
                     self.counter.hallucinated += 1
                 text = text.strip() + " " + ptext.strip() + " " + new_text.strip()
             
@@ -586,7 +622,7 @@ class DRAGIN_RAG(BasicRAG):
             if tokens_count > self.args.max_new_token or len(text) <= old_len or "the answer is" in text:
                 break
         
-        return text, num_hallucination, generation_path
+        return text, num_hallucination, generation_path, (gen_count, ret_count, sent_count, token_count)
     
     
         

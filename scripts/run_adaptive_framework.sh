@@ -26,8 +26,7 @@ query_formulation="real_words"
 hallucination_threshold=0.15
 run="run_1 (300s-ct)"
 
-
-srun python $HOME/ADV_RAG_UNC/run_adaptive/run_framework.py \
+accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_adaptive/run_framework.py \
     --model_name_or_path "$model_name_or_path" \
     --dataset "$dataset" \
     --subsec "$subsec" \

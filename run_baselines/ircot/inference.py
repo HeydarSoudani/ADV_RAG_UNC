@@ -3,7 +3,7 @@
 import re
 import os
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import json
 import glob
 import torch
@@ -19,102 +19,30 @@ from accelerate.utils import gather_object
 from utils.general_utils import set_seed
 from run_searchr1.correctness import em_score, f1_score
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
+from run_searchr1.inference import StopOnSequence
 
 
-# Define the custom stopping criterion
-class StopOnSequence(transformers.StoppingCriteria):
-    def __init__(self, target_sequences, tokenizer):
-        # Encode the string so we have the exact token-IDs pattern
-        self.target_ids = [tokenizer.encode(target_sequence, add_special_tokens=False) for target_sequence in target_sequences]
-        self.target_lengths = [len(target_id) for target_id in self.target_ids]
-        self._tokenizer = tokenizer
+IRCOT_INSTRUCTION = 'You serve as an intelligent assistant, adept at facilitating users through complex, multi-hop reasoning across multiple documents. This task is illustrated through demonstrations, each consisting of a document set paired with a relevant question and its multi-hop reasoning thoughts. Your task is to generate one thought for current step, DON\'T generate the whole thoughts at once! If you reach what you believe to be the final step, start with "So the answer is:".'
+IRCOT_EXAMPLE = "Wikipedia Title: Kurram Garhi\nKurram Garhi is a small village located near the city of Bannu, which is the part of Khyber Pakhtunkhwa province of Pakistan. Its population is approximately 35000. Barren hills are near this village. This village is on the border of Kurram Agency. Other nearby villages are Peppal, Surwangi and Amandi Kala.\n\nWikipedia Title: 2001–02 UEFA Champions League second group stage\nEight winners and eight runners- up from the first group stage were drawn into four groups of four teams, each containing two group winners and two runners- up. Teams from the same country or from the same first round group could not be drawn together. The top two teams in each group advanced to the quarter- finals.\n\nWikipedia Title: Satellite tournament\nA satellite tournament is either a minor tournament or event on a competitive sporting tour or one of a group of such tournaments that form a series played in the same country or region.\n\nWikipedia Title: Trojkrsti\nTrojkrsti is a village in Municipality of Prilep, Republic of Macedonia.\n\nWikipedia Title: Telephone numbers in Ascension Island\nCountry Code:+ 247< br> International Call Prefix: 00 Ascension Island does not share the same country code( +290) with the rest of St Helena.\n\nQuestion: Are both Kurram Garhi and Trojkrsti located in the same country?\nThought: Kurram Garhi is located in the country of Pakistan. Trojkrsti is located in the country of Republic of Macedonia. Thus, they are not in the same country. So the answer is: no.\n\n"
 
-    def __call__(self, input_ids, scores, **kwargs):
-        # Make sure the target IDs are on the same device
-        targets = [torch.as_tensor(target_id, device=input_ids.device) for target_id in self.target_ids]
-
-        if input_ids.shape[1] < min(self.target_lengths):
-            return False
-
-        # Compare the tail of input_ids with our target_ids
-        for i, target in enumerate(targets):
-            if torch.equal(input_ids[0, -self.target_lengths[i]:], target):
-                return True
-
-        return False
-
-def get_think(text):
-    pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
-    matches = pattern.findall(text)
-    if matches:
-        return matches[-1]
-    else:
-        return None
-
-def get_query(text):
-    pattern = re.compile(r"<search>(.*?)</search>", re.DOTALL)
-    matches = pattern.findall(text)
-    if matches:
-        return matches[-1]
-    else:
-        return None
-
-def get_answer(text):
-    pattern = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
-    matches = pattern.findall(text)
-    if matches:
-        return matches[-1]
-    else:
-        return None
-
-def get_document(text):
-    pattern = re.compile(r"<document>(.*?)</document>", re.DOTALL)
-    matches = pattern.findall(text)
-    if matches:
-        return matches[-1]
-    else:
-        return None
-
-def get_critique(text):
-    pattern = re.compile(r"<critique>(.*?)</critique>", re.DOTALL)
-    matches = pattern.findall(text)
-    if matches:
-        return matches[-1]
-    else:
-        return None
-
-def _passages2string(retrieval_result):
-    # print(retrieval_result)
+def passages2string(retrieval_result):
     format_reference = ''
     for idx, doc_item in enumerate(retrieval_result):
-                    
         content = doc_item['contents']
-        # content = doc_item['document']['contents']
         title = content.split("\n")[0]
         text = "\n".join(content.split("\n")[1:])
-        format_reference += f"Doc {idx+1} (Title: {title}) {text}\n"
+        format_reference += f"Wikipedia Title: {title}\n{text}\n\n"
     return format_reference
 
-def _passages2string_v2(retrieval_result):
-    # print(retrieval_result)
-    format_reference = ''
-    for idx, text in enumerate(retrieval_result):
-        format_reference += f"Doc {idx+1} {text}\n"
-    return format_reference
+def get_answer(text):
+    parts = text.split("the answer is: ", 1)  # Split at the first occurrence
+    pred = parts[1].strip() if len(parts) > 1 else ""
+    pattern = r"\.?</s>"
+    pred = re.sub(pattern, "", pred)
+    return pred
+    
 
-# For server retrieval
-def search(query: str):
-    payload = {
-            "queries": [query],
-            "topk": 3,
-            "return_scores": True
-        }
-    results = requests.post("http://127.0.0.1:8000/retrieve", json=payload).json()['result']
-                
-
-    return _passages2string(results[0])
-
-def searchr1_inference(args):
+def ircot_inference(args):
     # === MultiGPU setup =======================
     accelerator = Accelerator()
     device = accelerator.device
@@ -172,10 +100,9 @@ def searchr1_inference(args):
     # === generator Model ======================
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
     model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16).to(device)
-    target_sequences = ["</search>", " </search>", "</search>\n", " </search>\n", "</search>\n\n", " </search>\n\n"]
+    target_sequences = [".", " .", ".\n", " .\n", ".\n\n", " .\n\n", "\n", " \n", "\n\n", " \n\n"]
     stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(target_sequences, tokenizer)])
     curr_eos = [151645, 151643] # for Qwen2.5 series models
-    curr_search_template = '\n\n{output_text}<information>{search_results}</information>\n\n'
 
     # === Static Retriever =====================
     if args.retriever_name == 'bm25':
@@ -185,14 +112,12 @@ def searchr1_inference(args):
     elif args.retriever_name in ['rerank_l6', 'rerank_l12']:
         retriever = RerankRetriever(args)
     elif args.retriever_name in ['e5', 'bge']:
-        retriever = DenseRetriever(args)
+        retriever = DenseRetriever(args)    
 
     # === Prompt ===============================
-    prompt = """Answer the given question. \
-You must conduct reasoning inside <think> and </think> first every time you get new information. \
-After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. \
-You can search as many times as your want. \
-If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}\n"""
+    # TODO: prompt
+    system_prompt = f"{IRCOT_INSTRUCTION}\n\n{IRCOT_EXAMPLE}"
+    user_prompt = "{documents}Question: {question}\nThought:"
 
     # === Read existing data ===================
     generated_qids = []
@@ -206,73 +131,86 @@ If you find no further external knowledge needed, you can directly provide the a
                     generated_em.append(data['em'])
     generated_qids = set(generated_qids)
     filtered_dataset = test_dataset.filter(lambda example: example['id'] not in generated_qids)
-    
+
+    # === Functions ============================
+    def generate(chat):
+        if tokenizer.chat_template:
+            input_prompt = tokenizer.apply_chat_template(
+                chat,
+                add_generation_prompt=True,
+                tokenize=False
+            )
+        
+        input_ids = tokenizer.encode(input_prompt, return_tensors='pt').to(device)
+        attention_mask = torch.ones_like(input_ids)
+        outputs = model.generate(
+            input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=args.max_new_token,
+            stopping_criteria=stopping_criteria,
+            pad_token_id=tokenizer.eos_token_id,
+            do_sample=True,
+            temperature=0.7
+        )
+        generated_tokens = outputs[0][input_ids.shape[1]:]
+        output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        
+        return outputs, output_text
+
     # === Inference ============================
     em_evaluation = generated_em
     accelerator.wait_for_everyone()
     with accelerator.split_between_processes(filtered_dataset) as test_dataset_shard:
-        
         inference_results_file_ranked = f"{args.output_dir}/inference_results_rank{accelerator.process_index}.jsonl"
         with open(inference_results_file_ranked, "w") as res_f:
             for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 20:
-                #     break
+                if i == 10:
+                    break
                 qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
                 question = question.strip()
                 if question[-1] != '?':
                     question += '?'
-                    
-                input_prompt = prompt.format(question=question)
-                if tokenizer.chat_template:
-                    input_prompt = tokenizer.apply_chat_template(
-                        [{"role": "user", "content": input_prompt}],
-                        add_generation_prompt=True,
-                        tokenize=False
-                    )
-            
-                path, cnt = [], 0
-                while True:
-                    input_ids = tokenizer.encode(input_prompt, return_tensors='pt').to(device)
-                    attention_mask = torch.ones_like(input_ids)
-                    
-                    outputs = model.generate(
-                        input_ids,
-                        attention_mask=attention_mask,
-                        max_new_tokens=args.max_new_token,
-                        stopping_criteria=stopping_criteria,
-                        pad_token_id=tokenizer.eos_token_id,
-                        do_sample=True,
-                        temperature=0.7
-                    )
+                
+                # initial retrieval
+                cur_search_docs = retriever.search(question)
+                input_chat = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt.format(documents=passages2string(cur_search_docs), question=question)}
+                ]
 
-                    if outputs[0][-1].item() in curr_eos:
-                        generated_tokens = outputs[0][input_ids.shape[1]:]
-                        output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                path, iter_num = [], 0
+                while iter_num < args.max_iter:
+                    outputs, output_text = generate(input_chat)
+                    path.append({'thought': output_text, 'docs': cur_search_docs})
+                    
+                    if outputs[0][-1].item() in curr_eos or ("So the answer is:" in output_text):
                         break
-
-                    generated_tokens = outputs[0][input_ids.shape[1]:]
-                    output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                    iter_num += 1
+                    if iter_num == args.max_iter:
+                        break  # don't perform another retrieval or prompt construction
+                    
+                    cur_search_docs = retriever.search(output_text) if output_text else []
+                    tmp = [doc for step in path for doc in step['docs']] + cur_search_docs
+                    input_chat = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt.format(documents=passages2string(tmp), question=question)},
+                        {"role": "assistant", "content": ' '.join([step['thought'] for step in path])}
+                    ]
+            
+                # Regenerate the last sentence if it is needed
+                if "So the answer is:" not in output_text:
+                    input_chat = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt.format(documents=passages2string([doc for step in path for doc in step['docs']]), question=question)},
+                        {"role": "assistant", "content": ' '.join([step['thought'] for step in path]) + " So the answer is:"}
+                    ]                    
+                    outputs, output_text = generate(input_chat)
+                    path.append({'think': output_text})
                 
-                    tmp_query = get_query(tokenizer.decode(outputs[0], skip_special_tokens=True))
-                    if tmp_query:
-                        search_docs = retriever.search(tmp_query)
-                        search_results = _passages2string(search_docs)
-                    else:
-                        search_docs, search_results = [], ''
-
-                    path.append({
-                        'think': get_think(output_text),
-                        'search_query': tmp_query,
-                        'docs': search_docs
-                    })
-
-                    search_text = curr_search_template.format(output_text=output_text, search_results=search_results)
-                    input_prompt += search_text
-                    cnt += 1
-                
-                one_step_think = get_think(output_text)
                 pred_answer = get_answer(output_text)
-                path.append({'think': one_step_think, 'answer': pred_answer})
+                print(gt_answers)
+                print(pred_answer)
+                print('-----')
                 if pred_answer:
                     correctness_em = em_score(pred_answer, gt_answers)
                     correctness_f1 = f1_score(pred_answer, gt_answers)
@@ -291,11 +229,10 @@ If you find no further external knowledge needed, you can directly provide the a
                 }
                 res_f.write(json.dumps(item) + "\n")
                 em_evaluation.append(correctness_em)
-        
+                
     em_evaluation_gathered = gather_object(em_evaluation)
     if accelerator.is_main_process:
         print("\nEvaluation Result:")
-        # print(em_evaluation_gathered)
         print(f"EM: {np.mean(em_evaluation_gathered)*100}")
 
 
@@ -317,15 +254,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--paraphrase_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
@@ -349,12 +285,12 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
-    # RAG-consistency
-    parser.add_argument("--num_rag_generations", type=int, default=10)
+    # IRCoT setup
+    parser.add_argument('--max_iter', type=int, default=5)
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_1 (searchr1_2k)')
+    parser.add_argument('--run', type=str, default='run_5 (ircot_2k)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     
@@ -365,14 +301,13 @@ if __name__ == "__main__":
     model_ = args.model_name_or_path.split('/')[-1]
     args.output_dir = f"{args.output_dir}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
-    args.rag_consistency_results_file = f"{args.output_dir}/rag_consistency_results.jsonl"
     os.makedirs(args.output_dir, exist_ok=True)
         
     ### === Run Steps =============
     set_seed(args.seed)
-    searchr1_inference(args)
+    ircot_inference(args)
     # merge_result_files(args)
     
-    # python run_searchr1/inference.py
-    # accelerate launch run_searchr1/inference.py
-    # accelerate launch --multi_gpu run_searchr1/inference.py
+    # python run_baselines/ircot/inference.py
+    # accelerate launch --multi_gpu run_baselines/ircot/inference.py
+

@@ -20,11 +20,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='musique', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
     # Retriever
@@ -53,7 +53,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_2 (mcts_2k_rollout4)')
+    parser.add_argument('--run', type=str, default='run_3 (mcts_2k_rollout8)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -66,8 +66,8 @@ if __name__ == "__main__":
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
-    parser.add_argument("--num_rollouts", type=int, default=4)
-    parser.add_argument("--max_depth_allowed", type=int, default=6)
+    parser.add_argument("--num_rollouts", type=int, default=8)
+    parser.add_argument("--max_depth_allowed", type=int, default=10)
     parser.add_argument("--num_votes", type=int, default=2)
     parser.add_argument("--mcts_num_last_votes", type=int, default=5)
     parser.add_argument("--enable_potential_score", action="store_true")
