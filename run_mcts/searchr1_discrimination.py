@@ -19,7 +19,7 @@ from typing import List, Dict, Tuple
 
 from utils.general_utils import set_seed, read_jsonl, read_txt
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
-from run_searchr1.correctness import em_score, f1_score
+from run_rag_methods.src.correctness import em_score, f1_score
 from run_searchr1.inference import get_think, get_query, get_answer, _passages2string, StopOnSequence
 
 
@@ -28,11 +28,11 @@ def options2string_(options_list):
 
 
 class SemanticEquivalenceGenerator:
-    def __init__(self, args, generator=None, tokenizer=None):
+    def __init__(self, args, device, generator=None, tokenizer=None):
         self.args = args
         self.prompt = read_txt(args.semantic_equivalence_prompt_file)
         if generator == None and tokenizer==None:
-            self.model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16, device_map='auto')
+            self.model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16).to(device)
             self.tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
         else: 
             self.model = generator

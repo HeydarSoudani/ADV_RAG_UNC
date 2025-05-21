@@ -144,7 +144,6 @@ class BaseRetriever:
     def batch_search(self, query_list: List[str], num: int = None, return_score: bool = False):
         return self._batch_search(query_list, num, return_score)
 
-
 class BM25Retriever(BaseRetriever):
     def __init__(self, config):
         super().__init__(config)
@@ -363,5 +362,4 @@ class RerankRetriever(BaseRetriever):
 
     def _batch_search(self, query_list: List[str], num: int = None, return_score: bool = False):
         pass
-
 

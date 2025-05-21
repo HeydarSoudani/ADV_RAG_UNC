@@ -11,7 +11,7 @@ from collections import defaultdict
 from sklearn.metrics import roc_auc_score
 
 from utils.general_utils import set_seed, read_jsonl
-from run_searchr1.correctness import em_score
+from run_rag_methods.src.correctness import em_score
 
 
 

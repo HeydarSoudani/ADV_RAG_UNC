@@ -22,7 +22,7 @@ from copy import deepcopy
 
 from utils.general_utils import set_seed, read_jsonl, read_txt
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
-from run_searchr1.correctness import em_score, f1_score
+from run_rag_methods.src.correctness import em_score, f1_score
 from run_searchr1.inference import get_think, get_query, get_answer, _passages2string, StopOnSequence
 from searchr1_discrimination import SemanticEquivalenceGenerator
 from run_mcts.src.generate_paraphrase import SearchQueryGenerator, ThinkGenerator, get_paraphrased_query, get_paraphrased_think

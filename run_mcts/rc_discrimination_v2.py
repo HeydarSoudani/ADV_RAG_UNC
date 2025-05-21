@@ -4,21 +4,23 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
+import glob
 import math
 import torch
 import argparse
 import numpy as np
 from typing import Dict
 from copy import deepcopy
-from tqdm import tqdm, trange
+from tqdm import tqdm
 from collections import defaultdict
 import transformers
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from accelerate import Accelerator
+from accelerate.utils import gather_object
 
 from run_searchr1.inference import StopOnSequence, get_answer, _passages2string
 from run_mcts.searchr1_discrimination import SemanticEquivalenceGenerator
 from run_mcts.src.generate_node import Generator
-from run_searchr1.correctness import em_score, normalize_answer
+from run_rag_methods.src.correctness import em_score, normalize_answer
 from utils.general_utils import set_seed, read_jsonl
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 
@@ -81,7 +83,6 @@ def rag_mask_solution_trace(
         masked_solution_traces.append(prefix_part_str)
 
     return masked_solution_traces
-
 
 class Discriminator:
     def __init__(self, args, se_model):
@@ -610,104 +611,149 @@ class Discriminator:
         return self._find_winner_filtered(question, prefiltered_candidates, filtered_candidates, gt_answer)
 
 def rc_discrimination(args):
-    print("\n== MCTS Discrimination ...")
-    print(f"""
-        Model name:  {args.model_name_or_path}
-        Dataset:     {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
-        Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
-        Rollouts:    {args.num_rollouts}
-        Seed:        {args.seed}
-        Run:         {args.run}
-    """.replace('        ', ''))
+    # === MultiGPU setup =======================
+    accelerator = Accelerator()
+    device = accelerator.device
+    
+    if accelerator.is_main_process:
+        print("\n== MCTS Discrimination V2 ...")
+        print(f"""
+            Model name:  {args.model_name_or_path}
+            Dataset:     {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
+            Retriever:   {args.retriever_name} / ({args.retrieval_model_path})
+            Rollouts:    {args.num_rollouts}
+            Seed:        {args.seed}
+            Run:         {args.run}
+        """.replace('        ', ''))
+    
+        # === Define CUDA device =======
+        # args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            print(f"Number of available GPUs: {torch.cuda.device_count()}")
+            for i in range(torch.cuda.device_count()):
+                print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+        else:
+            print("CUDA is not available. No GPUs detected.")
     
     # === Output files ==========================
     entries = os.listdir(args.generation_trees_results_dir)
     query_ids = [entry for entry in entries if os.path.isdir(os.path.join(args.generation_trees_results_dir, entry))]
     sorted_query_ids = sorted(query_ids, key=lambda x: int(x.split('_')[1]))
     
+    # === Read existing data ===================
+    generated_qids = []
+    generated_em = []
+    if os.path.exists(args.discriminate_results_file):
+        with open(args.discriminate_results_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                data = json.loads(line)
+                if 'qid' in data:
+                    generated_qids.append(data['qid'])
+                    generated_em.append(data['em'])
+    generated_qids = set(generated_qids)
+    filtered_sorted_query_ids = [id_ for id_ in sorted_query_ids if id_ not in generated_qids]
+    
     # === Model Definition ======================
-    se_model = SemanticEquivalenceGenerator(args)
+    se_model = SemanticEquivalenceGenerator(args, device)
     discriminator = Discriminator(args, se_model)
     
     # === Main Loop =============================
-    em_evaluation = []
-    with open(args.discriminate_results_file, 'w', encoding='utf-8') as outfile:
-        for i, qid in enumerate(tqdm(sorted_query_ids)):
-            # if i == 10:
-            #     break
-            # === Generating answer candidates
-            final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
-            all_traces = read_jsonl(final_solutions_file)
-            gt_answers = all_traces[0]["trace"]["0"]["ground_truth"]
-            question = all_traces[0]["trace"]["0"]["user_question"]
-            question = question.strip()
-            if question[-1] != '?':
-                question += '?'
-            
-            all_candidates = []
-            for trace_id, trace in enumerate(all_traces):
+    em_evaluation = generated_em
+    accelerator.wait_for_everyone()
+    with accelerator.split_between_processes(filtered_sorted_query_ids) as sorted_query_ids_shard:
+        discriminate_results_file_ranked = f"{args.output_dir}/rc_discriminate_results_v2_rank{accelerator.process_index}.jsonl"
+        with open(discriminate_results_file_ranked, 'w', encoding='utf-8') as outfile:
+            for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
+                # if i == 10:
+                #     break
+                # === Generating answer candidates
+                final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
+                all_traces = read_jsonl(final_solutions_file)
+                gt_answers = all_traces[0]["trace"]["0"]["ground_truth"]
+                question = all_traces[0]["trace"]["0"]["user_question"]
+                question = question.strip()
+                if question[-1] != '?':
+                    question += '?'
                 
-                trace_ = trace["trace"]
-                trace_ = {int(key): val for key, val in  trace_.items()}
-                trace_text = discriminator.trace2text(trace_)
-                last_depth_key = list(trace_.keys())[-1]
-                last_node_type = list(trace_[last_depth_key].keys())[0] 
-                final_answer = trace_[last_depth_key][last_node_type]["answer"]
-                # final_answer_reward = trace_[last_depth_key][last_node_type]["value"]
-                final_answer_reward = trace_[last_depth_key][last_node_type]["node_reward"]
-                # final_answer_reward = 10 - trace_[last_depth_key][last_node_type]['scores'][1]['param']['PE']['uncertainty']
+                all_candidates = []
+                for trace_id, trace in enumerate(all_traces):
+                    trace_ = trace["trace"]
+                    trace_ = {int(key): val for key, val in  trace_.items()}
+                    trace_text = discriminator.trace2text(trace_)
+                    last_depth_key = list(trace_.keys())[-1]
+                    last_node_type = list(trace_[last_depth_key].keys())[0] 
+                    final_answer = trace_[last_depth_key][last_node_type]["answer"]
+                    # final_answer_reward = trace_[last_depth_key][last_node_type]["value"]
+                    final_answer_reward = trace_[last_depth_key][last_node_type]["node_reward"]
+                    
+                    masked_trace_text_list = rag_mask_solution_trace(
+                        trace_text,
+                        num_return=args.num_masked_solution_traces,
+                        left_boundary=args.mask_left_boundary,
+                        right_boundary=args.mask_right_boundary,
+                    )
+                    
+                    candidate = Candidate(
+                        trace_text,
+                        deepcopy(masked_trace_text_list),
+                        final_answer,
+                        trace_id,
+                        trace_reward=final_answer_reward,
+                    )
+                    # print(candidate.to_dict())
+                    # print('----')
+                    all_candidates.append(candidate)
+                    
                 
-                masked_trace_text_list = rag_mask_solution_trace(
-                    trace_text,
-                    num_return=args.num_masked_solution_traces,
-                    left_boundary=args.mask_left_boundary,
-                    right_boundary=args.mask_right_boundary,
+                # 
+                answer2candidates, answer2confidence, _ = discriminator.group_candidates_by_answer(
+                    question, all_candidates, args.rc_criteria
                 )
+                most_confident_answer = max(answer2candidates.keys(), key=lambda x: answer2confidence[x])
+                highest_confidence = answer2confidence[most_confident_answer]
+                assert highest_confidence > 0
+                print(answer2confidence)
+                # === Decision
+                if highest_confidence > args.threshold:
+                    print("You are very confident. Skipping...")
+                    winner_answer = most_confident_answer if most_confident_answer != None else ''
+                else:
+                    winner_answer_ = discriminator.select(question, all_candidates, gt_answers)
+                    winner_answer = winner_answer_.final_answer if winner_answer_ != None else ''
                 
-                candidate = Candidate(
-                    trace_text,
-                    deepcopy(masked_trace_text_list),
-                    final_answer,
-                    trace_id,
-                    trace_reward=final_answer_reward,
-                )
-                # print(candidate.to_dict())
-                # print('----')
-                all_candidates.append(candidate)
-                
-            
-            # 
-            answer2candidates, answer2confidence, _ = discriminator.group_candidates_by_answer(
-                question, all_candidates, args.rc_criteria
-            )
-            most_confident_answer = max(answer2candidates.keys(), key=lambda x: answer2confidence[x])
-            highest_confidence = answer2confidence[most_confident_answer]
-            assert highest_confidence > 0
-            print(answer2confidence)
-            # === Decision
-            if highest_confidence > args.threshold:
-                print("You are very confident. Skipping...")
-                winner_answer = most_confident_answer if most_confident_answer != None else ''
-            else:
-                winner_answer_ = discriminator.select(question, all_candidates, gt_answers)
-                winner_answer = winner_answer_.final_answer if winner_answer_ != None else ''
-            
-            correctness_em = em_score(winner_answer, gt_answers)
-            em_evaluation.append(correctness_em)
-            item = {
-                "qid": qid,
-                "query": question,
-                "gt_answers": gt_answers,
-                "em": correctness_em,
-                "winner_answer": winner_answer,
-                "pred_answers": [c.final_answer for c in all_candidates],
-                "conf": answer2confidence[winner_answer]
-            }
-            outfile.write(json.dumps(item) + '\n')
+                correctness_em = em_score(winner_answer, gt_answers)
+                item = {
+                    "qid": qid,
+                    "query": question,
+                    "gt_answers": gt_answers,
+                    "em": correctness_em,
+                    "winner_answer": winner_answer,
+                    "pred_answers": [c.final_answer for c in all_candidates],
+                    "conf": answer2confidence[winner_answer]
+                }
+                outfile.write(json.dumps(item) + '\n')
+                em_evaluation.append(correctness_em)
 
     # === Print results ========================
-    print("\nEvaluation Result:")
-    print(f"EM: {np.mean(em_evaluation)*100}")
+    em_evaluation_gathered = gather_object(em_evaluation)
+    if accelerator.is_main_process:
+        print("\nEvaluation Result:")
+        # print(em_evaluation_gathered)
+        print(f"EM: {np.mean(em_evaluation_gathered)*100}")
+        
+
+def merge_result_files(args):
+    results_shard_files = f"{args.output_dir}/rc_discriminate_results_v2_rank*.jsonl"
+    results_shard_files = sorted(glob.glob(results_shard_files))
+    with open(args.discriminate_results_file, "a") as fout:
+        for shard_file in results_shard_files:
+            if shard_file == args.discriminate_results_file:
+                continue
+            with open(shard_file, "r") as fin:
+                for line in fin:
+                    fout.write(line)
+            os.remove(shard_file)
+            print(f"Deleted shard file: {shard_file}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -716,11 +762,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+    parser.add_argument('--dataset', type=str, default='musique', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
     # Retriever
@@ -787,27 +833,19 @@ if __name__ == "__main__":
     
     # === Files ====================
     model_ = args.model_name_or_path.split('/')[-1]
-    output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
-    args.generation_trees_results_dir = f'{output_dir}/generation_trees'
-    args.discriminate_results_file = f"{output_dir}/rc_discriminate_results_v2.jsonl"
+    args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
+    args.generation_trees_results_dir = f'{args.output_dir}/generation_trees'
+    args.discriminate_results_file = f"{args.output_dir}/rc_discriminate_results_v2.jsonl"
     
     # === Prompt files =============
     args.semantic_equivalence_prompt_file = "prompts_mcts/semantic_equivalence_prompt_template.txt"
     args.discriminator_prompt_file = "prompts_mcts/discriminator_prompt_template.txt"
     
-    # === Define CUDA device =======
-    args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
-    if torch.cuda.is_available():
-        print(f"Number of available GPUs: {torch.cuda.device_count()}")
-        for i in range(torch.cuda.device_count()):
-            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-    else:
-        print("CUDA is not available. No GPUs detected.")
-    
     ### === Run Steps =============
     set_seed(args.seed)
-    rc_discrimination(args)
-    
+    # rc_discrimination(args)
+    merge_result_files(args)
     
     # python run_mcts/rc_discrimination_v2.py
+    # accelerate launch --multi_gpu run_mcts/rc_discrimination_v2.py
     

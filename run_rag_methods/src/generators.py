@@ -3,63 +3,133 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import torch
 import numpy as np
-from math import exp
+import transformers
 from scipy.special import softmax
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 
-from run_searchr1.inference import _passages2string
-from utils.adaptive_utils import fix_tokenizer_chat
-from run_adaptive.src.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_SHORTFORM, SYSTEM_PROMPT_REGENERATE
+# from run_searchr1.inference import _passages2string
+# from utils.adaptive_utils import fix_tokenizer_chat
+# from run_rag_methods.src.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_SHORTFORM, SYSTEM_PROMPT_REGENERATE
 
 
-class BasicGenerator:
+# Define the custom stopping criterion
+class StopOnSequence(transformers.StoppingCriteria):
+    def __init__(self, target_sequences, tokenizer):
+        # Encode the string so we have the exact token-IDs pattern
+        self.target_ids = [tokenizer.encode(target_sequence, add_special_tokens=False) for target_sequence in target_sequences]
+        self.target_lengths = [len(target_id) for target_id in self.target_ids]
+        self._tokenizer = tokenizer
+
+    def __call__(self, input_ids, scores, **kwargs):
+        # Make sure the target IDs are on the same device
+        targets = [torch.as_tensor(target_id, device=input_ids.device) for target_id in self.target_ids]
+
+        if input_ids.shape[1] < min(self.target_lengths):
+            return False
+
+        # Compare the tail of input_ids with our target_ids
+        for i, target in enumerate(targets):
+            if torch.equal(input_ids[0, -self.target_lengths[i]:], target):
+                return True
+
+        return False
+
+class LLMGenerator:
     def __init__(self, args, device):
         self.args = args
-        self.generator = AutoModelForCausalLM.from_pretrained(
+        self.device = device
+        self.generator = transformers.AutoModelForCausalLM.from_pretrained(
             args.model_name_or_path,
             torch_dtype=torch.bfloat16,
-            attn_implementation="eager",
-            # device_map='auto'
-        ).to(device)
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            args.model_name_or_path,
-            use_fast=False
-        )
+            attn_implementation="eager"
+        ).to(self.device) # 
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path) #  use_fast=False
         self.eos_token_ids = self.generator.config.eos_token_id
         
+        # For 'fix_length_retrieval', 'fix_sentence_retrieval', 'flare', 'dragin'
         if args.model_name_or_path in ["Qwen/Qwen2.5-7B-Instruct", "meta-llama/Llama-3.1-8B-Instruct"]:
             self.space_token = "Ġ"
         elif args.model_name_or_path == "meta-llama/Llama-2-7b-chat-hf":
             self.space_token = "▁"
         else:
             self.space_token = self.tokenizer.tokenize(' ')[0]
+        
+        self.curr_eos = [151645, 151643] # for Qwen2.5 series models
+    
+        
+        # For IRCoT
+        ircot_target_sequences = [".", " .", ".\n", " .\n", ".\n\n", " .\n\n", "\n", " \n", "\n\n", " \n\n"]
+        self.ircot_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(ircot_target_sequences, self.tokenizer)])
+        
+        # FLARE
+        flare_target_sequences = list("!@#$%^&*()\n\n)(*&^%$#@!")
+        self.flare_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(flare_target_sequences, self.tokenizer)])
+        
+        # SelfAsk
+        selfask_sequences = ["Context:", "#", "Intermediate answer:" , "Intermediate answer: ", "\nIntermediate answer:"]
+        self.selfask_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(selfask_sequences, self.tokenizer)])
+        
+        # For searchR1
+        searchr1_sequences = ["</search>", " </search>", "</search>\n", " </search>\n", "</search>\n\n", " </search>\n\n"]
+        self.searchr1_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(searchr1_sequences, self.tokenizer)])
+        
+        # for 'react', 'self_ask', 'search_o1'
     
     def generate(self,
-        input_text,
-        max_new_tokens,
-        system_prompt:str = SYSTEM_PROMPT_LONGFORM,
-        return_logprobs=True,
-        return_text=True,
-        add_generation_prompt=True,
-        continue_final_message=False
+        messages,
+        stopping_criteria=None,
+        max_new_tokens=1024,
+        do_sample=True,
+        temperature=0.7,
     ):
-        # === Add template
-        messages = [{'role': 'system', 'content': system_prompt}]
-        messages.append({'role': 'user', 'content': input_text})
-        tokenizer, messages = fix_tokenizer_chat(self.tokenizer, messages)
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize = False,
-            add_generation_prompt=add_generation_prompt,
-            continue_final_message=continue_final_message
-        )
+        if self.tokenizer.chat_template:
+            input_prompt = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=False
+            )
         
+        input_ids = self.tokenizer.encode(input_prompt, return_tensors='pt').to(self.device)
+        attention_mask = torch.ones_like(input_ids)
+        outputs = self.generator.generate(
+            input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=max_new_tokens,
+            stopping_criteria=stopping_criteria,
+            pad_token_id=self.tokenizer.eos_token_id,
+            do_sample=do_sample,
+            temperature=temperature
+        )
+        output_ = outputs[0]
+        generated_tokens = output_[input_ids.shape[1]:]
+        output_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        
+        return output_, output_text
+    
+    def generate_with_scores(self,
+        messages,
+        stopping_criteria=None,
+        max_new_tokens=1024,
+        do_sample=True,
+        temperature=0.7,
+        return_logprobs=True,
+        return_text=True
+    ):
+        if self.tokenizer.chat_template:
+            input_prompt = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=False
+            )
+
         with torch.no_grad():
-            inputs = tokenizer(text, return_tensors="pt").to(self.generator.device)
+            inputs = self.tokenizer(input_prompt, return_tensors="pt").to(self.device)
             input_ids = inputs['input_ids']
             model_output = self.generator.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
+                stopping_criteria=stopping_criteria,
+                do_sample=do_sample,
+                temperature=temperature,
                 return_dict_in_generate=True,
                 output_logits=True,
                 output_scores = True,
@@ -91,8 +161,8 @@ class BasicGenerator:
             
             if return_text:
                 tokens = [seq[len(input_ids[0]):indices[i] + len(input_ids[0])+1].tolist() for i, seq in enumerate(model_output.sequences)]
-                tokens_text = [[tokenizer.decode(token) for token in tokens_] for tokens_ in tokens]
-                generated_texts = tokenizer.batch_decode(tokens, skip_special_tokens=True)
+                tokens_text = [[self.tokenizer.decode(token) for token in tokens_] for tokens_ in tokens]
+                generated_texts = self.tokenizer.batch_decode(tokens, skip_special_tokens=True)
             
             if return_logprobs:
                 logits_list = torch.stack(model_output.logits).cpu().permute(1, 0, 2)
@@ -102,32 +172,32 @@ class BasicGenerator:
                 logprobs = logprobs.squeeze(-1).tolist()#convert to list
                 logprobs = [logprobs[i][:indices[i]+1] for i in range(len(logprobs))]
                 assert len(tokens_text[0]) == len(logprobs[0])
-                
-        return generated_texts[0], tokens_text[0], logprobs[0]
-    
+        
+        return generated_texts[0], tokens_text[0], logprobs[0]    
+            
+        #     logits = torch.stack(model_output.scores, dim=1).softmax(-1).cpu()
+        #     generated_ids = model_output.sequences[:, len(input_ids[0]):]
+        #     gen_score = torch.gather(logits, 2, generated_ids[:, :, None]).squeeze(-1).cpu().tolist()
+        # return generated_texts[0], gen_score[0]
+
     def generate_attn(self,
-        input_text,
+        messages,
         max_new_tokens,
-        system_prompt:str = SYSTEM_PROMPT_LONGFORM,
         solver="max",
         use_entropy = False,
         use_logprob = False,
         add_generation_prompt=True,
         continue_final_message=False
     ):
-        # === Add template
-        messages = [{'role': 'system', 'content': system_prompt}]
-        messages.append({'role': 'user', 'content': input_text})
-        tokenizer, messages = fix_tokenizer_chat(self.tokenizer, messages)
-        text = tokenizer.apply_chat_template(
+        text = self.tokenizer.apply_chat_template(
             messages,
             tokenize = False,
-            add_generation_prompt=add_generation_prompt,
-            continue_final_message=continue_final_message
+            add_generation_prompt=True,
+            # continue_final_message=continue_final_message
         )
         
         with torch.no_grad():
-            inputs = tokenizer(text, return_tensors="pt").to(self.generator.device)
+            inputs = self.tokenizer(text, return_tensors="pt").to(self.generator.device)
             input_ids = inputs['input_ids']
             model_output = self.generator.generate(
                 **inputs,
@@ -165,8 +235,8 @@ class BasicGenerator:
         
             generation_id = 0 # We have only one generation
             token_ids = [seq[len(input_ids[0]):indices[i] + len(input_ids[0])+1].tolist() for i, seq in enumerate(model_output.sequences)]
-            tokens = [tokenizer.convert_ids_to_tokens(tokens_) for tokens_ in token_ids][generation_id]
-            text = tokenizer.batch_decode(token_ids, skip_special_tokens=True)[generation_id]
+            tokens = [self.tokenizer.convert_ids_to_tokens(tokens_) for tokens_ in token_ids][generation_id]
+            text = self.tokenizer.batch_decode(token_ids, skip_special_tokens=True)[generation_id]
             
             range_ = [] # Convert tokens to entities
             for i, t in enumerate(tokens):
@@ -234,7 +304,6 @@ class BasicGenerator:
             else:
                 seqlogprobs = None
             
-
             if use_entropy:
                 tmp = []
                 for v in model_output.scores:
@@ -252,26 +321,86 @@ class BasicGenerator:
           
         return text, seqlist, attns, seqlogprobs, seqentropies
     
-    def format_longform(self, question, fewshot_examplers, docs, add_case=True):
-        if len(fewshot_examplers) > 0:
-            prompt = "Here are several examples of how to answer similar questions:\n\n"
-            for exp in fewshot_examplers:
-                prompt += f"Question: {exp['question']}\n"
-                prompt += f"Answer: {exp['cot']} So, the answer is {exp['answer']}.\n"
-            prompt += "\n"
-        
-        if len(docs) > 0:
-            prompt += "Below are some relevant documents that may help answer the question:\n"
-            prompt += _passages2string(docs) + '\n'
-        
-        prompt += "Now, answer the following question EXACTLY in the format of the examples above.\n"
-        prompt += "DO NOT add any introductory phrases, explanations, or extra text.\n\n"
-        if add_case:
-            prompt += f"Question: {question}\nAnswer:"
-        
-        return prompt
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+# # === Add template
+# messages = [{'role': 'system', 'content': system_prompt}]
+# messages.append({'role': 'user', 'content': input_text})
+# tokenizer, messages = fix_tokenizer_chat(self.tokenizer, messages)
+# text = tokenizer.apply_chat_template(
+#     messages,
+#     tokenize = False,
+#     add_generation_prompt=add_generation_prompt,
+#     continue_final_message=continue_final_message
+# )
+   
+# def format_longform(self, question, fewshot_examplers, docs, add_case=True):
+#     if len(fewshot_examplers) > 0:
+#         prompt = "Here are several examples of how to answer similar questions:\n\n"
+#         for exp in fewshot_examplers:
+#             prompt += f"Question: {exp['question']}\n"
+#             prompt += f"Answer: {exp['cot']} So, the answer is {exp['answer']}.\n"
+#         prompt += "\n"
     
+#     if len(docs) > 0:
+#         prompt += "Below are some relevant documents that may help answer the question:\n"
+#         prompt += _passages2string(docs) + '\n'
     
+#     prompt += "Now, answer the following question EXACTLY in the format of the examples above.\n"
+#     prompt += "DO NOT add any introductory phrases, explanations, or extra text.\n\n"
+#     if add_case:
+#         prompt += f"Question: {question}\nAnswer:"
+    
+#     return prompt
+     
+        
+# # For IRCoT
+# def generate_v1(self, chat):
+#     if self.tokenizer.chat_template:
+#         input_prompt = self.tokenizer.apply_chat_template(
+#             chat,
+#             add_generation_prompt=True,
+#             tokenize=False
+#         )
+    
+#     input_ids = tokenizer.encode(input_prompt, return_tensors='pt').to(device)
+#     attention_mask = torch.ones_like(input_ids)
+#     outputs = model.generate(
+#         input_ids,
+#         attention_mask=attention_mask,
+#         max_new_tokens=args.max_new_token,
+#         stopping_criteria=stopping_criteria,
+#         pad_token_id=tokenizer.eos_token_id,
+#         do_sample=True,
+#         temperature=0.7
+#     )
+#     generated_tokens = outputs[0][input_ids.shape[1]:]
+#     output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    
+#     return outputs, output_text
+
     # def format_shortform(self, question, fewshot_examplers, docs, add_case=True):
     #     prompt = ""
     #     if len(docs) > 0:

@@ -1,38 +1,39 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus=1
+#SBATCH --gpus=2
 #SBATCH --cpus-per-task=4
-#SBATCH --partition=gpu
-#SBATCH --time=1:00:00
+#SBATCH --partition=gpu_a100
+#SBATCH --time=1:30:00
+#SBATCH --mem=40GB
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
 module load Python/3.12.3-GCCcore-13.3.0
-# module load Java/21.0.2
-# pip install --upgrade transformers
-
-# python -m pyserini.index -collection JsonCollection -generator DefaultLuceneDocumentGenerator -threads 20 -input "data/row_files/corpus" -index "data/row_files/corpus/bm25_index" -storePositions -storeDocvectors -storeRaw
 
 
 ### === Set variables ==========================
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="hotpotqa"
+dataset="popqa"
 subsec="test"
-fraction_of_data_to_use=0.6
+fraction_of_data_to_use=2000.0
+retriever_name="rerank_l6"
+index_path="data/search_r1_files/bm25"
+retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
 rag_method="dragin"
-retriever_model="bm25"
 query_formulation="real_words"
-hallucination_threshold=0.15
-run="run_1 (300s-ct)"
+hallucination_threshold=1.0
+run="run_0 (rag_methods_2k)"
 
-accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_adaptive/run_framework.py \
+accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_rag_methods/run_framework.py \
     --model_name_or_path "$model_name_or_path" \
     --dataset "$dataset" \
     --subsec "$subsec" \
-    --rag_method "$rag_method" \
-    --retriever_model "$retriever_model" \
     --fraction_of_data_to_use "$fraction_of_data_to_use" \
+    --retriever_name "$retriever_name" \
+    --index_path "$index_path" \
+    --retrieval_model_path "$retrieval_model_path" \
+    --rag_method "$rag_method" \
     --query_formulation "$query_formulation" \
     --hallucination_threshold "$hallucination_threshold" \
     --run "$run"
@@ -42,9 +43,10 @@ accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_adaptive/run_framework.py \
     # 'wikimultihopqa', 'hotpotqa', 'musique', 'iirc'
 
 ### rag_method:
-    # 'no_retrieval', 'single_retrieval',
-    # 'fix_length_retrieval', 'fix_sentence_retrieval',
-    # 'flare', 'dragin'
+    # 'direct_inference', 'cot_inference', 'cot_single_retrieval',
+    # 'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot',
+    # 'flare', 'dragin',
+    # 'react', 'self_ask', 'search_o1', 'search_r1'
 
 ### retriever_model:
     # 'negative', 'bm25', 'contriever', 'rerank', 'bge_m3', 'sgpt', 'positive'

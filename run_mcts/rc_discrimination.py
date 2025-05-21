@@ -10,7 +10,7 @@ import numpy as np
 from copy import deepcopy
 from tqdm import tqdm, trange
 
-from run_searchr1.correctness import em_score
+from run_rag_methods.src.correctness import em_score
 from src_mcts.evaluate import Evaluator
 from src_mcts.discriminate import Candidate, MajorityVoteDiscriminator, group_candidates_by_answer
 from utils.general_utils import set_seed, read_txt, read_json, read_jsonl

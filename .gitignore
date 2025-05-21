@@ -126,6 +126,7 @@ script_logging/
 run_output/
 test/
 wandb/
+archive/
 
 
 

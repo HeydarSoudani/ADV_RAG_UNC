@@ -12,7 +12,7 @@ import numpy as np
 from tqdm import tqdm, trange
 
 from utils.general_utils import set_seed, read_jsonl
-from run_searchr1.correctness import em_score
+from run_rag_methods.src.correctness import em_score
 from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from src_adaptive.dataset import BaseDataset
 

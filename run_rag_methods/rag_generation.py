@@ -13,9 +13,9 @@ from tqdm import tqdm
 from accelerate import Accelerator
 from accelerate.utils import gather_object
 
-from run_adaptive.src.rag import *
 from utils.general_utils import set_seed
-from run_searchr1.correctness import em_score, f1_score
+from run_rag_methods.src.rag_methods import *
+from run_rag_methods.src.correctness import em_score, f1_score
 
 
 def get_answer(text):
@@ -26,12 +26,12 @@ def get_answer(text):
     return pred
 
 
-def adaptive_generation(args):
+def rag_generation(args):
     # === MultiGPU setup =======================
     accelerator = Accelerator()
     device = accelerator.device
     if accelerator.is_main_process:
-        print("\n== Adaptive Generation ...")
+        print("\n== RAG Generation ...")
         print(f"""
             Model name:  {args.model_name_or_path}
             Dataset:     {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
@@ -98,16 +98,24 @@ def adaptive_generation(args):
 
 
     # === Select RAG Method =====================
-    if args.rag_method == "no_retrieval":
-        model = NoRAG(args, device)
-    elif args.rag_method == "single_retrieval":
-        model = SingleRAG(args, device)
-    elif args.rag_method in ["fix_length_retrieval", "fix_sentence_retrieval"]:
-        model = FixLengthRAG(args, device)
+    if args.rag_method == 'direct_inference':
+        rag_model = DirectInference(args, device)
+    elif args.rag_method == 'cot_inference':
+        rag_model = CoTInference(args, device)
+    elif args.rag_method == "cot_single_retrieval":
+        rag_model = CoTSingleRAG(args, device)
+    elif args.rag_method == "fix_sentence_retrieval":
+        rag_model = FixSentenceRAG(args, device)
+    elif args.rag_method == "fix_length_retrieval":
+        rag_model = FixLengthRAG(args, device)
+    elif args.rag_method == 'ircot':
+        rag_model = IRCOT_RAG(args, device)
     elif args.rag_method == 'flare':
-        model = FLARE_RAG(args, device)
+        rag_model = FLARE_RAG_V1(args, device)
     elif args.rag_method == 'dragin':
-        model = DRAGIN_RAG(args, device)
+        rag_model = DRAGIN_RAG(args, device)
+    elif args.rag_method == 'self_ask':
+        rag_model = SelfAsk_RAG(args, device)
     else:
         raise NotImplementedError
 
@@ -116,28 +124,27 @@ def adaptive_generation(args):
     em_evaluation = generated_em
     accelerator.wait_for_everyone()
     with accelerator.split_between_processes(filtered_dataset) as test_dataset_shard:
-        inference_results_file_ranked = f"{args.output_dir}/inference_results_rank{accelerator.process_index}.jsonl"
+        if args.rag_method in ['flare', 'dragin']:
+            inference_results_file_ranked = f"{args.output_dir}/inference_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl"
+        else:
+            inference_results_file_ranked = f"{args.output_dir}/inference_results_rank{accelerator.process_index}.jsonl"
         with open(inference_results_file_ranked, 'w') as res_f:
             for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 5:
+                # if i == 3:
                 #     break
                 qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
                 question = question.strip()
                 if question[-1] != '?':
                     question += '?'
                 
-                cot, n_halluc, gen_path, stat = model.inference(question)
-                cot = cot.strip()
-                
-                pred_answer = ""
-                if "the answer is" not in cot:
-                    tmp = model.reinference(question, cot).strip()  
-                    pred_answer = get_answer(tmp) if "the answer is" in tmp else tmp
+                pred_answer, path = rag_model.inference(question)
+                if pred_answer:
+                    correctness_em = em_score(pred_answer, gt_answers)
+                    correctness_f1 = f1_score(pred_answer, gt_answers)
                 else:
-                    pred_answer = get_answer(cot)
-                correctness_em = em_score(pred_answer, gt_answers)
-                correctness_f1 = f1_score(pred_answer, gt_answers)
-                            
+                    correctness_em = 0
+                    correctness_f1 = {'f1': 0, 'precision': 0, 'recall': 0}
+                
                 item = {
                     "qid": qid,
                     "query": question,
@@ -145,10 +152,7 @@ def adaptive_generation(args):
                     "pred_answer": pred_answer,
                     "em": correctness_em,
                     "f1": correctness_f1,
-                    "path": cot,
-                    "stat": stat,
-                    "n_hallucination": n_halluc,
-                    "generation_path": gen_path,
+                    "path": path
                 }
                 res_f.write(json.dumps(item) + '\n')
                 em_evaluation.append(correctness_em)
@@ -160,7 +164,12 @@ def adaptive_generation(args):
 
 
 def merge_result_files(args):
-    results_shard_files = f"{args.output_dir}/inference_results_rank*.jsonl"
+    if args.rag_method in ['flare', 'dragin']:
+        results_shard_files = f"{args.output_dir}/inference_results_th{args.hallucination_threshold}_rank*.jsonl"
+    else:
+        results_shard_files = f"{args.output_dir}/inference_results_rank*.jsonl"
+    
+    # results_shard_files = f"{args.output_dir}/inference_results_rank*.jsonl"
     results_shard_files = sorted(glob.glob(results_shard_files))
     with open(args.inference_results_file, "a") as fout:
         for shard_file in results_shard_files:
@@ -172,24 +181,22 @@ def merge_result_files(args):
             os.remove(shard_file)
             print(f"Deleted shard file: {shard_file}")
 
-
-def get_stat(args):
+def get_num_retrieval(args):
     all_ret = []
     with open(args.inference_results_file, 'r') as infile:
         for line in infile:
-            stat = json.loads(line)['stat'] # (gen_count, ret_count, sent_count, token_count)
-            ret_count = stat[1]
-            if ret_count:
-                all_ret.append(ret_count)     
-    
+            path = json.loads(line)['path']
+            all_ret.append(len(path)-1)
     print(f"\n# of retrieval: {np.mean(all_ret)}")
+    
+    # TODO: different for FLARE, check whether the search_query empty
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--max_new_token', type=int, default=128) # generate_max_length
+    parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
     parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
@@ -223,10 +230,11 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='dragin', choices=[
-        'no_retrieval', 'single_retrieval',
-        'fix_length_retrieval', 'fix_sentence_retrieval',
-        'flare', 'dragin'
+    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
+        'direct_inference', 'cot_inference', 'cot_single_retrieval',
+        'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot',
+        'flare', 'dragin',
+        'self_ask', 'react', 'search_o1', 'search_r1'
     ])
     parser.add_argument('--generate_fix_length', type=int, default=25)
     parser.add_argument('--modifier_method', type=str, default='token', choices=['token', 'entity'])          # for FLARE
@@ -235,13 +243,14 @@ if __name__ == "__main__":
         'real_words', 'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens',
     ])
     parser.add_argument('--sentence_solver', type=str, default='avg', choices=['avg', 'max', 'min'])          # for FLARE
-    parser.add_argument('--hallucination_threshold', type=float, default=0.4)                                 # for FLARE & DRAGIN
+    parser.add_argument('--hallucination_threshold', type=float, default=0.08)                                 # for FLARE & DRAGIN
     parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
     parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
+    parser.add_argument('--max_iter', type=int, default=5)                                                    # for IRCoT & FLARE
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_4 (adaptive_2k)')
+    parser.add_argument('--run', type=str, default='run_0 (rag_methods_2k)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -250,32 +259,67 @@ if __name__ == "__main__":
     
     # === Files ====================
     model_ = args.model_name_or_path.split('/')[-1]
-    if args.rag_method == 'no_retrieval':
+    if args.rag_method in ['direct_inference', 'cot_inference']:
         args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}"
     else:
         args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"
     os.makedirs(args.output_dir, exist_ok=True)
-    args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
+    
+    if args.rag_method in ['flare', 'dragin']:
+        args.inference_results_file = f"{args.output_dir}/inference_results_th{args.hallucination_threshold}.jsonl"
+    else:
+        args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
     os.makedirs(os.path.dirname(args.output_dir), exist_ok=True)
     
-    ### === Define CUDA device =================== 
-    # args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
-    # if torch.cuda.is_available():
-    #     print(f"Number of available GPUs: {torch.cuda.device_count()}")
-    #     for i in range(torch.cuda.device_count()):
-    #         print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-    # else:
-    #     print("CUDA is not available. No GPUs detected.")
-        
-    
+
     ### === Run Steps ============================
     set_seed(args.seed)
-    # adaptive_generation(args)
+    rag_generation(args)
     # merge_result_files(args)
-    get_stat(args)
+    # get_num_retrieval(args)
         
-    # python run_adaptive/adaptive_generation.py
-    # accelerate launch --multi_gpu run_adaptive/adaptive_generation.py
-    # accelerate launch --multi_gpu --num_processes 2 run_adaptive/adaptive_generation.py
-    # accelerate launch --num_processes 1 run_adaptive/adaptive_generation.py
+    # python run_rag_methods/rag_generation.py
+    # accelerate launch --multi_gpu run_rag_methods/rag_generation.py
+    # accelerate launch --multi_gpu --num_processes 2 run_rag_methods/rag_generation.py
+    # accelerate launch --num_processes 1 run_rag_methods/rag_generation.py
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### === Define CUDA device =================== 
+# args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
+# if torch.cuda.is_available():
+#     print(f"Number of available GPUs: {torch.cuda.device_count()}")
+#     for i in range(torch.cuda.device_count()):
+#         print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+# else:
+#     print("CUDA is not available. No GPUs detected.")
+        
+# print(pred_answer)
+# print('----')
+# print(path)
+# print('----')
+
+# cot, n_halluc, gen_path, stat = model.inference(question)
+# cot = cot.strip()
+# pred_answer = ""
+# if "the answer is" not in cot:
+#     tmp = model.reinference(question, cot).strip()  
+#     pred_answer = get_answer(tmp) if "the answer is" in tmp else tmp
+# else:
+#     pred_answer = get_answer(cot)
+# "path": cot,
+# "stat": stat,
+# "n_hallucination": n_halluc,
+# "generation_path": gen_path,
