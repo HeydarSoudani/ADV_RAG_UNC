@@ -31,18 +31,16 @@ def mcts_evaluation(args):
             gt_answers = data['gt_answers']
             
             pred_answer = data['winner_answer']
-            em_socre = em_score(pred_answer, gt_answers)
+            # em_socre = em_score(pred_answer, gt_answers)
             # pred_answers = data['pred_answers']
             # em_socre = em_score_v2(pred_answers, gt_answers)
-            # em_socre = subem_score(pred_answer, gt_answers)
+            em_socre = subem_score(pred_answer, gt_answers)
             
             em_evaluation.append(em_socre)
             
     # === Print results ========================
     print("\nEvaluation Result:")
     print(f"EM: {np.mean(em_evaluation)*100}")
-    # with open(args.evaluate_results_file, 'w') as file:
-    #     json.dump(reuslts_dict, file, indent=4)
         
 
 if __name__ == "__main__":
@@ -52,10 +50,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
-        'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+        'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -85,7 +83,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_2 (mcts_2k_rollout4)')
+    parser.add_argument('--run', type=str, default='run_3 (mcts_2k_rollout8)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')

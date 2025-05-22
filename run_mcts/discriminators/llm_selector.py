@@ -17,7 +17,7 @@ from typing import List, Dict, Tuple
 from utils.general_utils import set_seed, read_jsonl, read_txt
 from run_rag_methods.src.correctness import normalize_answer, em_score, f1_score
 from run_searchr1.inference import get_think, get_query, get_answer, _passages2string, StopOnSequence
-from searchr1_discrimination import SemanticEquivalenceGenerator
+from run_mcts.discriminators.searchr1_as_disc import SemanticEquivalenceGenerator
 from run_mcts.sr1_critique_discrimination import _filter_long, _filter_none, _filter_specific_words, _filter_white_space
 
 

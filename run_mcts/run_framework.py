@@ -8,9 +8,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import argparse
 
 from utils.general_utils import set_seed
-from mcts_generation import mcts_generation
-from run_mcts.rc_discrimination_v2 import rc_discrimination
-from run_mcts.ragc_discrimination import ragc_discrimination
+from run_mcts.mcts_generator import mcts_generation
+from run_mcts.discriminators.reasoning_consistency_v2 import rc_discrimination
+from run_mcts.discriminators.rag_consistency import ragc_discrimination
 
 
 if __name__ == "__main__":

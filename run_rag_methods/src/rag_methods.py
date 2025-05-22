@@ -163,7 +163,7 @@ class BasicRAG:
         # === Prompt ================================
         self.user_prompt_with_context = "{examples}\n\n{documents}\nQ: {question}\nA:"
         self.user_prompt_wo_context = "{examples}\n\nQ: {question}\nA:"
-        self.user_prompt_self_ask = "{documents}Quesiton: {question}\nAre follow up questions needed here: "
+        self.user_prompt_self_ask = "{documents}Quesiton: {question}\nAre follow up questions needed here: Yes.\n"
 
     def get_top_sentence(self, text):
         sentences = [sent.text.strip() for sent in nlp(text).sents]
@@ -305,7 +305,6 @@ class FixLengthRAG(BasicRAG):
             pred_answer = get_answer(text)
         
         return pred_answer, path
-
 
 class FixSentenceRAG(BasicRAG):
     def __init__(self, args, device):
@@ -878,7 +877,7 @@ class SelfAsk_RAG(BasicRAG):
         return ""
         
     def extract_intermediate(self, text: str) -> str:
-        match = re.search(r'(.*?)\nFollow up:', text, re.DOTALL)
+        match = re.search(r'(.*?)(?:\nFollow up:|\nSo the final answer is:)', text, re.DOTALL)
         if match:
             return match.group(1).strip()
         return ""
@@ -894,72 +893,77 @@ class SelfAsk_RAG(BasicRAG):
         return pred
 
     def inference(self, question):
-        
-        follow_ups = "No." if self.single_hop else "Yes."
-        path, text = [], ""
+        # follow_ups = "No." if self.single_hop else "Yes."
         
         # Initial retrieval
         search_query = question
-        search_docs = self.retriever.search(search_query)
-        path.append({'search_query': search_query, 'docs': search_docs, 'think': None})
-        
-        for idx in range(self.args.max_iter):
-            input_prompt = self.user_prompt_self_ask.format(
-                documents = self.documents2string(search_docs),
+        cur_search_docs = self.retriever.search(search_query)
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": self.user_prompt_self_ask.format(
+                documents = self.documents2string(cur_search_docs),
                 question=question
-            )
-            input_prompt += f"{follow_ups}\n{text}"
-            messages = [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": input_prompt}
-            ]
+            )}
+        ]
+
+        path, text = [], ""
+        for idx in range(self.args.max_iter):
+            output, output_text = self.generator.generate(messages, self.generator.selfask_stopping_criteria)
+            intermediate_ans = self.extract_intermediate(output_text)
+            path.append({'search_query': search_query, 'docs': cur_search_docs, 'think': intermediate_ans})
+            
             # print(self.system_prompt)
             # print(input_prompt)
             # print('-')
-            _, output_text = self.generator.generate(messages, self.generator.selfask_stopping_criteria)
             # print(output_text)
+            # print('-')
+            # print(intermediate_ans)
             # print('-----')
-            intermediate_ans = self.extract_intermediate(output_text)
-            path.append({'search_query': search_query, 'docs': search_docs, 'think': intermediate_ans})
                 
-            if ("So the final answer is:" in output_text) or (idx+1 == self.args.max_iter):
-                # print('a')
+            if ("So the final answer is:" in output_text):
                 text += output_text
                 break
-        
+            
             if intermediate_ans:
                 text += f"{intermediate_ans}\n"
         
+            if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.args.max_iter):
+                break # Don't perform another retrieval or prompt construction
+        
             search_query = self.extract_follow_up(output_text)
             if search_query:
+                cur_search_docs = self.retriever.search(search_query)
                 text += f"Follow up: {search_query}\nIntermediate answer: "
-                search_docs = self.retriever.search(search_query)
-                
-        # Regenerate the last sentence if it is needed
-        if "So the final answer is:" not in text:
-            text += "\nSo the final answer is:"
-            docs_tmp = path[-1]['docs']
-            input_prompt = self.user_prompt_self_ask.format(
-                documents = self.documents2string(docs_tmp),
-                question=question
-            )
-            input_prompt += f"{follow_ups}\n{text}"
+            
             messages = [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": input_prompt}
+                {"role": "user", "content": self.user_prompt_self_ask.format(
+                    documents = self.documents2string(cur_search_docs),
+                    question=question
+                ) + f"\n{text}"}
+            ]
+        
+        
+        # Regenerate the last sentence if it is needed
+        if "So the final answer is:" not in text:
+            text += "So the final answer is: "
+            cur_search_docs = path[-1]['docs']
+            
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": self.user_prompt_self_ask.format(
+                    documents = self.documents2string(cur_search_docs),
+                    question=question
+                ) + f"\n{text}"}
             ]
             _, output_text = self.generator.generate(messages)
             pred_answer = self.extract_final_answer(output_text) if self.extract_final_answer(output_text) else output_text       
             path.append({'think': f'So the final answer is: {output_text}'})
         else:
-            pred_answer = self.extract_final_answer(output_text)
-            # print('b')
+            pred_answer = self.extract_final_answer(text)
 
-        # print(pred_answer)
-    
         return pred_answer, path
-   
-   
+
 class SearchR1_RAG(BasicRAG): 
     def __init__(self, args, device):
         super().__init__(args, device)
@@ -1001,8 +1005,11 @@ If you find no further external knowledge needed, you can directly provide the a
         
         path, cnt = [], 0
         while True:
-            output_, output_text = self.generator.generate(messages)
-            
+            # print(input_prompt)
+            output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
+            # print('-')
+            # print(output_text)
+            # print('----')
             if output_[-1].item() in self.generator.curr_eos:
                 break
         
@@ -1021,6 +1028,8 @@ If you find no further external knowledge needed, you can directly provide the a
 
             search_text = self.curr_search_template.format(output_text=output_text, search_results=search_results)
             input_prompt += search_text
+            messages = [{"role": "user", "content": input_prompt}]
+            
             cnt += 1
 
         one_step_think = self.get_think(output_text)

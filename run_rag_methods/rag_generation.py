@@ -15,7 +15,7 @@ from accelerate.utils import gather_object
 
 from utils.general_utils import set_seed
 from run_rag_methods.src.rag_methods import *
-from run_rag_methods.src.correctness import em_score, f1_score
+from run_rag_methods.src.correctness import em_score, subem_score, f1_score
 
 
 def get_answer(text):
@@ -116,6 +116,8 @@ def rag_generation(args):
         rag_model = DRAGIN_RAG(args, device)
     elif args.rag_method == 'self_ask':
         rag_model = SelfAsk_RAG(args, device)
+    elif args.rag_method == 'search_r1':
+        rag_model = SearchR1_RAG(args, device)
     else:
         raise NotImplementedError
 
@@ -130,7 +132,7 @@ def rag_generation(args):
             inference_results_file_ranked = f"{args.output_dir}/inference_results_rank{accelerator.process_index}.jsonl"
         with open(inference_results_file_ranked, 'w') as res_f:
             for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 3:
+                # if i == 5:
                 #     break
                 qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
                 question = question.strip()
@@ -189,21 +191,43 @@ def get_num_retrieval(args):
             all_ret.append(len(path)-1)
     print(f"\n# of retrieval: {np.mean(all_ret)}")
     
-    # TODO: different for FLARE, check whether the search_query empty
+    # TODO: different for FLARE and DRAGIN, check whether the search_query empty
+
+def evaluate(args):
+    em_full_evaluation, em_sub_evaluation = [], []
+    with open(args.inference_results_file, 'r') as infile:
+        for line in infile:
+            data = json.loads(line)
+            gt_answers = data['gt_answers']
+            pred_answer = data['pred_answer']
+            if pred_answer:
+                em_socre_full = em_score(pred_answer, gt_answers)
+                em_socre_sum = subem_score(pred_answer, gt_answers)
+            else:
+                em_socre_full = 0
+                em_socre_sum = 0
+            em_full_evaluation.append(em_socre_full)
+            em_sub_evaluation.append(em_socre_sum)
+    
+    # === Print results ========================
+    print("\nEvaluation Result:")
+    print(f"EM (full): {np.mean(em_full_evaluation)*100}")
+    print(f"EM (sub): {np.mean(em_sub_evaluation)*100}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
+    # parser.add_argument('--model_name_or_path', type=str, default="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo")
     parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
-        'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
+    parser.add_argument('--dataset', type=str, default='nq', choices=[
+        'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
     
@@ -230,7 +254,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
+    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot',
         'flare', 'dragin',
@@ -277,11 +301,15 @@ if __name__ == "__main__":
     rag_generation(args)
     # merge_result_files(args)
     # get_num_retrieval(args)
+    # evaluate(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu --num_processes 2 run_rag_methods/rag_generation.py
     # accelerate launch --num_processes 1 run_rag_methods/rag_generation.py
+
+
+
 
 
 
