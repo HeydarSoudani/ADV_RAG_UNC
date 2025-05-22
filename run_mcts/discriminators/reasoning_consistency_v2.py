@@ -755,6 +755,7 @@ def merge_result_files(args):
             os.remove(shard_file)
             print(f"Deleted shard file: {shard_file}")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model

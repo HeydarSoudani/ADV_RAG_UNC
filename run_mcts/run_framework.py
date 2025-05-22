@@ -26,6 +26,7 @@ if __name__ == "__main__":
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
+    parser.add_argument('--fewshot', type=int, default=6)
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
@@ -58,7 +59,7 @@ if __name__ == "__main__":
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
     
-    # MCTS ---
+    # MCTS: Generator ---
     parser.add_argument("--enable_critique", action="store_true", help="")
     parser.add_argument("--enable_doc_generation", action="store_true", help="")
     parser.add_argument("--verbose", action="store_true", help="extra login")
@@ -72,7 +73,10 @@ if __name__ == "__main__":
     parser.add_argument("--mcts_num_last_votes", type=int, default=5)
     parser.add_argument("--enable_potential_score", action="store_true")
     
-    # Discrimination ---
+    # MCTS: Discrimination ---
+    parser.add_argument('--discriminator_method', type=str, default='rag_consistency', choices=[
+        'reasoning_consistency', 'rag_consistency'
+    ])
     parser.add_argument("--cutoff_rollout", type=int, default=-1)
     parser.add_argument("--start_idx", type=int, default=-1)
     parser.add_argument("--end_idx", type=int, default=-1)
@@ -93,10 +97,7 @@ if __name__ == "__main__":
     model_ = args.model_name_or_path.split('/')[-1]
     output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     args.generation_trees_results_dir = f'{output_dir}/generation_trees'
-    args.statistics_results_file = f"{output_dir}/statistics_results.jsonl"
-    args.discriminate_results_dir = f"{output_dir}"
-    args.discriminate_results_file = f"{output_dir}/ragc_discriminate_results.jsonl"
-    args.evaluate_results_file = f"{output_dir}/evaluate_results.jsonl"
+    args.discrimination_results_file = f"{args.output_dir}/discrimination_results_{args.discriminator_method}.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
     
     # === Prompt files ===========================
@@ -106,9 +107,14 @@ if __name__ == "__main__":
     ### === Run Steps ============================
     set_seed(args.seed)
     mcts_generation(args)
-    # rc_discrimination(args)
-    # ragc_discrimination(args)
+    
+    if args.discriminator_method == "reasoning_consistency":
+        rc_discrimination(args)
+    elif args.discriminator_method == "rag_consistency":
+        ragc_discrimination(args)
+    
     # mcts_evaluation(args)
+    
     
     # python run_mcts/run_framework.py
     # accelerate launch --multi_gpu run_mcts/run_framework.py

@@ -12,7 +12,7 @@ from tqdm import tqdm, trange
 from accelerate import Accelerator
 
 from utils.general_utils import set_seed
-from run_searchr1.retrieval_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
+from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from run_mcts.src.generate_node import Generator
 from run_mcts.src.MCTS_backbone import MCTS_Searcher
 from run_mcts.src.MCTS_reasoning_v2 import Reasoning_MCTS_Node
