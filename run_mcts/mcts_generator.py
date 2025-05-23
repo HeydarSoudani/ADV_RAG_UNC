@@ -109,8 +109,8 @@ def mcts_generation(args):
             question = question.strip()
             if question[-1] != '?':
                 question += '?'
-            # if i == 3:
-            #     break
+            if i == 3:
+                break
             #! build an MCTS searcher
             mcts_searcher = MCTS_Searcher(
                 exploration_weight=args.mcts_exploration_weight,
@@ -210,11 +210,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='2wikimultihopqa', choices=[
+    parser.add_argument('--dataset', type=str, default='nq', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
     # Retriever
@@ -243,12 +243,15 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_23 (mcts_cna_roll4)')
+    parser.add_argument('--run', type=str, default='run_2 (mcts_2k_rollout4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
     
     # MCTS ---
+    parser.add_argument('--discriminator_method', type=str, default='reasoning_consistency', choices=[
+        'majority_voting', 'best_of_n', 'reasoning_consistency', 'rag_consistency', 'llm_selector'
+    ])
     parser.add_argument("--enable_critique", action="store_true", help="")
     parser.add_argument("--enable_doc_generation", action="store_true", help="")
     parser.add_argument("--verbose", action="store_true", help="extra login")
@@ -306,8 +309,8 @@ if __name__ == "__main__":
     mcts_generation(args)
     
     
-    # python run_mcts/mcts_generation.py
-    # accelerate launch --multi_gpu  run_mcts/mcts_generation.py
+    # python run_mcts/mcts_generator.py
+    # accelerate launch --multi_gpu  run_mcts/mcts_generator.py
     
 
 

@@ -25,7 +25,6 @@ def get_answer(text):
     pred = re.sub(pattern, "", pred)
     return pred
 
-
 def rag_generation(args):
     # === MultiGPU setup =======================
     accelerator = Accelerator()
@@ -164,7 +163,6 @@ def rag_generation(args):
         print("\nEvaluation Result:")
         print(f"EM: {np.mean(em_evaluation_gathered)*100}")
 
-
 def merge_result_files(args):
     if args.rag_method in ['flare', 'dragin']:
         results_shard_files = f"{args.output_dir}/inference_results_th{args.hallucination_threshold}_rank*.jsonl"
@@ -299,9 +297,9 @@ if __name__ == "__main__":
     ### === Run Steps ============================
     set_seed(args.seed)
     rag_generation(args)
-    # merge_result_files(args)
-    # get_num_retrieval(args)
-    # evaluate(args)
+    merge_result_files(args)
+    get_num_retrieval(args)
+    evaluate(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py

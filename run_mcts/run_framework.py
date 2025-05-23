@@ -9,8 +9,7 @@ import argparse
 
 from utils.general_utils import set_seed
 from run_mcts.mcts_generator import mcts_generation
-from run_mcts.discriminators.reasoning_consistency_v2 import rc_discrimination
-from run_mcts.discriminators.rag_consistency import ragc_discrimination
+from run_mcts.mcts_discriminator import mcts_discrimination
 
 
 if __name__ == "__main__":
@@ -74,8 +73,8 @@ if __name__ == "__main__":
     parser.add_argument("--enable_potential_score", action="store_true")
     
     # MCTS: Discrimination ---
-    parser.add_argument('--discriminator_method', type=str, default='rag_consistency', choices=[
-        'reasoning_consistency', 'rag_consistency'
+    parser.add_argument('--discriminator_method', type=str, default='reasoning_consistency', choices=[
+        'majority_voting', 'best_of_n', 'reasoning_consistency', 'rag_consistency', 'llm_selector'
     ])
     parser.add_argument("--cutoff_rollout", type=int, default=-1)
     parser.add_argument("--start_idx", type=int, default=-1)
@@ -107,14 +106,7 @@ if __name__ == "__main__":
     ### === Run Steps ============================
     set_seed(args.seed)
     mcts_generation(args)
-    
-    if args.discriminator_method == "reasoning_consistency":
-        rc_discrimination(args)
-    elif args.discriminator_method == "rag_consistency":
-        ragc_discrimination(args)
-    
-    # mcts_evaluation(args)
-    
+    mcts_discrimination(args)
     
     # python run_mcts/run_framework.py
     # accelerate launch --multi_gpu run_mcts/run_framework.py
