@@ -5,9 +5,9 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import math
 import torch
+import transformers
 from typing import Dict
 from copy import deepcopy
-import transformers
 
 from run_mcts.src.discriminator_methods.basic_discriminator import BasicDiscriminator, Candidate
 from run_rag_methods.src.rag_methods import passages2string
@@ -285,7 +285,6 @@ class ReasoningConsistency(BasicDiscriminator): # Adopted for RAG
         return winner, filtered_answer2score
     
     def inference(self, question, gt_answers, paths):
-        # pred_answer, candidates = None, None
         all_candidates = []
         for trace_id, trace in enumerate(paths):
             trace_ = trace["trace"]
@@ -315,7 +314,6 @@ class ReasoningConsistency(BasicDiscriminator): # Adopted for RAG
         most_confident_answer = max(answer2candidates.keys(), key=lambda x: answer2confidence[x])
         highest_confidence = answer2confidence[most_confident_answer]
         assert highest_confidence > 0
-        # print(answer2confidence)
         
         # === Decision
         if highest_confidence > self.args.threshold:
@@ -325,7 +323,6 @@ class ReasoningConsistency(BasicDiscriminator): # Adopted for RAG
         else:
             winner_answer_, answer2score  = self.select(question, all_candidates, gt_answers)
             winner_answer = winner_answer_.final_answer if winner_answer_ != None else ''
-        # candidates = [(c.final_answer, answer2confidence[c]) for c in all_candidates]
         
         return winner_answer, answer2score
 

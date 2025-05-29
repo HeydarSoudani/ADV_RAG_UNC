@@ -83,8 +83,8 @@ def mcts_discrimination(args):
         discriminate_results_file_ranked = f"{args.output_dir}/discrimination_results_{args.discriminator_method}_rank{accelerator.process_index}.jsonl"
         with open(discriminate_results_file_ranked, 'w', encoding='utf-8') as res_f:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                if i == 10:
-                    break
+                # if i == 10:
+                #     break
                 # === Generating answer candidates
                 final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
                 all_traces = read_jsonl(final_solutions_file)
@@ -95,9 +95,6 @@ def mcts_discrimination(args):
                     question += '?'
                 
                 pred_answer, candidates = discriminator.inference(question, gt_answers, all_traces)
-                
-                print(pred_answer)
-                print(candidates)
                 
                 if pred_answer:
                     correctness_em = em_score(pred_answer, gt_answers)
@@ -212,7 +209,7 @@ if __name__ == "__main__":
     parser.add_argument("--rc_n_completions", type=int, default=1)
     parser.add_argument("--rc_criteria", type=str, default="freq", choices=["freq", "reward"])
     parser.add_argument("--threshold", type=float, default=0.999)
-    parser.add_argument("--extend_rc_mode", type=str, default="original", choices=["original", "BoN", "majority_vote"])
+    # parser.add_argument("--extend_rc_mode", type=str, default="original", choices=["original", "BoN", "majority_vote"])
     parser.add_argument("--best_of", type=int, default=5)
     
     args = parser.parse_args()
@@ -229,8 +226,8 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    mcts_discrimination(args)
-    # merge_result_files(args)
+    # mcts_discrimination(args)
+    merge_result_files(args)
     
     # python run_mcts/mcts_discriminator.py
     # accelerate launch --multi_gpu run_mcts/mcts_discriminator.py

@@ -177,6 +177,7 @@ class BasicDiscriminator:
             answer2candidates, answer2confidence, _ = self.group_candidates_by_answer(
                 question, unfiltered_candidates, self.args.rc_criteria
             )
+            answer2score = dict(answer2confidence)
             if answer2confidence:
                 most_confident_answer = max(answer2confidence.keys(), key=lambda x: answer2confidence[x], default=None)
                 winner = answer2candidates[most_confident_answer][0]
@@ -185,6 +186,7 @@ class BasicDiscriminator:
                 winner = None
         elif len(filtered_candidates) == 1:
             winner = filtered_candidates[0]
+            answer2score = {winner.final_answer: 1.0}
             print(f"==> Winner answer: {winner.final_answer}\n")
         # elif not any(self.se_model.check_answers_equiv(question, c.final_answer, gt_answer[0]) for c in filtered_candidates):
         #     winner = None
@@ -196,7 +198,8 @@ class BasicDiscriminator:
             winner = next(
                 c for c in filtered_candidates if self.se_model.check_answers_equiv(question, c.final_answer, winner_answer)
             )
-        return winner, filtered_answer2score
+            answer2score = filtered_answer2score
+        return winner, answer2score
 
     def _calculate_scores(self, question:str, unfiltered_candidates: list[Candidate], filtered_candidates: list[Candidate]) -> dict:
         _, filtered_answer2confidence, filtered_answer2cnt = self.group_candidates_by_answer(
