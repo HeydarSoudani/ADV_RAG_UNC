@@ -59,7 +59,7 @@ class BasicDiscriminator:
         return candidates
 
     def _filter_long(self, candidates: list[Candidate]) -> list[Candidate]:
-        candidates = [c for c in candidates if len(c.final_answer) <= 40]
+        candidates = [c for c in candidates if len(c.final_answer) <= 80]
         return candidates
 
     def _filter_white_space(self, candidates: list[Candidate]) -> list[Candidate]:

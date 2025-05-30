@@ -309,11 +309,9 @@ if __name__ == "__main__":
     
     # === Files ====================
     model_ = args.model_name_or_path.split('/')[-1]
-    output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
-    args.generation_trees_results_dir = f'{output_dir}/generation_trees'
-    args.discriminate_results_file = f"{output_dir}/discriminate_results.jsonl"
-    args.evaluate_results_file = f"{output_dir}/evaluate_results.jsonl"
-    args.statistics_results_file = f"{output_dir}/statistics_results.jsonl"
+    args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
+    args.generation_trees_results_dir = f'{args.output_dir}/generation_trees'
+    args.discrimination_results_file = f"{args.output_dir}/discrimination_results_{args.discriminator_method}.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
     
     # === Prompt files =============

@@ -208,15 +208,18 @@ class MajorityVoting(BasicDiscriminator):
             final_answer = trace_[last_depth_key][last_node_type]["answer"]
             final_answer_reward = trace_[last_depth_key][last_node_type]["node_reward"]
             
-            masked_trace_text_list = self.rag_mask_solution_trace(
-                trace_text,
-                num_return=self.args.num_masked_solution_traces,
-                left_boundary=self.args.mask_left_boundary,
-                right_boundary=self.args.mask_right_boundary,
-            )
-            
+            # masked_trace_text_list = self.rag_mask_solution_trace(
+            #     trace_text,
+            #     num_return=self.args.num_masked_solution_traces,
+            #     left_boundary=self.args.mask_left_boundary,
+            #     right_boundary=self.args.mask_right_boundary,
+            # )
+            # candidate = Candidate(
+            #     trace_text, deepcopy(masked_trace_text_list),
+            #     final_answer, trace_id, trace_reward=final_answer_reward,
+            # )
             candidate = Candidate(
-                trace_text, deepcopy(masked_trace_text_list),
+                trace_text, [],
                 final_answer, trace_id, trace_reward=final_answer_reward,
             )
             all_candidates.append(candidate)

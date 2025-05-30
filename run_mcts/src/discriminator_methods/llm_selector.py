@@ -11,7 +11,7 @@ class LlmSelector(BasicDiscriminator):
     def __init__(self, args, device):
         super().__init__(args, device)
         
-    def inference(self, paths):
+    def inference(self, question, gt_answers, paths):
         pred_answer, candidates = None, None
         
         pred_answer, candidates

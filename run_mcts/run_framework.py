@@ -19,10 +19,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='nq', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
@@ -53,7 +53,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_2 (mcts_2k_rollout4)')
+    parser.add_argument('--run', type=str, default='run_4 (mcts_500_rollout4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -94,9 +94,9 @@ if __name__ == "__main__":
     
     # === Files ==================================
     model_ = args.model_name_or_path.split('/')[-1]
-    output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
-    args.generation_trees_results_dir = f'{output_dir}/generation_trees'
-    args.discrimination_results_file = f"{output_dir}/discrimination_results_{args.discriminator_method}.jsonl"
+    args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
+    args.generation_trees_results_dir = f'{args.output_dir}/generation_trees'
+    args.discrimination_results_file = f"{args.output_dir}/discrimination_results_{args.discriminator_method}.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
     
     # === Prompt files ===========================
@@ -105,8 +105,8 @@ if __name__ == "__main__":
     
     ### === Run Steps ============================
     set_seed(args.seed)
-    # mcts_generation(args)
-    mcts_discrimination(args)
+    mcts_generation(args)
+    # mcts_discrimination(args)
     
     # python run_mcts/run_framework.py
     # accelerate launch --multi_gpu run_mcts/run_framework.py
