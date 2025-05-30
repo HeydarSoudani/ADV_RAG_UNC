@@ -196,7 +196,8 @@ class BasicDiscriminator:
             winner_answer = max(filtered_answer2score.keys(), key=lambda x: filtered_answer2score[x])
             print(f"==> Winner answer: {winner_answer}")
             winner = next(
-                c for c in filtered_candidates if self.se_model.check_answers_equiv(question, c.final_answer, winner_answer)
+                (c for c in filtered_candidates if self.se_model.check_answers_equiv(question, c.final_answer, winner_answer)), 
+                None
             )
             answer2score = filtered_answer2score
         return winner, answer2score

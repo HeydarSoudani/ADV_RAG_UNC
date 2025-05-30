@@ -5,7 +5,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import re
 import spacy
 import torch
-import random
 import numpy as np
 from math import exp
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
@@ -17,20 +16,22 @@ from run_rag_methods.src.templetes import (
     SYSTEM_PROMPT_DRAGIN,
     SELF_ASK_PROMPT_SINGLE_HOP, SELF_ASK_PROMPT_MULTI_HOP
 )
+from utils.general_utils import passages2string
 
 nlp = spacy.load("en_core_web_sm")
 
 
-def passages2string(retrieval_result):
-    format_reference = ''
-    for idx, doc_item in enumerate(retrieval_result):
-        content = doc_item['contents']
-        title = content.split("\n")[0]
-        text = "\n".join(content.split("\n")[1:])
-        # format_reference += f"Wikipedia Title: {title}\n{text}\n\n"
-        format_reference += f"Doc {idx+1} (Title: {title}) {text}\n"
-    return format_reference
+# def passages2string(retrieval_result):
+#     format_reference = ''
+#     for idx, doc_item in enumerate(retrieval_result):
+#         content = doc_item['contents']
+#         title = content.split("\n")[0]
+#         text = "\n".join(content.split("\n")[1:])
+#         # format_reference += f"Wikipedia Title: {title}\n{text}\n\n"
+#         format_reference += f"Doc {idx+1} (Title: {title}) {text}\n"
+#     return format_reference
 
+# Adaptive RAG style
 def get_answer(text):
     parts = text.split("the answer is: ", 1)  # Split at the first occurrence
     if len(parts) <= 1:
@@ -973,7 +974,6 @@ You must conduct reasoning inside <think> and </think> first every time you get 
 After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. \
 You can search as many times as your want. \
 If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}\n"""
-    
     
     def get_think(self, text):
         pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)

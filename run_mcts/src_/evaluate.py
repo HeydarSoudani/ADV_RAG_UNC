@@ -2,7 +2,7 @@ import torch
 import random
 from collections import defaultdict
 from typing import List, Dict, Tuple
-from utils.adaptive_utils import fix_tokenizer_chat
+from archive.adaptive_utils import fix_tokenizer_chat
 
 
 class Evaluator:

@@ -5,6 +5,8 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
 import torch
+import shutil
+import random
 import argparse
 import datasets
 import transformers
@@ -104,13 +106,14 @@ def mcts_generation(args):
     accelerator.wait_for_everyone()
     with accelerator.split_between_processes(filtered_dataset) as test_dataset_shard:
         for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
+            # if i == 3:
+            #     break
             qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
             print(f"[Rank {accelerator.process_index}] Generating MCTS for query {qid} ...")
             question = question.strip()
             if question[-1] != '?':
                 question += '?'
-            if i == 3:
-                break
+            
             #! build an MCTS searcher
             mcts_searcher = MCTS_Searcher(
                 exploration_weight=args.mcts_exploration_weight,
@@ -202,6 +205,28 @@ def mcts_generation(args):
     # with open(args.statistics_results_file, 'w') as file:
     #     json.dump(reuslts_dict, file, indent=4)
 
+def subsample_generation(args):
+    sample_size = 500
+    src_dir = args.generation_trees_results_dir
+    
+    # === Output file 
+    # run_ = "run_4 (mcts_500_rollout4)"
+    run_ = "run_5 (mcts_500_rollout8)"
+    model_ = args.model_name_or_path.split('/')[-1]
+    output_dir = f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
+    dst_dir = f'{output_dir}/generation_trees'
+    os.makedirs(dst_dir, exist_ok=True)
+
+    # 
+    folders = [f for f in os.listdir(src_dir)]
+    sampled_folders = random.sample(folders, sample_size)
+    
+    for folder in tqdm(sampled_folders):
+        src_path = os.path.join(src_dir, folder)
+        dst_path = os.path.join(dst_dir, folder)
+        shutil.copytree(src_path, dst_path)
+        # print(f"Copied {folder} to {dst_dir}")
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -210,11 +235,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='nq', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
     # Retriever
@@ -243,7 +268,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_2 (mcts_2k_rollout4)')
+    parser.add_argument('--run', type=str, default='run_3 (mcts_2k_rollout8)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -292,8 +317,8 @@ if __name__ == "__main__":
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
     
     # === Prompt files =============
-    args.query_decomposition_prompt_file = "prompts_mcts/query_decomposition_prompt_template.txt"
-    args.semantic_equivalence_prompt_file = "prompts_mcts/semantic_equivalence_prompt_template.txt"
+    args.query_decomposition_prompt_file = "run_mcts/prompts/query_decomposition_prompt_template.txt"
+    args.semantic_equivalence_prompt_file = "run_mcts/prompts/semantic_equivalence_prompt_template.txt"
     
     # === Define CUDA device =======
     args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
@@ -306,7 +331,8 @@ if __name__ == "__main__":
         
     ### === Run Steps =============
     set_seed(args.seed)
-    mcts_generation(args)
+    # mcts_generation(args)
+    subsample_generation(args)
     
     
     # python run_mcts/mcts_generator.py

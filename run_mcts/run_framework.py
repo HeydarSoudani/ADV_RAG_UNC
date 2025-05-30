@@ -19,10 +19,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='nq', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
@@ -96,16 +96,16 @@ if __name__ == "__main__":
     model_ = args.model_name_or_path.split('/')[-1]
     output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     args.generation_trees_results_dir = f'{output_dir}/generation_trees'
-    args.discrimination_results_file = f"{args.output_dir}/discrimination_results_{args.discriminator_method}.jsonl"
+    args.discrimination_results_file = f"{output_dir}/discrimination_results_{args.discriminator_method}.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
     
     # === Prompt files ===========================
-    args.query_decomposition_prompt_file = "prompts_mcts/query_decomposition_prompt_template.txt"
-    args.semantic_equivalence_prompt_file = "prompts_mcts/semantic_equivalence_prompt_template.txt"
+    args.query_decomposition_prompt_file = "run_mcts/prompts/query_decomposition_prompt_template.txt"
+    args.semantic_equivalence_prompt_file = "run_mcts/prompts/semantic_equivalence_prompt_template.txt"
     
     ### === Run Steps ============================
     set_seed(args.seed)
-    mcts_generation(args)
+    # mcts_generation(args)
     mcts_discrimination(args)
     
     # python run_mcts/run_framework.py

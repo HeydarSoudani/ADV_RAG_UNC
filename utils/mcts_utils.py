@@ -1,8 +1,8 @@
 import math
-from typing import Dict, Tuple
+from typing import Dict
 from enum import Enum, unique
 from colorama import Fore, Style
-from run_searchr1.inference import _passages2string
+from .general_utils import passages2string
 
 def verbose_print(s: str, verbose: bool):
     if verbose:
@@ -218,7 +218,7 @@ def concat_solution_trace_v2(solution_trace: Dict[int, Dict[str, str]]):
         elif node_type == 'think_search':
             solution_trace_str += f'<think> {solution_item[node_type]['think']} </think>\n'
             solution_trace_str += f'<search> {solution_item[node_type]['search_query']} </search>\n'
-            solution_trace_str += f'<information> {_passages2string(solution_item[node_type]['retrieved_documents'])}<\information>\n'
+            solution_trace_str += f'<information> {passages2string(solution_item[node_type]['retrieved_documents'])}<\information>\n'
         
         elif node_type == 'think_answer':
             solution_trace_str += f'<think> {solution_item[node_type]['think']} </think>\n'

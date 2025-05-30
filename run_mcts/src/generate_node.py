@@ -7,11 +7,14 @@ import spacy
 import torch
 import numpy as np
 import transformers
-from typing import List, Dict, Tuple
+from typing import List, Dict
 
-from run_searchr1.inference import get_think, get_query, get_answer, get_critique, get_document, _passages2string, StopOnSequence, _passages2string_v2
-from utils.general_utils import read_txt
-from utils.adaptive_utils import fix_tokenizer_chat
+from utils.general_utils import (
+    read_txt,
+    fix_tokenizer_chat,
+    get_think, get_query, get_answer, get_critique, get_document, passages2string, passages2string_v2
+)
+from run_rag_methods.src.generators import StopOnSequence
 # from run_mcts.src.uncertainty_estimator import UncertaintyEstimator
 # from run_mcts.src.passege_utility import PassageUtility
 
@@ -467,19 +470,19 @@ class Generator:
                 input_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
                 docs = solution_item[node_type]['generated_documents']
                 if len(docs) > 0: # any(s != '' for s in docs)
-                    input_text += f"<information> {_passages2string_v2(docs)}</information>\n"
+                    input_text += f"<information> {passages2string_v2(docs)}</information>\n"
             elif node_type == 'think_search':
                 input_text += f"<think> {solution_item[node_type]['think']} </think>\n"
                 input_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
                 docs = solution_item[node_type]['retrieved_documents']
                 if len(docs) > 0:
-                    input_text += f"<information> {_passages2string(docs)}</information>\n"
+                    input_text += f"<information> {passages2string(docs)}</information>\n"
             elif node_type == 'critique_search':
                 input_text += f"<critique> {solution_item[node_type]['critique']} </critique>\n"
                 input_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
                 docs = solution_item[node_type]['retrieved_documents']
                 if len(docs) > 0:
-                    input_text += f"<information> {_passages2string(docs)}</information>\n"
+                    input_text += f"<information> {passages2string(docs)}</information>\n"
             
         return input_text
     
@@ -503,7 +506,7 @@ class Generator:
                 input_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
                 docs = solution_item[node_type]['retrieved_documents']
                 if len(docs) > 0:
-                    input_text += f"<information> {_passages2string(docs)}</information>\n"
+                    input_text += f"<information> {passages2string(docs)}</information>\n"
             
         return input_text
     
@@ -519,13 +522,13 @@ class Generator:
                 input_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
                 docs = solution_item[node_type]['retrieved_documents']
                 if len(docs) > 0:
-                    input_text += f"<information> {_passages2string(docs)}</information>\n"
+                    input_text += f"<information> {passages2string(docs)}</information>\n"
             if node_type == 'critique_search':
                 input_text += f"<critique> {solution_item[node_type]['critique']} </critique>\n"
                 input_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
                 docs = solution_item[node_type]['retrieved_documents']
                 if len(docs) > 0:
-                    input_text += f"<information> {_passages2string(docs)}</information>\n"
+                    input_text += f"<information> {passages2string(docs)}</information>\n"
             if node_type == 'think_answer':
                 input_text += f"<think> {solution_item[node_type]['think']} </think>\n"
                 input_text += f"<answer> {solution_item[node_type]['answer']} </answer>\n"    

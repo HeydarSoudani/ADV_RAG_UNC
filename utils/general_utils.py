@@ -1,4 +1,6 @@
+import re
 import json
+import copy
 import torch
 import random, os
 import numpy as np
@@ -22,7 +24,6 @@ def set_seed(seed):
     os.environ['PYTHONHASHSEED'] = str(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    
 
 def read_txt(file_path):
     assert str(file_path).endswith(".txt")
@@ -44,6 +45,110 @@ def read_jsonl(file_path):
                 data.append(json.loads(line))
     return data
 
+
+def check_system_prompt_support(tokenizer):
+    chat = [{"role": "system", "content": 'Test'},]
+    try:
+        tokenizer.apply_chat_template(chat, tokenize=False)
+        return True
+    except:
+        return False
+
+def fix_tokenizer_chat(tokenizer, chat):
+    #tokenizer = copy.deepcopy(tokenizer)
+    chat = copy.deepcopy(chat)
+    if tokenizer.chat_template == None:
+        tokenizer.chat_template ='''{%- for message in messages %}
+    {%- if message['role'] == 'user' %}
+        {{ message['content'].strip() + '\n' }}
+    {%- elif message['role'] == 'system' %}
+        {{ message['content'].strip() + '\n' }}
+    {%- elif message['role'] == 'assistant' %}
+        {{ message['content'].strip() + '\n' }}
+    {%- endif %}
+{%- endfor %}'''.strip()
+    else:
+        if check_system_prompt_support(tokenizer) == False:
+            #replace system prompt with the next user prompt
+            for i in range(len(chat)):
+                if chat[i]['role'] == 'system':
+                    try:
+                        if chat[i+1]['role'] == 'user':
+                            chat[i]['role'] = 'user'
+                            chat[i]['content'] = chat[i]['content'] + ' ' + chat[i+1]['content']
+                            chat[i+1]['role'] = 'popped'
+                        else:
+                            chat[i]['role'] = 'user'
+                        
+                    except:
+                        chat[i]['role'] = 'user'
+            #remove popped elements
+            chat = [chat[i] for i in range(len(chat)) if chat[i]['role'] != 'popped']
+                      
+    return tokenizer, chat
+
+
+# === Following SearchR1 =====
+def get_think(text):
+    pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+    matches = pattern.findall(text)
+    if matches:
+        return matches[-1]
+    else:
+        return None
+
+def get_query(text):
+    pattern = re.compile(r"<search>(.*?)</search>", re.DOTALL)
+    matches = pattern.findall(text)
+    if matches:
+        return matches[-1]
+    else:
+        return None
+
+def get_answer(text):
+    pattern = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
+    matches = pattern.findall(text)
+    if matches:
+        return matches[-1]
+    else:
+        return None
+    
+
+def get_document(text):
+    pattern = re.compile(r"<document>(.*?)</document>", re.DOTALL)
+    matches = pattern.findall(text)
+    if matches:
+        return matches[-1]
+    else:
+        return None
+
+def get_critique(text):
+    pattern = re.compile(r"<critique>(.*?)</critique>", re.DOTALL)
+    matches = pattern.findall(text)
+    if matches:
+        return matches[-1]
+    else:
+        return None
+
+def passages2string(retrieval_result):
+    format_reference = ''
+    for idx, doc_item in enumerate(retrieval_result):       
+        content = doc_item['contents']
+        # content = doc_item['document']['contents']
+        title = content.split("\n")[0]
+        text = "\n".join(content.split("\n")[1:])
+        format_reference += f"Doc {idx+1} (Title: {title}) {text}\n"
+    return format_reference
+
+def passages2string_v2(retrieval_result):
+    # print(retrieval_result)
+    format_reference = ''
+    for idx, text in enumerate(retrieval_result):
+        format_reference += f"Doc {idx+1} {text}\n"
+    return format_reference
+
+
+# ============================
 
 def check_entailment(
     model_for_entailment: PreTrainedModel,
