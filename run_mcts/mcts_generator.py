@@ -17,7 +17,7 @@ from utils.general_utils import set_seed
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from run_mcts.src.generate_node import Generator
 from run_mcts.src.MCTS_backbone import MCTS_Searcher
-from run_mcts.src.MCTS_reasoning_v2 import Reasoning_MCTS_Node
+from run_mcts.src.MCTS_reasoning import Reasoning_MCTS_Node
 from utils.mcts_utils import Node_Type, stochastic_find_best_solution, print_tree_from_root
 
 
