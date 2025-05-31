@@ -9,7 +9,6 @@ import transformers
 from collections import defaultdict
 
 from run_mcts.src.models.semantic_equivalence import SemanticEquivalenceGenerator
-# from run_mcts.src.discriminator_methods.reasoning_consistency import Candidate
 from run_rag_methods.src.correctness import normalize_answer
 
 

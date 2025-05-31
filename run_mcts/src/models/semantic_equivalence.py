@@ -114,43 +114,43 @@ class SemanticEquivalenceGenerator:
     def _get_most_likely_answer(self, user_query: str, output_list: list[str]):
         assert len(output_list) > 0
 
-        def cluster_by_meaning(user_query, output_list):
-            cluster = []
+        # def cluster_by_meaning(user_query, output_list):
+        #     cluster = []
 
-            for i, answer in enumerate(output_list):
-                if i == 0:
-                    cluster.append([answer])
-                else:
-                    prompt = self.semantic_equivalence_prompt
-                    prompt += f'\n\nWe are evaluating answers to the question: {user_query}\n'
-                    prompt += 'Here are two possible answers:\n'
+        #     for i, answer in enumerate(output_list):
+        #         if i == 0:
+        #             cluster.append([answer])
+        #         else:
+        #             prompt = self.semantic_equivalence_prompt
+        #             prompt += f'\n\nWe are evaluating answers to the question: {user_query}\n'
+        #             prompt += 'Here are two possible answers:\n'
 
-                    for j, c in enumerate(cluster):
-                        tmp_prompt = prompt + f'Possible Answer 1: {answer}\n'
-                        tmp_prompt += f'Possible Answer 2: {c[0]}\n'
-                        tmp_prompt += 'For this question, is Possible Answer 1 semantically equivalent to Possible Answer 2? Respond with Yes or No.\n'
-                        tmp_prompt += 'Response: '
+        #             for j, c in enumerate(cluster):
+        #                 tmp_prompt = prompt + f'Possible Answer 1: {answer}\n'
+        #                 tmp_prompt += f'Possible Answer 2: {c[0]}\n'
+        #                 tmp_prompt += 'For this question, is Possible Answer 1 semantically equivalent to Possible Answer 2? Respond with Yes or No.\n'
+        #                 tmp_prompt += 'Response: '
                         
-                        response = self.generate(
-                            tmp_prompt,
-                            max_new_tokens=1,
-                            num_return=1,
-                            # temperature=0.01,
-                        )[0]
-                        if 'Yes' in response:
-                            c.append(answer)
-                            break
-                        elif j == len(cluster) - 1:
-                            cluster.append([answer])
-                            break
+        #                 response = self.generate(
+        #                     tmp_prompt,
+        #                     max_new_tokens=1,
+        #                     num_return=1,
+        #                     # temperature=0.01,
+        #                 )[0]
+        #                 if 'Yes' in response:
+        #                     c.append(answer)
+        #                     break
+        #                 elif j == len(cluster) - 1:
+        #                     cluster.append([answer])
+        #                     break
 
-            return cluster
+        #     return cluster
 
         if len(output_list) == 1:
             most_confident_answer = output_list[0]
             confidence = 1
         else:
-            cluster = cluster_by_meaning(user_query=user_query, output_list=output_list)
+            cluster = self.cluster_by_meaning(user_query=user_query, output_list=output_list)
             most_confident_cluster = sorted(cluster, key=len, reverse=True)[0]
             most_confident_answer, confidence = most_confident_cluster[0], len(most_confident_cluster)/sum(map(len, cluster))
             assert confidence > 0 and confidence <= 1

@@ -65,8 +65,6 @@ def mcts_discrimination(args):
     # === Select Discrimination Method ==========
     if args.discriminator_method == "majority_voting":
         discriminator = MajorityVoting(args, device)
-    elif args.discriminator_method == "best_of_n":
-        discriminator = BoN(args, device)
     elif args.discriminator_method == "reasoning_consistency":
         discriminator = ReasoningConsistency(args, device)
     elif args.discriminator_method == "rag_consistency":
@@ -83,7 +81,7 @@ def mcts_discrimination(args):
         discriminate_results_file_ranked = f"{args.output_dir}/discrimination_results_{args.discriminator_method}_rank{accelerator.process_index}.jsonl"
         with open(discriminate_results_file_ranked, 'w', encoding='utf-8') as res_f:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 3:
+                # if i == 20:
                 #     break
                 # === Generating answer candidates
                 final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
@@ -94,7 +92,7 @@ def mcts_discrimination(args):
                 if question[-1] != '?':
                     question += '?'
                 
-                pred_answer, candidates = discriminator.inference(question, gt_answers, all_traces)
+                pred_answer, candidates = discriminator.inference(qid, question, gt_answers, all_traces)
                 
                 if pred_answer:
                     correctness_em = em_score(pred_answer, gt_answers)
@@ -142,8 +140,8 @@ def mcts_evaluation(args):
             pred_answer = data['pred_answer']
             candidates = [k for k, v in data['candidates'].items()]
             
-            # em_socre = em_score(pred_answer, gt_answers)
-            em_socre = em_score_v2(candidates, gt_answers)
+            em_socre = em_score(pred_answer, gt_answers)
+            # em_socre = em_score_v2(candidates, gt_answers)
             # em_socre = subem_score(pred_answer, gt_answers)
             em_evaluation.append(em_socre)
             
@@ -159,11 +157,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
     # Retriever
@@ -192,13 +190,13 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_5 (mcts_500_rollout8)')
+    parser.add_argument('--run', type=str, default='run_4 (mcts_500_rollout4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
     
     # MCTS ---
-    parser.add_argument('--discriminator_method', type=str, default='majority_voting', choices=[
+    parser.add_argument('--discriminator_method', type=str, default='llm_selector', choices=[
         'majority_voting', 'best_of_n', 'reasoning_consistency', 'rag_consistency', 'llm_selector'
     ])
     parser.add_argument("--enable_critique", action="store_true", help="")

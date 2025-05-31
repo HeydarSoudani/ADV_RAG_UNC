@@ -19,10 +19,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='nq', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
@@ -73,7 +73,7 @@ if __name__ == "__main__":
     parser.add_argument("--enable_potential_score", action="store_true")
     
     # MCTS: Discrimination ---
-    parser.add_argument('--discriminator_method', type=str, default='reasoning_consistency', choices=[
+    parser.add_argument('--discriminator_method', type=str, default='majority_voting', choices=[
         'majority_voting', 'best_of_n', 'reasoning_consistency', 'rag_consistency', 'llm_selector'
     ])
     parser.add_argument("--cutoff_rollout", type=int, default=-1)
@@ -105,8 +105,8 @@ if __name__ == "__main__":
     
     ### === Run Steps ============================
     set_seed(args.seed)
-    mcts_generation(args)
-    # mcts_discrimination(args)
+    # mcts_generation(args)
+    mcts_discrimination(args)
     
     # python run_mcts/run_framework.py
     # accelerate launch --multi_gpu run_mcts/run_framework.py

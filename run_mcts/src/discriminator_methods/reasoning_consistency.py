@@ -284,7 +284,7 @@ class ReasoningConsistency(BasicDiscriminator): # Adopted for RAG
         winner, filtered_answer2score = self._find_winner_filtered(question, prefiltered_candidates, filtered_candidates, gt_answer)
         return winner, filtered_answer2score
     
-    def inference(self, question, gt_answers, paths):
+    def inference(self, qid, question, gt_answers, paths):
         all_candidates = []
         for trace_id, trace in enumerate(paths):
             trace_ = trace["trace"]
