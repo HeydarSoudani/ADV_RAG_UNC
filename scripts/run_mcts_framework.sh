@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus=3
+#SBATCH --gpus=2
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
-#SBATCH --time=1:30:00
+#SBATCH --time=2:00:00
 #SBATCH --mem=60GB
 #SBATCH --output=script_logging/slurm_%A.out
 

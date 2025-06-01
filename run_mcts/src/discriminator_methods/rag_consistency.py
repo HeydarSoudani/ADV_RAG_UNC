@@ -276,7 +276,6 @@ class RagConsistency(BasicDiscriminator):
             candidate = Candidate(qid, trace_, final_answer, trace_id, trace_reward=final_answer_reward)
             all_candidates.append(candidate)
 
-
         # Group by semantic similarity based on final_answer
         answer2candidates, answer2confidence, _ = self.group_candidates_by_answer(
             question, all_candidates, self.args.rc_criteria

@@ -20,13 +20,12 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='nq', choices=[
-        'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+        'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
-    parser.add_argument('--fewshot', type=int, default=6)
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
@@ -59,7 +58,10 @@ if __name__ == "__main__":
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
     
-    # MCTS: Generator ---
+    # MCTS ---
+    parser.add_argument('--discriminator_method', type=str, default='rag_consistency', choices=[
+        'majority_voting', 'reasoning_consistency', 'llm_selector', 'rag_consistency'
+    ])
     parser.add_argument("--enable_critique", action="store_true", help="")
     parser.add_argument("--enable_doc_generation", action="store_true", help="")
     parser.add_argument("--verbose", action="store_true", help="extra login")
@@ -67,16 +69,13 @@ if __name__ == "__main__":
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
-    parser.add_argument("--num_rollouts", type=int, default=4)
-    parser.add_argument("--max_depth_allowed", type=int, default=6)
+    parser.add_argument("--num_rollouts", type=int, default=8)
+    parser.add_argument("--max_depth_allowed", type=int, default=10)
     parser.add_argument("--num_votes", type=int, default=2)
     parser.add_argument("--mcts_num_last_votes", type=int, default=5)
     parser.add_argument("--enable_potential_score", action="store_true")
     
-    # MCTS: Discrimination ---
-    parser.add_argument('--discriminator_method', type=str, default='majority_voting', choices=[
-        'majority_voting', 'best_of_n', 'reasoning_consistency', 'rag_consistency', 'llm_selector'
-    ])
+    # Discrimination ---
     parser.add_argument("--cutoff_rollout", type=int, default=-1)
     parser.add_argument("--start_idx", type=int, default=-1)
     parser.add_argument("--end_idx", type=int, default=-1)
@@ -88,7 +87,7 @@ if __name__ == "__main__":
     parser.add_argument("--rc_n_completions", type=int, default=1)
     parser.add_argument("--rc_criteria", type=str, default="freq", choices=["freq", "reward"])
     parser.add_argument("--threshold", type=float, default=0.999)
-    parser.add_argument("--extend_rc_mode", type=str, default="majority_vote", choices=["original", "BoN", "majority_vote"])
+    # parser.add_argument("--extend_rc_mode", type=str, default="original", choices=["original", "BoN", "majority_vote"])
     parser.add_argument("--best_of", type=int, default=5)
     args = parser.parse_args()
     
