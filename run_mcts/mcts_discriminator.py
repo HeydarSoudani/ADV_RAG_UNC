@@ -81,8 +81,8 @@ def mcts_discrimination(args):
         discriminate_results_file_ranked = f"{args.output_dir}/discrimination_results_{args.discriminator_method}_rank{accelerator.process_index}.jsonl"
         with open(discriminate_results_file_ranked, 'w', encoding='utf-8') as res_f:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                if i == 5:
-                    break
+                # if i == 5:
+                #     break
                 # === Generating answer candidates
                 final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
                 all_traces = read_jsonl(final_solutions_file)

@@ -14,7 +14,7 @@ module load Python/3.12.3-GCCcore-13.3.0
 ### === Set variables ==========================
 # Shared
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="bamboogle"
+dataset="popqa"
 subsec="test"
 run="run_4 (mcts_500_rollout4)"
 # Generator
