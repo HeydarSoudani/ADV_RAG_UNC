@@ -232,6 +232,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--paraphrase_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
@@ -296,7 +297,7 @@ if __name__ == "__main__":
     parser.add_argument("--end_idx", type=int, default=-1)
     parser.add_argument("--mask_left_boundary", type=float, default=0.2)
     parser.add_argument("--mask_right_boundary", type=float, default=0.5)
-    parser.add_argument("--num_masked_solution_traces", type=int, default=4)
+    parser.add_argument("--num_masked_solution_traces", type=int, default=5)
     parser.add_argument("--rc_mode", type=str, default="mid", choices=["loose", "mid", "strict", "maj"])
     parser.add_argument("--rc_temperature", type=float, default=1.0)
     parser.add_argument("--rc_n_completions", type=int, default=1)

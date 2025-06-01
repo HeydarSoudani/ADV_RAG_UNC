@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
 #SBATCH --time=1:30:00
-#SBATCH --mem=40GB
+#SBATCH --mem=60GB
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -14,18 +14,18 @@ module load Python/3.12.3-GCCcore-13.3.0
 ### === Set variables ==========================
 # Shared
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="hotpotqa"
-subsec="dev"
+dataset="bamboogle"
+subsec="test"
 run="run_4 (mcts_500_rollout4)"
 # Generator
-fraction_of_data_to_use=2000.0
+fraction_of_data_to_use=1.0
 retriever_name="rerank_l6"
 index_path="data/search_r1_files/bm25"
 retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
 num_rollouts=4
 max_depth_allowed=6
 # Discriminator
-discriminator_method="llm_selector"
+discriminator_method="rag_consistency"
 
 # srun python 
 accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \

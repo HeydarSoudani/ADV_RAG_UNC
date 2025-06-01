@@ -68,20 +68,20 @@ class Candidate:
             think_answer_index = list(self.trace_obj.keys())[-1]
             selected_indices = random.choices(think_search_indices, k=args.num_masked_solution_traces)
             selected_indices_group = [(x, selected_indices.count(x)) for x in sorted(set(selected_indices))]
-        
+            
             for (selected_index, repeat) in selected_indices_group:
                 ## Step 1: Generating paraphrased search queries 
-                original_sq = self.trace_obj[selected_index].get('search_query', '')
+                original_sq = self.trace_obj[selected_index]['think_search'].get('search_query', '')
                 sq_prompt = search_query_generator.get_instruction(original_sq, n=repeat)
-                sq_output = search_query_generator.generate(sq_prompt, temperature=1.0)[0]
+                sq_output = search_query_generator.generate(sq_prompt, temperature=0.7)[0]
                 paraphrased_queries = get_paraphrased_query(sq_output)
                 
                 # check if paraphrased_queries are None
                 if paraphrased_queries == None:
                     print(f"Paraphrased queries are not provided for query {self.qid} ...")
                     for i in range(args.retry):
-                        print(f"Think, try {i+1} ...")
-                        sq_output = search_query_generator.generate(sq_prompt, temperature=1.3)[0]
+                        print(f"Paraphrased queries, try {i+1} ...")
+                        sq_output = search_query_generator.generate(sq_prompt, temperature=1.0)[0]
                         paraphrased_queries = get_paraphrased_query(sq_output)
                         if paraphrased_queries != None:
                             break
@@ -134,13 +134,26 @@ class Candidate:
                     # ---------------------------------
         
         else:
+            ## Step 1: Generating paraphrased thinks
             original_think = self.trace_obj[1]["think_answer"].get('think', '')
-            paraphrased_thinks = []
-            if original_think:
-                think_prompt = think_generator.get_instruction(original_think, n=args.num_masked_solution_traces)
-                think_output = think_generator.generate(think_prompt)[0]
-                paraphrased_thinks = get_paraphrased_think(think_output)
+            think_prompt = think_generator.get_instruction(original_think, n=args.num_masked_solution_traces)
+            think_output = think_generator.generate(think_prompt, temperature=0.7)[0]
+            paraphrased_thinks = get_paraphrased_think(think_output)
+            
+            # check if paraphrased_thinks are None
+            if paraphrased_thinks == None:
+                print(f"Paraphrased thinks are not provided for query {self.qid} ...")
+                for i in range(args.retry):
+                    print(f"Paraphrased thinks, try {i+1} ...")
+                    think_output = think_generator.generate(think_prompt, temperature=1.0)[0]
+                    paraphrased_thinks = get_paraphrased_query(think_output)
+                    if paraphrased_thinks != None:
+                        break
+                else:
+                    print(f"Failed to generate 'paraphrased thinks' after all retries for query {self.qid}!!!")
+                    paraphrased_thinks = []
 
+            ## Step 2: Generating new masked traces
             input_text = node_generator.get_prompt_text('think_answer', {0: self.trace_obj[0]})
             for pt in paraphrased_thinks:
                 input_text_pt = input_text + f"<think> {pt} </think>\n"
@@ -149,31 +162,9 @@ class Candidate:
                     0: self.trace_obj[0],
                     1: {"think_answer": {"think": pt, "answer": get_answer(output), "value": 0.9}}
                 })
-            
-        return masked_traces
-    
-    # def get_rag_confidence(self):
-    #     sorted_keys = sorted(self.trace_obj.keys(), key=int)
-    #     preds = [item[sorted_keys[-1]]['think_answer']['answer'] for item in self.masked_trace_retrieval_list]
-    #     self.rag_confidence = sum(1 for item in preds if item is not None and em_score(item, self.final_answer)) / len(preds)
-    #     return self.rag_confidence
-
-
-    # def to_search_queries(self):
-    #     sorted_keys = sorted(self.trace_obj.keys(), key=int)
-    #     if len(sorted_keys) == 2:
-    #         org = self.trace_obj[sorted_keys[-1]]['think_answer']['think']
-    #         para = [item[sorted_keys[-1]]['think_answer']['think'] for item in self.masked_trace_retrieval_list]    
-    #     else:
-    #         org = self.trace_obj[sorted_keys[-2]]['think_search']['search_query']
-    #         para = [item[sorted_keys[-2]]['think_search']['search_query'] for item in self.masked_trace_retrieval_list]
-    #     return f"Candidate {self.trace_id}:\nOriginal: {org}\n{para}"
         
-    # def to_prediction(self):
-    #     sorted_keys = sorted(self.trace_obj.keys(), key=int)
-    #     preds = [item[sorted_keys[-1]]['think_answer']['answer'] for item in self.masked_trace_retrieval_list]
-    #     return f"Candidate {self.trace_id}: {self.final_answer} | {preds}"
-
+        self.masked_trace_retrieval_list = masked_traces
+        return masked_traces
 
 class RagConsistency(BasicDiscriminator):
     def __init__(self, args, device):
@@ -197,22 +188,65 @@ class RagConsistency(BasicDiscriminator):
 
     def _filter_rag_consistency(self, question: str, candidates: list[Candidate], aux={}) -> list[Candidate]:
         assert all(
-            len(c.masked_trace_text_list) == self.args.num_masked_solution_traces
+            len(c.masked_trace_retrieval_list) == self.args.num_masked_solution_traces
             for c in candidates
             if c.c_type == "default"
         )
-        gen_input_list = []
+        completion_list = []
         ground_truth_list = []
         c_completion_num_list = []
         for c in candidates:
-            for masked_solution_trace in c.masked_trace_text_list:
+            for masked_solution_trace in c.masked_trace_retrieval_list:
                 for _ in range(self.args.rc_n_completions):
-                    gen_input_list.append(masked_solution_trace)
+                    completion_list.append(masked_solution_trace)
                     ground_truth_list.append(c.final_answer)
-            c_completion_num_list.append(len(c.masked_trace_text_list) * self.args.rc_n_completions)
-        """gen_input_list:
+            c_completion_num_list.append(len(c.masked_trace_retrieval_list) * self.args.rc_n_completions)
+        """completion_list:
         [c1_mask1, c1_mask2, ..., c2_mask1, c2_mask2, ..., ......, ct_mask1, ct_mask2, ...]
         """
+        
+        answer_list = [
+            completion[list(completion.keys())[-1]]['think_answer'].get("answer", '')
+            for completion in completion_list
+        ]
+        print(answer_list)
+        count = 0
+        completion_group_list = []
+        answer_group_list = []
+        gt_group_list = []
+        for num in c_completion_num_list:
+            completion_group_list.append(completion_list[count : count + num])
+            answer_group_list.append(answer_list[count : count + num])
+            gt_group_list.append(ground_truth_list[count : count + num])
+            count += num
+        assert count == len(completion_list) == len(answer_list)
+        
+        
+        consistent_candidates = []
+        for c, completion_group, answer_group, gt_answer in zip(
+            candidates, completion_group_list, answer_group_list, gt_group_list
+        ):
+            candidate_group_size = len(c.masked_trace_retrieval_list)
+            num_consistent = 0
+            if self.args.rc_mode == "maj":
+                answer = self.find_most_confident_answer(question, completion_group)[0]
+                if self.se_model.check_answers_equiv(question, gt_answer[-1], answer):
+                    consistent_candidates.append(c)
+            else:
+                for answer, gt_a in zip(answer_group, gt_answer):
+                    if self.se_model.check_answers_equiv(question, gt_a, answer):
+                        num_consistent += 1
+                if self.args.rc_mode == "loose":
+                    if num_consistent > 0:
+                        consistent_candidates.append(c)
+                elif self.args.rc_mode == "mid":
+                    if num_consistent >= candidate_group_size // 2:
+                        consistent_candidates.append(c)
+                elif self.args.rc_mode == "strict":
+                    if num_consistent == candidate_group_size:
+                        consistent_candidates.append(c)
+        
+        return consistent_candidates
 
     def select(self, question: str, candidates: list[Candidate], gt_answer: str = None, aux={}) -> Candidate:
         print(f"==> Ground truth answer: {gt_answer}")

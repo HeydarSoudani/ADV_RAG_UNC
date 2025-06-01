@@ -29,7 +29,7 @@ def mcts_discrimination(args):
             Discriminator: {args.discriminator_method}
             Dataset:       {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
             Retriever:     {args.retriever_name} / ({args.retrieval_model_path})
-            Rollouts:      {args.num_rollouts}
+            Rollouts:      {args.num_rollouts} ({args.max_depth_allowed})
             Seed:          {args.seed}
             Run:           {args.run}
         """.replace('        ', ''))
@@ -81,7 +81,7 @@ def mcts_discrimination(args):
         discriminate_results_file_ranked = f"{args.output_dir}/discrimination_results_{args.discriminator_method}_rank{accelerator.process_index}.jsonl"
         with open(discriminate_results_file_ranked, 'w', encoding='utf-8') as res_f:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 20:
+                # if i == 5:
                 #     break
                 # === Generating answer candidates
                 final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
@@ -154,10 +154,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--paraphrase_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
@@ -196,7 +197,7 @@ if __name__ == "__main__":
     parser.add_argument('--use_counter', action='store_false')
     
     # MCTS ---
-    parser.add_argument('--discriminator_method', type=str, default='llm_selector', choices=[
+    parser.add_argument('--discriminator_method', type=str, default='rag_consistency', choices=[
         'majority_voting', 'best_of_n', 'reasoning_consistency', 'rag_consistency', 'llm_selector'
     ])
     parser.add_argument("--enable_critique", action="store_true", help="")
@@ -242,9 +243,9 @@ if __name__ == "__main__":
     ### === Run Steps ==============
     set_seed(args.seed)
     
-    # mcts_discrimination(args)
-    merge_result_files(args)
-    mcts_evaluation(args)
+    mcts_discrimination(args)
+    # merge_result_files(args)
+    # mcts_evaluation(args)
     
     # python run_mcts/mcts_discriminator.py
     # accelerate launch --multi_gpu run_mcts/mcts_discriminator.py
