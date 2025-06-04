@@ -115,6 +115,10 @@ def rag_generation(args):
         rag_model = DRAGIN_RAG(args, device)
     elif args.rag_method == 'self_ask':
         rag_model = SelfAsk_RAG(args, device)
+    elif args.rag_method == 'react':
+        rag_model = ReAct_RAG(args, device)
+    elif args.rag_method == 'search_o1':
+        rag_model = SearchO1_RAG(args, device)
     elif args.rag_method == 'search_r1':
         rag_model = SearchR1_RAG(args, device)
     else:
@@ -131,7 +135,7 @@ def rag_generation(args):
             inference_results_file_ranked = f"{args.output_dir}/inference_results_rank{accelerator.process_index}.jsonl"
         with open(inference_results_file_ranked, 'w') as res_f:
             for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 5:
+                # if i == 20:
                 #     break
                 qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
                 question = question.strip()
@@ -221,7 +225,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='nq', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
@@ -252,7 +256,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
+    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot',
         'flare', 'dragin',
@@ -272,7 +276,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_0 (rag_methods_2k)')
+    parser.add_argument('--run', type=str, default='run_1 (rag_methods_2k)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -297,9 +301,9 @@ if __name__ == "__main__":
     ### === Run Steps ============================
     set_seed(args.seed)
     rag_generation(args)
-    merge_result_files(args)
-    get_num_retrieval(args)
-    evaluate(args)
+    # merge_result_files(args)
+    # get_num_retrieval(args)
+    # evaluate(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py

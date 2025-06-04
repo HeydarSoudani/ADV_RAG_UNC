@@ -176,6 +176,9 @@ class BasicRAG:
         sentences = [sent for sent in sentences if len(sent) > 0]
         return sentences[-1] if len(sentences) > 0 else "" 
        
+    def get_unique_docs(self, docs_lst:list):
+        return list({doc['id']: doc for doc in docs_lst}.values()) 
+    
     def regenerate(self, system_prompt, question, docs, path, with_context=True):
         user_prompt = self.user_prompt_with_context.format(examples=self.cot_examples_text, documents=passages2string(docs), question=question) \
             if with_context else self.user_prompt_wo_context.format(examples=self.cot_examples_text, question=question)
@@ -895,16 +898,16 @@ class SelfAsk_RAG(BasicRAG):
 
     def inference(self, question):
         # follow_ups = "No." if self.single_hop else "Yes."
-        
         # Initial retrieval
         search_query = question
         cur_search_docs = self.retriever.search(search_query)
+        user_input_prompt = self.user_prompt_self_ask.format(
+            documents = self.documents2string(cur_search_docs),
+            question=question
+        )
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": self.user_prompt_self_ask.format(
-                documents = self.documents2string(cur_search_docs),
-                question=question
-            )}
+            {"role": "user", "content": user_input_prompt}
         ]
 
         path, text = [], ""
@@ -913,12 +916,12 @@ class SelfAsk_RAG(BasicRAG):
             intermediate_ans = self.extract_intermediate(output_text)
             path.append({'search_query': search_query, 'docs': cur_search_docs, 'think': intermediate_ans})
             
-            # print(self.system_prompt)
-            # print(input_prompt)
+            # # print(self.system_prompt)
+            # print(user_input_prompt)
             # print('-')
             # print(output_text)
-            # print('-')
-            # print(intermediate_ans)
+            # # print('-')
+            # # print(intermediate_ans)
             # print('-----')
                 
             if ("So the final answer is:" in output_text):
@@ -936,34 +939,54 @@ class SelfAsk_RAG(BasicRAG):
                 cur_search_docs = self.retriever.search(search_query)
                 text += f"Follow up: {search_query}\nIntermediate answer: "
             
+            tmp_docs = [doc for step in path for doc in step['docs']] + cur_search_docs
+            unq_tmp_doc = self.get_unique_docs(tmp_docs)
+            user_input_prompt = self.user_prompt_self_ask.format(
+                documents = self.documents2string(unq_tmp_doc),
+                question=question
+            ) + f"\n{text}"
             messages = [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": self.user_prompt_self_ask.format(
-                    documents = self.documents2string(cur_search_docs),
-                    question=question
-                ) + f"\n{text}"}
+                {"role": "user", "content": user_input_prompt}
             ]
         
         
         # Regenerate the last sentence if it is needed
         if "So the final answer is:" not in text:
             text += "So the final answer is: "
-            cur_search_docs = path[-1]['docs']
             
+            tmp_docs = [doc for step in path for doc in step['docs']]
+            unq_tmp_doc = self.get_unique_docs(tmp_docs)
+            user_input_prompt = self.user_prompt_self_ask.format(
+                documents = self.documents2string(unq_tmp_doc),
+                question=question
+            ) + f"\n{text}"
             messages = [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": self.user_prompt_self_ask.format(
-                    documents = self.documents2string(cur_search_docs),
-                    question=question
-                ) + f"\n{text}"}
+                {"role": "user", "content": user_input_prompt}
             ]
             _, output_text = self.generator.generate(messages)
             pred_answer = self.extract_final_answer(output_text) if self.extract_final_answer(output_text) else output_text       
             path.append({'think': f'So the final answer is: {output_text}'})
+        
         else:
             pred_answer = self.extract_final_answer(text)
 
         return pred_answer, path
+
+class ReAct_RAG(BasicRAG):
+    def __init__(self, args, device):
+        super().__init__(args, device)
+
+    def inference(self, question):
+        pass
+
+class SearchO1_RAG(BasicRAG):
+    def __init__(self, args, device):
+        super().__init__(args, device)
+
+    def inference(self, question):
+        pass
 
 class SearchR1_RAG(BasicRAG): 
     def __init__(self, args, device):
