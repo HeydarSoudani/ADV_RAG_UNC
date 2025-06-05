@@ -4,7 +4,7 @@
 #SBATCH --gpus=2
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
-#SBATCH --time=3:00:00
+#SBATCH --time=5:00:00
 #SBATCH --mem=60GB
 #SBATCH --output=script_logging/slurm_%A.out
 
@@ -39,6 +39,7 @@ accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_rag_methods/run_framework.py
     --query_formulation "$query_formulation" \
     --hallucination_threshold "$hallucination_threshold" \
     --run "$run"
+
 
 
 ### Datasets:

@@ -26,7 +26,7 @@ def get_answer(text):
     return pred
 
 def rag_generation(args):
-    # === MultiGPU setup =======================
+    # === MultiGPU setup ========================
     accelerator = Accelerator()
     device = accelerator.device
     if accelerator.is_main_process:

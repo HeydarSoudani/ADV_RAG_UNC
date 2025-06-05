@@ -3,7 +3,6 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import re
-import time
 import spacy
 import torch
 import requests
@@ -23,7 +22,6 @@ from run_rag_methods.src.templetes import (
 from utils.general_utils import passages2string
 
 nlp = spacy.load("en_core_web_sm")
-
 
 # def passages2string(retrieval_result):
 #     format_reference = ''
@@ -1209,7 +1207,7 @@ class ReAct_RAG(BasicRAG):
 
         return obs, done, answer
 
-    def inference(self, question):    
+    def inference(self, question):
         self.page = None  # current Wikipedia page
         self.lookup_keyword = None  # current lookup keyword
         self.lookup_list = None  # list of paragraphs containing current lookup keyword
@@ -1270,9 +1268,6 @@ class ReAct_RAG(BasicRAG):
             path.append({'Action': pred_answer})
         
         return pred_answer, path
-            
-            
-            
 
 class SearchO1_RAG(BasicRAG):
     def __init__(self, args, device):
@@ -1281,7 +1276,7 @@ class SearchO1_RAG(BasicRAG):
     def inference(self, question):
         pass
 
-class SearchR1_RAG(BasicRAG): 
+class SearchR1_RAG(BasicRAG):
     def __init__(self, args, device):
         super().__init__(args, device)
         self.curr_search_template = '\n\n{output_text}<information>{search_results}</information>\n\n'
@@ -1321,11 +1316,7 @@ If you find no further external knowledge needed, you can directly provide the a
         
         path, cnt = [], 0
         while True:
-            # print(input_prompt)
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
-            # print('-')
-            # print(output_text)
-            # print('----')
             if output_[-1].item() in self.generator.curr_eos:
                 break
         
@@ -1341,11 +1332,9 @@ If you find no further external knowledge needed, you can directly provide the a
                 'search_query': tmp_query,
                 'docs': search_docs
             })
-
             search_text = self.curr_search_template.format(output_text=output_text, search_results=search_results)
             input_prompt += search_text
             messages = [{"role": "user", "content": input_prompt}]
-            
             cnt += 1
 
         one_step_think = self.get_think(output_text)
@@ -1360,7 +1349,7 @@ If you find no further external knowledge needed, you can directly provide the a
         
         
         
-        
+       
 # followup_query = output_text.split("Intermediate answer:")[0]
 # text += followup_query
 # stop_condition = "Follow up:"
@@ -1391,12 +1380,6 @@ If you find no further external knowledge needed, you can directly provide the a
 #     pred_answer = get_answer(text)
 
 # return pred_answer, path
-
-
-
-
-
-
 
 
 
