@@ -3,18 +3,22 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import re
+import time
 import spacy
 import torch
+import requests
 import numpy as np
 from math import exp
-from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+from bs4 import BeautifulSoup
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast, StoppingCriteriaList
 
-from run_rag_methods.src.generators import LLMGenerator
+from run_rag_methods.src.generators import LLMGenerator, StopOnSequence
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from run_rag_methods.src.templetes import (
     SYSTEM_PROMPT_DIRECT, SYSTEM_PROMPT_COT, SYSTEM_PROMPT_IRCOT,
     SYSTEM_PROMPT_DRAGIN,
-    SELF_ASK_PROMPT_SINGLE_HOP, SELF_ASK_PROMPT_MULTI_HOP
+    SELF_ASK_PROMPT_SINGLE_HOP, SELF_ASK_PROMPT_MULTI_HOP,
+    REACT_INSTRUCTION
 )
 from utils.general_utils import passages2string
 
@@ -42,36 +46,9 @@ def get_answer(text):
     pred = pred.rstrip(".?!")
     return pred
 
-class Counter:
-    def __init__(self):
-        self.retrieve = 0
-        self.generate = 0
-        self.hallucinated = 0
-        self.token = 0
-        self.sentence = 0
-
-    def add_generate(self, text, tokenizer):
-        self.generate += 1
-        ids = tokenizer(text, return_tensors="pt")['input_ids'][0].tolist()
-        self.token += len(ids)
-        sentences = [sent.text for sent in nlp(text).sents]
-        self.sentence += len(sentences)
-        
-        return len(sentences), len(ids)
-
-    def calc(self, other_counter):
-        return {
-            "retrieve_count": self.retrieve - other_counter.retrieve, 
-            "generate_count": self.generate - other_counter.generate,
-            "hallucinated_count": self.hallucinated - other_counter.hallucinated, 
-            "token_count": self.token - other_counter.token, 
-            "sentence_count": self.sentence - other_counter.sentence 
-        }
-
 class BasicRAG:
     def __init__(self, args, device):
         self.args = args
-        self.counter = Counter()
         self.generator = LLMGenerator(args, device)
         
         # === Retrievers ============================= 
@@ -84,7 +61,7 @@ class BasicRAG:
         elif args.retriever_name in ['e5', 'bge']:
             self.retriever = DenseRetriever(args)
                 
-        # === few-shot examples =======================
+        # === Few-shot examples =======================
         self.DIRECT_EXAMPLES = [
             {
                 "Q": 'Jeremy Theobald and Christopher Nolan share what profession?',
@@ -409,8 +386,8 @@ class IRCOT_RAG(BasicRAG):
         
         return pred_answer, path
 
-# Base on DRAGIN git code
 class FLARE_RAG_V1(BasicRAG):
+    # Base on DRAGIN git code
     def __init__(self, args, device):
         super().__init__(args, device)
         self.modifier = self.modifier_token if args.modifier_method=='token' else self.modifier_entity
@@ -975,11 +952,327 @@ class SelfAsk_RAG(BasicRAG):
         return pred_answer, path
 
 class ReAct_RAG(BasicRAG):
+    # Ref: https://github.com/ysymyth/ReAct/blob/master/hotpotqa.ipynb
     def __init__(self, args, device):
         super().__init__(args, device)
+        self.instruction = REACT_INSTRUCTION
+        
+        self.examples = {
+            "webthink_simple6": [
+                {
+                    "question": 'What is the elevation range for the area that the eastern sector of the Colorado orogeny extends into?',
+                    "steps": [
+                        {
+                            "Thought": 'I need to search Colorado orogeny, find the area that the eastern sector of the Colorado orogeny extends into, then find the elevation range of the area.',
+                            "Action": 'Search[Colorado orogeny]',
+                            "Observation": 'The Colorado orogeny was an episode of mountain building (an orogeny) in Colorado and surrounding areas.'
+                        },
+                        {
+                            "Thought": 'It does not mention the eastern sector. So I need to look up eastern sector.',
+                            "Action": 'Lookup[eastern sector]',
+                            "Observation": '(Result 1 / 1) The eastern sector extends into the High Plains and is called the Central Plains orogeny.',
+                        },
+                        {
+                            "Thought": 'The eastern sector of Colorado orogeny extends into the High Plains. So I need to search High Plains and find its elevation range.',
+                            "Action": 'Search[High Plains]',
+                            "Observation": 'High Plains refers to one of two distinct land regions:',
+                        },
+                        {
+                            "Thought": 'I need to instead search High Plains (United States).',
+                            "Action": 'Search[High Plains (United States)]',
+                            "Observation": 'The High Plains are a subregion of the Great Plains. From east to west, the High Plains rise in elevation from around 1,800 to 7,000 ft (550 to 2,130 m).',
+                        },
+                        {
+                            "Thought": 'High Plains rise in elevation from around 1,800 to 7,000 ft, so the answer is 1,800 to 7,000 ft.',
+                            "Action": 'Finish[1,800 to 7,000 ft]',
+                        }
+                    ]
+                },
+                {
+                    "question": 'Musician and satirist Allie Goertz wrote a song about the \"The Simpsons\" character Milhouse, who Matt Groening named after who?',
+                    "steps": [
+                        {
+                            "Thought": 'The question simplifies to \"The Simpsons\" character Milhouse is named after who. I only need to search Milhouse and find who it is named after.',
+                            "Action": 'Search[Milhouse]',
+                            "Observation": 'Milhouse Mussolini Van Houten is a recurring character in the Fox animated television series The Simpsons voiced by Pamela Hayden and created by Matt Groening.',
+                        },
+                        {
+                            "Thought": 'The paragraph does not tell who Milhouse is named after, maybe I can look up \"named after\".',
+                            "Action": 'Lookup[named after]',
+                            "Observation": '(Result 1 / 1) Milhouse was named after U.S. president Richard Nixon, whose middle name was Milhous.',
+                        },
+                        {
+                            "Thought": 'Milhouse was named after U.S. president Richard Nixon, so the answer is Richard Nixon.',
+                            "Action": 'Finish[Richard Nixon]',
+                        }
+                    ]
+                },
+                {
+                    "question": 'Which documentary is about Finnish rock groups, Adam Clayton Powell or The Saimaa Gesture?',
+                    "steps": [
+                        {
+                            "Thought": 'I need to search Adam Clayton Powell and The Saimaa Gesture, and find which documentary is about Finnish rock groups.',
+                            "Action": 'Search[Adam Clayton Powell]',
+                            "Observation": "Could not find [Adam Clayton Powell]. Similar: ['Adam Clayton Powell III', 'Seventh Avenue (Manhattan)', 'Adam Clayton Powell Jr. State Office Building', 'Isabel Washington Powell', 'Adam Powell', 'Adam Clayton Powell (film)', 'Giancarlo Esposito'].",
+                        },
+                        {
+                            "Thought": 'To find the documentary, I can search Adam Clayton Powell (film).',
+                            "Action": 'Search[Adam Clayton Powell (film)]',
+                            "Observation": 'Adam Clayton Powell is a 1989 American documentary film directed by Richard Kilberg.\nThe film is about the rise and fall of influential African-American politician Adam Clayton Powell Jr.[3][4] It was later aired as part of the PBS series The American Experience.',
+                        },
+                        {
+                            "Thought": 'Adam Clayton Powell (film) is a documentary about an African-American politician, not Finnish rock groups. So the documentary about Finnish rock groups must instead be The Saimaa Gesture.',
+                            "Action": 'Finish[The Saimaa Gesture]',
+                        },
+                    ]
+                    
+                },
+                {
+                    "question": 'What profession does Nicholas Ray and Elia Kazan have in common?',
+                    "steps": [
+                        {
+                            "Thought": 'I need to search Nicholas Ray and Elia Kazan, find their professions, then find the profession they have in common.',
+                            "Action": 'Search[Nicholas Ray]',
+                            "Observation": 'Nicholas Ray (born Raymond Nicholas Kienzle Jr., August 7, 1911 \u2013 June 16, 1979) was an American film director, screenwriter, and actor best known for the 1955 film Rebel Without a Cause.',
+                        },
+                        {
+                            "Thought": 'Professions of Nicholas Ray are director, screenwriter, and actor. I need to search Elia Kazan next and find his professions.',
+                            "Action": 'Search[Elia Kazan]',
+                            "Observation": 'Elia Kazan was an American film and theatre director, producer, screenwriter and actor.',
+                        },
+                        {
+                            "Thought": 'Professions of Elia Kazan are director, producer, screenwriter, and actor. So profession Nicholas Ray and Elia Kazan have in common is director, screenwriter, and actor.',
+                            "Action": 'Finish[director, screenwriter, actor]',
+                        },
+                    ]
+                },
+                {
+                    "question": "Which magazine was started first Arthur's Magazine or First for Women?",
+                    "steps": [
+                        {
+                            "Thought": "I need to search Arthur's Magazine and First for Women, and find which was started first.",
+                            "Action": "Search[Arthur's Magazine]",
+                            "Observation": "Arthur's Magazine (1844-\u0080\u00931846) was an American literary periodical published in Philadelphia in the 19th century.",
+                        },
+                        {
+                            "Thought": "Arthur's Magazine was started in 1844. I need to search First for Women next.",
+                            "Action": 'Search[First for Women]',
+                            "Observation": "First for Women is a woman's magazine published by Bauer Media Group in the USA.[1] The magazine was started in 1989.",
+                        },
+                        {
+                            "Thought": "First for Women was started in 1989. 1844 (Arthur's Magazine) < 1989 (First for Women), so Arthur's Magazine was started first.",
+                            "Action": "Finish[Arthur's Magazine]",
+                        },
+                    ]
+                },
+                {
+                    "question": 'Were Pavel Urysohn and Leonid Levin known for the same type of work?',
+                    "steps": [
+                        {
+                            "Thought": 'I need to search Pavel Urysohn and Leonid Levin, find their types of work, then find if they are the same.',
+                            "Action": 'Search[Pavel Urysohn]',
+                            "Observation": 'Pavel Samuilovich Urysohn (February 3, 1898 \u00e2\u0080\u0093 August 17, 1924) was a Soviet mathematician who is best known for his contributions in dimension theory.',
+                        },
+                        {
+                            "Thought": 'Pavel Urysohn is a mathematician. I need to search Leonid Levin next and find its type of work.',
+                            "Action": 'Search[Leonid Levin]',
+                            "Observation": 'Leonid Anatolievich Levin is a Soviet-American mathematician and computer scientist.',
+                        },
+                        {
+                            "Thought": 'Leonid Levin is a mathematician and computer scientist. So Pavel Urysohn and Leonid Levin have the same type of work.',
+                            "Action": 'Finish[yes]',
+                        },
+                    ]
+                },
+            ]
+        }
+        self.examples_text = ''
+        for example in self.examples['webthink_simple6']:
+            self.examples_text += f"Question: {example['question']}\n"
+            for step_i, think_step in enumerate(example['steps']):
+                for step_key, step_val in think_step.items():
+                    self.examples_text += f"{step_key} {step_i+1}: {step_val}\n"
+            self.examples_text += "\n"
+    
+    def generate_stopping_criteria(self, sequences):
+        return StoppingCriteriaList([StopOnSequence(sequences, self.generator.tokenizer)])
 
-    def inference(self, question):
-        pass
+    @staticmethod
+    def clean_str(p):
+        return p.encode().decode("unicode-escape").encode("latin1").decode("utf-8")
+
+    @staticmethod
+    def get_page_obs(page):
+        # find all paragraphs
+        paragraphs = page.split("\n")
+        paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+        # find all sentence
+        sentences = []
+        for p in paragraphs:
+            sentences += p.split('. ')
+        sentences = [s.strip() + '.' for s in sentences if s.strip()]
+        return ' '.join(sentences[:5])
+
+    @staticmethod
+    def clean_action(text):
+        cleaned_text = re.sub(r'Observation \d+:\s*', '', text)
+        return cleaned_text
+
+    # For search action
+    def wikipedia_search(self, entity):
+        entity_ = entity.replace(" ", "+")
+        search_url = f"https://en.wikipedia.org/w/index.php?search={entity_}"
+        response_text = requests.get(search_url).text
+        soup = BeautifulSoup(response_text, features="html.parser")
+        result_divs = soup.find_all("div", {"class": "mw-search-result-heading"})
+        if result_divs:  # mismatch
+            result_titles = [self.clean_str(div.get_text().strip()) for div in result_divs]
+            obs = f"Could not find {entity}. Similar: {result_titles[:5]}."
+        else:
+            page = [p.get_text().strip() for p in soup.find_all("p") + soup.find_all("ul")]
+            if any("may refer to:" in p for p in page):
+                self.search_step("[" + entity + "]")
+            else:
+                self.page = ""
+                for p in page:
+                    if len(p.split(" ")) > 2:
+                        self.page += self.clean_str(p)
+                        if not p.endswith("\n"):
+                            self.page += "\n"
+                obs = self.get_page_obs(self.page)
+                self.lookup_keyword = self.lookup_list = self.lookup_cnt = None
+        return obs
+
+    def retriever_search(self, search_query):
+        search_docs = self.retriever.search(search_query)
+        
+        self.page = ""
+        for doc in search_docs:
+            content = doc['contents']
+            title = content.split("\n")[0]
+            text = "\n".join(content.split("\n")[1:])
+            self.page += text
+        
+        self.lookup_keyword = self.lookup_list = self.lookup_cnt = None
+        
+        return search_docs
+
+    # For lookup action
+    def construct_lookup_list(self, keyword):
+        # find all paragraphs
+        if self.page is None:
+            return []
+        paragraphs = self.page.split("\n")
+        paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+        # find all sentence
+        sentences = []
+        for p in paragraphs:
+            sentences += p.split('. ')
+        sentences = [s.strip() + '.' for s in sentences if s.strip()]
+
+        parts = sentences
+        parts = [p for p in parts if keyword.lower() in p.lower()]
+        return parts
+
+    def get_observation(self, action):
+        done = False
+        answer = None
+        action = action.strip().lower()
+        if action.startswith("search[") and action.endswith("]"):
+            entity = action[len("search["):-1]
+            # obs = self.wikipedia_search(entity) # Search in wikipedia
+            obs = passages2string(self.retriever_search(entity)) # Search with retriever
+        
+        elif action.startswith("lookup[") and action.endswith("]"):
+            keyword = action[len("lookup["):-1]
+            if self.lookup_keyword != keyword:  # reset lookup
+                self.lookup_keyword = keyword
+                self.lookup_list = self.construct_lookup_list(keyword)
+                self.lookup_cnt = 0
+            if self.lookup_cnt >= len(self.lookup_list):
+                obs = "No more results.\n"
+            else:
+                obs = f"(Result {self.lookup_cnt + 1} / {len(self.lookup_list)}) " + self.lookup_list[self.lookup_cnt]
+                self.lookup_cnt += 1
+
+        elif action.startswith("finish[") and action.endswith("]"):
+            answer = action[len("finish["):-1]
+            obs = f"Episode finished\n"
+            done = True
+
+        elif action.startswith("think[") and action.endswith("]"):
+            obs = "Nice thought."
+        else:
+            obs = "Invalid action: {}".format(action)
+
+        return obs, done, answer
+
+    def inference(self, question):    
+        self.page = None  # current Wikipedia page
+        self.lookup_keyword = None  # current lookup keyword
+        self.lookup_list = None  # list of paragraphs containing current lookup keyword
+        self.lookup_cnt = None  # current lookup index
+        
+        search_query = question
+        instruct_exps = self.instruction + self.examples_text 
+        input_prompt = instruct_exps + f"Question: {search_query}\n"
+        path = []
+        for iter_num in range(1, self.args.max_iter+1):
+            # Get Thought & Action
+            messages = [
+                {"role": "system", "content": ''},
+                {"role": "user", "content": input_prompt + f"Thought {iter_num}:"}
+            ]
+            _, thought_action = self.generator.generate(
+                messages,
+                self.generate_stopping_criteria([f"\n\nObservation {iter_num}:", f"\nObservation {iter_num}:", f"Observation {iter_num}:", f"Observation {iter_num}: ", f"\nObservation {iter_num}: "])
+            )
+            try:
+                thought, action = thought_action.strip().split(f"\nAction {iter_num}: ")
+            except:
+                # print('ohh...', thought_action)
+                thought = thought_action.strip().split('\n')[0]
+                messages = [
+                    {"role": "system", "content": ''},
+                    {"role": "user", "content": input_prompt + f"Thought {iter_num}: {thought}\nAction {iter_num}:"}
+                ]
+                _, action = self.generator.generate(messages, self.generate_stopping_criteria(["\n", "\n\n", " \n", " \n\n"]))
+            
+            thought = thought.replace('\n', '')
+            action = self.clean_action(action).replace('\n', '')
+            
+            # Get Observation
+            obs, done, pred_answer = self.get_observation(action)
+            obs = obs.replace('\\n', '')
+            
+            path.append({'Thought': thought, 'Action': action, 'Observation': obs})
+            step_str = f"Thought {iter_num}: {thought}\nAction {iter_num}: {action}\nObservation {iter_num}: {obs}\n"
+            input_prompt += step_str
+            
+            if done:
+                break
+        
+        # Regenerate the last sentence if it is needed
+        action = action.strip().lower()
+        if not (action.startswith("finish[") and action.endswith("]")):
+            messages = [
+                {"role": "system", "content": ''},
+                {"role": "user", "content": input_prompt + f"Action {iter_num+1}: Finish["}
+            ]
+            _, output_text = self.generator.generate(
+                messages,
+                self.generate_stopping_criteria(["]", "] ", ']\n', ']\n ', ']\n\n', ']\n\n ']),
+                max_new_tokens=32
+            )
+            pred_answer = output_text[:-1]
+            path.append({'Action': pred_answer})
+        
+        return pred_answer, path
+            
+            
+            
 
 class SearchO1_RAG(BasicRAG):
     def __init__(self, args, device):
@@ -1111,10 +1404,8 @@ If you find no further external knowledge needed, you can directly provide the a
 
 
 
-
-
-# Base on FlashRAG git code
 class FLARE_RAG_V2(BasicRAG):
+    # Base on FlashRAG git code
     def __init__(self, args, device, look_ahead_steps=64):
         super().__init__(args, device)
         self.system_prompt = SYSTEM_PROMPT_COT

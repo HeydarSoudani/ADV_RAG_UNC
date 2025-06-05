@@ -225,11 +225,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
     
@@ -256,7 +256,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
+    parser.add_argument('--rag_method', type=str, default='react', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot',
         'flare', 'dragin',
@@ -272,7 +272,7 @@ if __name__ == "__main__":
     parser.add_argument('--hallucination_threshold', type=float, default=0.08)                                 # for FLARE & DRAGIN
     parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
     parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
-    parser.add_argument('--max_iter', type=int, default=5)                                                    # for IRCoT & FLARE
+    parser.add_argument('--max_iter', type=int, default=5)
     
     # Others
     parser.add_argument('--device', type=int, default=0)
