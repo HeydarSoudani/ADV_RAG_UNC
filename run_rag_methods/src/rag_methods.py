@@ -17,7 +17,9 @@ from run_rag_methods.src.templetes import (
     SYSTEM_PROMPT_DIRECT, SYSTEM_PROMPT_COT, SYSTEM_PROMPT_IRCOT,
     SYSTEM_PROMPT_DRAGIN,
     SELF_ASK_PROMPT_SINGLE_HOP, SELF_ASK_PROMPT_MULTI_HOP,
-    REACT_INSTRUCTION
+    REACT_INSTRUCTION,
+    get_singleqa_search_o1_instruction, get_multiqa_search_o1_instruction,
+    get_task_instruction_openqa
 )
 from utils.general_utils import passages2string
 
@@ -1272,10 +1274,29 @@ class ReAct_RAG(BasicRAG):
 class SearchO1_RAG(BasicRAG):
     def __init__(self, args, device):
         super().__init__(args, device)
+        
+        # Define special tokens
+        self.BEGIN_SEARCH_QUERY = "<|begin_search_query|>"
+        self.END_SEARCH_QUERY = "<|end_search_query|>"
+        self.BEGIN_SEARCH_RESULT = "<|begin_search_result|>"
+        self.END_SEARCH_RESULT = "<|end_search_result|>"
+
+        self.MAX_SEARCH_LIMIT = 5
+        if args.dataset in ['hotpotqa', 'musique', '2wikimultihopqa', 'bamboogle']:
+            self.MAX_SEARCH_LIMIT = 10
+            self.MAX_TURN = 15
+
+        if args.dataset in ['nq', 'triviaqa']:
+            self.instruction = get_singleqa_search_o1_instruction(self.MAX_SEARCH_LIMIT)
+        elif args.dataset in ['hotpotqa', 'musique', '2wikimultihopqa', 'bamboogle']:
+            self.instruction = get_multiqa_search_o1_instruction(self.MAX_SEARCH_LIMIT)
 
     def inference(self, question):
-        pass
-
+        user_prompt = get_task_instruction_openqa(question)
+        prompt = [{"role": "user", "content": self.instruction + user_prompt}]
+        # TODO
+        
+        
 class SearchR1_RAG(BasicRAG):
     def __init__(self, args, device):
         super().__init__(args, device)
