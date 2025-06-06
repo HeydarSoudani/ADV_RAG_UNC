@@ -89,6 +89,27 @@ class Candidate:
                         print(f"Failed to generate 'paraphrased queries' after all retries for query {self.qid}!!!")
                         paraphrased_queries = []
                 
+                # Check if the number of paraphrased_queries is equal to "repeat"
+                if paraphrased_queries is None:
+                    paraphrased_queries = []
+                
+                max_iterations = 10
+                iteration = 0
+                while len(paraphrased_queries) != repeat and iteration < max_iterations:
+                    remaining = repeat - len(paraphrased_queries)        
+                    extra_prompt = search_query_generator.get_instruction(original_sq, n=remaining)
+                    extra_output = search_query_generator.generate(extra_prompt, temperature=1.0)[0]
+                    extra_queries = get_paraphrased_query(extra_output)
+
+                    if extra_queries:
+                        paraphrased_queries.extend(extra_queries)
+                        paraphrased_queries = paraphrased_queries[:repeat]  # trim if over
+                    else:
+                        print(f"Failed to generate extra queries on iteration {iteration + 1}")
+                    iteration += 1
+                if len(paraphrased_queries) != repeat:
+                    print(f"Warning: Only generated {len(paraphrased_queries)} queries out of {repeat} after {iteration} iterations.")
+                
                 ## Step 2: Generating new masked traces
                 for paraphrased_query in paraphrased_queries:
                     new_trace = {}
@@ -108,6 +129,7 @@ class Candidate:
                     }
                     
                     # After break point: next think_search steps
+                    # TODO: I think here exists a problem, think is not generated!!!
                     for i in range(selected_index+1, think_answer_index):
                         thinks, search_query, ret_docs = node_generator.generate_think_search(new_trace)
                         new_trace[i] = {
@@ -119,6 +141,7 @@ class Candidate:
                         }
                     
                     # Last step: think_answer
+                    # TODO: I think here exists a problem, think is not generated!!!
                     think, most_likely_answer, reward, _ = node_generator.generate_think_answer(new_trace)
                     new_trace[think_answer_index] = {
                         "think_answer": {

@@ -225,11 +225,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='2wikimultihopqa', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
     
@@ -300,10 +300,10 @@ if __name__ == "__main__":
 
     ### === Run Steps ============================
     set_seed(args.seed)
-    rag_generation(args)
-    # merge_result_files(args)
+    # rag_generation(args)
+    merge_result_files(args)
     # get_num_retrieval(args)
-    # evaluate(args)
+    evaluate(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py
