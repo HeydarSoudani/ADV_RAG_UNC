@@ -4,8 +4,8 @@
 #SBATCH --gpus=4
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_h100
-#SBATCH --time=2:00:00
-#SBATCH --mem=80GB
+#SBATCH --time=3:00:00
+#SBATCH --mem=22GB
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -15,8 +15,8 @@ module load Python/3.12.3-GCCcore-13.3.0
 ### === Set variables ==========================
 model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
 paraphrase_model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="bamboogle"
-subsec="test"
+dataset="hotpotqa"
+subsec="dev"
 fraction_of_data_to_use=1.0
 retriever_name="rerank_l6"
 index_path="data/search_r1_files/bm25"
@@ -24,7 +24,7 @@ retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
 rag_method="search_r1"
 query_formulation="direct"
 hallucination_threshold=0.08
-run="run_1 (rag_methods_2k)"
+run="run_4 (rag_methods_500)"
 
 
 accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_mcts/analysis/ragc_searchr1.py \

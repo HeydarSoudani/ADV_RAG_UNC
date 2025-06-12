@@ -210,8 +210,8 @@ def subsample_generation(args):
     src_dir = args.generation_trees_results_dir
     
     # === Output file 
-    run_ = "run_4 (mcts_500_rollout4)"
-    # run_ = "run_5 (mcts_500_rollout8)"
+    run_ = "run_5 (mcts_500_rollout4)"
+    # run_ = "run_6 (mcts_500_rollout8)"
     model_ = args.model_name_or_path.split('/')[-1]
     output_dir = f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     dst_dir = f'{output_dir}/generation_trees'

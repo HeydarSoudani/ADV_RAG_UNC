@@ -15,6 +15,7 @@ from sklearn.metrics import roc_auc_score
 
 from utils.general_utils import set_seed
 from run_rag_methods.src.rag_methods import *
+from run_rag_methods.src.correctness import em_score
 from run_mcts.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from run_mcts.src.models.generate_paraphrase import (
@@ -301,11 +302,18 @@ def merge_result_files(args):
 
 def evaluation(args):
     correctness_list, consistency_list = [], []
-    with open(args.inference_results_file, 'r') as infile:
+    with open(args.consistency_results_file, 'r') as infile:
         for line in infile:
             data = json.loads(line)
             correctness_list.append(data['em'])
-            consistency_list.append(data['consistency'])
+            # consistency_list.append(data['consistency'])
+            
+            # Consistency with EM
+            answer_list, prediction = data['answer_list'], data['pred_answer']
+            num_answers = len(answer_list)
+            num_consistent = sum(em_score(ans, prediction) for ans in answer_list if ans != None)
+            consistency_list.append(num_consistent / num_answers)
+            
     
     print("\nEvaluation Result:")    
     print(f"AUROC: {get_auroc(correctness_list, consistency_list)}")

@@ -7,6 +7,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import json
 import glob
 import torch
+import shutil
+import random
 import argparse
 import datasets
 from tqdm import tqdm
@@ -216,6 +218,32 @@ def evaluate(args):
     print(f"EM (full): {np.mean(em_full_evaluation)*100}")
     print(f"EM (sub): {np.mean(em_sub_evaluation)*100}")
 
+def subsample_generation(args):
+    sample_size = 500
+    src_file = args.inference_results_file
+    
+    model_ = args.model_name_or_path.split('/')[-1]
+    run_ = "run_4 (rag_methods_500)"
+    dst_output_dir = f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}" \
+        if args.rag_method in ['direct_inference', 'cot_inference'] \
+        else f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"
+    os.makedirs(dst_output_dir, exist_ok=True)
+    
+    dst_inference_results_file = f"{dst_output_dir}/inference_results_th{args.hallucination_threshold}.jsonl" \
+        if args.rag_method in ['flare', 'dragin'] \
+        else f"{dst_output_dir}/inference_results.jsonl"
+    
+
+    with open(src_file, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    if len(lines) < sample_size:
+        raise ValueError(f"Input file only has {len(lines)} lines, but {sample_size} are required.")
+    
+    sampled_lines = random.sample(lines, sample_size)
+    with open(dst_inference_results_file, 'w', encoding='utf-8') as f:
+        for line in sampled_lines:
+            f.write(line)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -225,11 +253,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
     
@@ -276,7 +304,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_0 (rag_methods_2k)')
+    parser.add_argument('--run', type=str, default='run_1 (rag_methods_2k)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -300,10 +328,11 @@ if __name__ == "__main__":
 
     ### === Run Steps ============================
     set_seed(args.seed)
-    rag_generation(args)
+    # rag_generation(args)
     # merge_result_files(args)
     # get_num_retrieval(args)
     # evaluate(args)
+    subsample_generation(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py
