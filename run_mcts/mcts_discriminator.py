@@ -81,8 +81,8 @@ def mcts_discrimination(args):
         discriminate_results_file_ranked = f"{args.output_dir}/discrimination_results_{args.discriminator_method}_rank{accelerator.process_index}.jsonl"
         with open(discriminate_results_file_ranked, 'w', encoding='utf-8') as res_f:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 10:
-                #     break
+                if i == 10:
+                    break
                 # === Generating answer candidates
                 final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
                 all_traces = read_jsonl(final_solutions_file)
@@ -209,8 +209,8 @@ if __name__ == "__main__":
     parser.add_argument("--save_tree", action="store_true")
     parser.add_argument("--num_rollouts", type=int, default=8)
     parser.add_argument("--max_depth_allowed", type=int, default=10)
-    parser.add_argument("--num_votes", type=int, default=2)
-    parser.add_argument("--mcts_num_last_votes", type=int, default=5)
+    parser.add_argument("--num_votes", type=int, default=1)
+    parser.add_argument("--mcts_num_last_votes", type=int, default=1)
     parser.add_argument("--enable_potential_score", action="store_true")
     
     # Discrimination ---
@@ -236,6 +236,9 @@ if __name__ == "__main__":
     args.generation_trees_results_dir = f'{args.output_dir}/generation_trees'
     args.discrimination_results_file = f"{args.output_dir}/discrimination_results_{args.discriminator_method}.jsonl"
     
+    args.reasoning_path_generations_dir = f'{args.output_dir}/paraphrased_paths'
+    os.makedirs(args.reasoning_path_generations_dir, exist_ok=True)
+    
     # === Prompt files =============
     args.query_decomposition_prompt_file = "run_mcts/prompts/query_decomposition_prompt_template.txt"
     args.semantic_equivalence_prompt_file = "run_mcts/prompts/semantic_equivalence_prompt_template.txt"
@@ -243,9 +246,9 @@ if __name__ == "__main__":
     ### === Run Steps ==============
     set_seed(args.seed)
     
-    # mcts_discrimination(args)
+    mcts_discrimination(args)
     # merge_result_files(args)
-    mcts_evaluation(args)
+    # mcts_evaluation(args)
     
     # python run_mcts/mcts_discriminator.py
     # accelerate launch --multi_gpu run_mcts/mcts_discriminator.py

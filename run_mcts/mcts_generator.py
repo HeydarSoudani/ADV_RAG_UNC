@@ -315,6 +315,9 @@ if __name__ == "__main__":
     args.discrimination_results_file = f"{args.output_dir}/discrimination_results_{args.discriminator_method}.jsonl"
     os.makedirs(args.generation_trees_results_dir, exist_ok=True)
     
+    args.reasoning_path_generations_dir = f'{args.output_dir}/paraphrased_paths'
+    os.makedirs(args.reasoning_path_generations_dir, exist_ok=True)
+    
     # === Prompt files =============
     args.query_decomposition_prompt_file = "run_mcts/prompts/query_decomposition_prompt_template.txt"
     args.semantic_equivalence_prompt_file = "run_mcts/prompts/semantic_equivalence_prompt_template.txt"
@@ -330,8 +333,8 @@ if __name__ == "__main__":
         
     ### === Run Steps =============
     set_seed(args.seed)
-    # mcts_generation(args)
-    subsample_generation(args)
+    mcts_generation(args)
+    # subsample_generation(args)
     
     
     # python run_mcts/mcts_generator.py

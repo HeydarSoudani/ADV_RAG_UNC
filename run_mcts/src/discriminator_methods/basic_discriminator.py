@@ -201,6 +201,7 @@ class BasicDiscriminator:
             answer2score = filtered_answer2score
         return winner, answer2score
 
+    # Following rStar & RASPberry
     def _calculate_scores(self, question:str, unfiltered_candidates: list[Candidate], filtered_candidates: list[Candidate]) -> dict:
         _, filtered_answer2confidence, filtered_answer2cnt = self.group_candidates_by_answer(
             question, filtered_candidates, self.args.rc_criteria

@@ -1338,6 +1338,8 @@ If you find no further external knowledge needed, you can directly provide the a
         path, cnt = [], 0
         while True:
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
+            print(output_text)
+            print('----')
             if output_[-1].item() in self.generator.curr_eos:
                 break
         
@@ -1363,6 +1365,52 @@ If you find no further external knowledge needed, you can directly provide the a
         path.append({'think': one_step_think, 'answer': pred_answer})
             
         return pred_answer, path
+    
+    def inference_with_partial_trace(self, question, generated_trace):
+        input_prompt = self.prompt.format(question=question)
+        
+        generated_trace_text = ''.join(
+            self.curr_search_template.format(
+                output_text=f"<think> {step['think'] }</think>\n<search> {step['search_query']} </search>\n",
+                search_results=passages2string(step['docs'])
+            ) for step in generated_trace
+        )
+        print(input_prompt + generated_trace_text)
+        print('---')
+        messages = [{"role": "user", "content": input_prompt + generated_trace_text}]
+        
+        path, cnt = [], 0
+        while True:
+            output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
+            print(output_text)
+            print('---***\n')
+            
+            if output_[-1].item() in self.generator.curr_eos:
+                break
+        
+            tmp_query = self.get_query(output_text)
+            if tmp_query:
+                search_docs = self.retriever.search(tmp_query)
+                search_results = passages2string(search_docs)
+            else:
+                search_docs, search_results = [], ''
+
+            path.append({
+                'think': self.get_think(output_text),
+                'search_query': tmp_query,
+                'docs': search_docs
+            })
+            search_text = self.curr_search_template.format(output_text=output_text, search_results=search_results)
+            input_prompt += search_text
+            messages = [{"role": "user", "content": input_prompt}]
+            cnt += 1
+
+        one_step_think = self.get_think(output_text)
+        pred_answer = self.get_answer(output_text)
+        path.append({'think': one_step_think, 'answer': pred_answer})
+            
+        return pred_answer, path
+    
         
         
         

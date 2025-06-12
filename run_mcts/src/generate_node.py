@@ -588,10 +588,6 @@ class Generator:
         initial_output = self.generate_(input_prompt_text, self.search_stopping_criteria, num_return=1)[0]        
         if self.args.use_counter:
             self.counter.add_generate(initial_output, self.tokenizer)
-        # print('\n\n')
-        # print(input_prompt_text)
-        # print('\n-------')
-        # print(initial_output)
         
         ### = Post-processing
         thinks, search_query = self.think_search_postprocessing(solution_trace, input_prompt_text, initial_output)
@@ -611,65 +607,15 @@ class Generator:
         
         ### = Do generation
         input_prompt_text = self.get_prompt_text('think_answer', solution_trace)
-        initial_output = self.generate_(
-            input_prompt_text,
-            self.answer_stopping_criteria,
-            max_new_tokens=self.args.max_new_tokens
-        )[0] 
+        initial_output = self.generate_(input_prompt_text, self.answer_stopping_criteria)[0] 
         if self.args.use_counter:
             self.counter.add_generate(initial_output, self.tokenizer)
-        # print('\n\n')
-        # print(input_prompt_text)
-        # print('\n-------')
-        # print(initial_output)
         
         ### = Post-processing
         think, most_likely_answer = self.think_answer_postprocessing(solution_trace, input_prompt_text, initial_output)
         
-        ### = Uncertainty Estimation
-        # context = get_context(solution_trace, self.args, nlevel=-1)
-        # if len(context) > 0:
-        #     ue_scores_cont = self.uncertainty_estimator.estimate(
-        #         context = context,
-        #         question = user_question,
-        #         generation_type = "new_generations"
-        #     )
-        #     ue_scores_param = self.uncertainty_estimator.estimate(
-        #         context = [],
-        #         question = user_question,
-        #         generation_type = "existing_generations",
-        #         generated_texts = ue_scores_cont['generated_texts']
-        #         # generated_texts=[most_likely_answer]
-        #     )
-        # else:
-        #     ue_scores_param = self.uncertainty_estimator.estimate(
-        #         context = [],
-        #         question = user_question,
-        #         generation_type = "new_generations",
-        #     )
-        #     ue_scores_cont = ue_scores_param
-        
-        # ue_scores = {
-        #     'param': ue_scores_param["scores"],
-        #     'cont': ue_scores_cont["scores"]
-        # }
-        ue_scores=None
-        
-        ### = Passage utility 
-        # pu_score = self.passage_utility(context, user_question, most_likely_answer)
-        pu_score = (0.0, 0.0)
-        
-        ### = Get self-consistency
-        input_prompt_text_ = input_prompt_text + f'<think> {think} </think>\n'
-        output_list = self.generate_(input_prompt_text_, self.answer_stopping_criteria, num_return=self.mcts_num_last_votes)
-        answer_list = [get_answer(output) for output in output_list]
-        answer_list_ = [most_likely_answer] if len(answer_list) == 0 else [ans for ans in answer_list if ans]
-        if len(answer_list_) > 0:
-            answer, sc_value = self._get_most_likely_answer(user_query=user_question, output_list=answer_list_)
-        else:
-            sc_value = 0.001
-        
-        # reward = inverse_sigmoid(ue_scores['cont']['SE']['uncertainty'], k=0.8)
+        ### = UE score 
+        ue_scores, pu_score, sc_value = None, (0.0, 0.0), 1.0
         reward = sc_value
         
         return think, most_likely_answer, reward, (sc_value, ue_scores, pu_score)
@@ -891,3 +837,84 @@ class Generator:
             text_doc_ = '' if text_doc == None else text_doc.replace('\n', ' ')
             return text_doc_
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ==== With uncertianty estimation
+# def generate_think_answer(self, solution_trace: Dict[int, Dict[str, str]]):
+#     user_question = solution_trace[0]['user_question']
+    
+#     ### = Do generation
+#     input_prompt_text = self.get_prompt_text('think_answer', solution_trace)
+#     initial_output = self.generate_(input_prompt_text, self.answer_stopping_criteria)[0] 
+#     if self.args.use_counter:
+#         self.counter.add_generate(initial_output, self.tokenizer)
+    
+#     ### = Post-processing
+#     think, most_likely_answer = self.think_answer_postprocessing(solution_trace, input_prompt_text, initial_output)
+    
+#     ### = Uncertainty Estimation
+#     # context = get_context(solution_trace, self.args, nlevel=-1)
+#     # if len(context) > 0:
+#     #     ue_scores_cont = self.uncertainty_estimator.estimate(
+#     #         context = context,
+#     #         question = user_question,
+#     #         generation_type = "new_generations"
+#     #     )
+#     #     ue_scores_param = self.uncertainty_estimator.estimate(
+#     #         context = [],
+#     #         question = user_question,
+#     #         generation_type = "existing_generations",
+#     #         generated_texts = ue_scores_cont['generated_texts']
+#     #         # generated_texts=[most_likely_answer]
+#     #     )
+#     # else:
+#     #     ue_scores_param = self.uncertainty_estimator.estimate(
+#     #         context = [],
+#     #         question = user_question,
+#     #         generation_type = "new_generations",
+#     #     )
+#     #     ue_scores_cont = ue_scores_param
+    
+#     # ue_scores = {
+#     #     'param': ue_scores_param["scores"],
+#     #     'cont': ue_scores_cont["scores"]
+#     # }
+#     ue_scores=None
+    
+#     ### = Passage utility 
+#     # pu_score = self.passage_utility(context, user_question, most_likely_answer)
+#     pu_score = (0.0, 0.0)
+    
+#     # ### = Get self-consistency
+#     # input_prompt_text_ = input_prompt_text + f'<think> {think} </think>\n'
+#     # output_list = self.generate_(input_prompt_text_, self.answer_stopping_criteria, num_return=self.mcts_num_last_votes)
+#     # answer_list = [get_answer(output) for output in output_list]
+#     # answer_list_ = [most_likely_answer] if len(answer_list) == 0 else [ans for ans in answer_list if ans]
+#     # if len(answer_list_) > 0:
+#     #     answer, sc_value = self._get_most_likely_answer(user_query=user_question, output_list=answer_list_)
+#     # else:
+#     #     sc_value = 0.001
+#     # # reward = inverse_sigmoid(ue_scores['cont']['SE']['uncertainty'], k=0.8)
+#     # reward = sc_value
+#     sc_value = 1.0
+#     reward = sc_value
+    
+#     return think, most_likely_answer, reward, (sc_value, ue_scores, pu_score)
