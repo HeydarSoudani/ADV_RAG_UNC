@@ -8,11 +8,10 @@ import glob
 import torch
 import random
 import argparse
-import numpy as np
+import transformers
 from tqdm import tqdm
 from accelerate import Accelerator
-from accelerate.utils import gather_object
-import transformers
+from sklearn.metrics import roc_auc_score
 
 from utils.general_utils import set_seed
 from run_rag_methods.src.rag_methods import *
@@ -23,6 +22,13 @@ from run_mcts.src.models.generate_paraphrase import (
     get_paraphrased_query, get_paraphrased_think
 )
 
+def get_auroc(correctness, confidence):
+    try:
+        auroc = roc_auc_score(correctness, confidence)
+    except:
+        print("Auroc couldn't be calculated because there is only one class. Returning 0.5 as auroc.")
+        auroc = 0.5
+    return auroc
 
 class RAGConsistency:
     def __init__(self, device, args):
@@ -57,15 +63,15 @@ class RAGConsistency:
         masked_traces = []
         has_search = len(trace) > 1
         
-        print(trace)
-        print('------')
+        # print(trace)
+        # print('------')
         
         if has_search:
             think_search_indices = range(0, len(trace)-1)
             selected_indices = random.choices(think_search_indices, k=repeats)
             selected_indices_group = [(x, selected_indices.count(x)) for x in sorted(set(selected_indices))]
             
-            print(selected_indices_group)
+            # print(selected_indices_group)
             for (selected_index, repeat) in selected_indices_group:
                 
                 #! Step 1: Generating paraphrased search queries 
@@ -109,10 +115,10 @@ class RAGConsistency:
                 if len(paraphrased_queries) != repeat:
                     print(f"Warning: Only generated {len(paraphrased_queries)} queries out of {repeat} after {iteration} iterations.")
                 
-                print(original_sq)
-                print('--')
-                print(paraphrased_queries)
-                print('------')
+                # print(original_sq)
+                # print('--')
+                # print(paraphrased_queries)
+                # print('------')
                 
                 #! Step 2: Generating new masked traces
                 for paraphrased_query in paraphrased_queries:
@@ -134,9 +140,9 @@ class RAGConsistency:
                     _, rest_of_trace = self.rag_model.inference_with_partial_trace(question, new_trace)
                     new_trace.extend(rest_of_trace)
                     
-                    print(new_trace)
-                    print("============")
-                    print("============")
+                    # print(new_trace)
+                    # print("============")
+                    # print("============")
                     
                     masked_traces.append(new_trace)
         
@@ -176,8 +182,7 @@ class RAGConsistency:
         masked_traces = self.get_masked_traces(qid, question, trace, repeats)
         answer_list = [masked_trace[-1].get("answer", '') for masked_trace in masked_traces]
         num_consistent = sum(self.se_model.check_answers_equiv(question, prediction, ans) for ans in answer_list)
-        return num_consistent / repeats
-        
+        return num_consistent / repeats, answer_list, masked_traces
 
 def rag_consistency_score(args):
     # === MultiGPU setup =======================
@@ -220,30 +225,96 @@ def rag_consistency_score(args):
     with accelerator.split_between_processes(filtered_sorted_query_ids) as sorted_query_ids_shard:
         consistency_results_file_ranked = f"{args.output_dir}/consistency_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl" \
             if args.rag_method in ['flare', 'dragin'] else f"{args.output_dir}/consistency_results_rank{accelerator.process_index}.jsonl"
+        masked_traces_results_file_ranked = f"{args.output_dir}/masked_traces_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl" \
+            if args.rag_method in ['flare', 'dragin'] else f"{args.output_dir}/masked_traces_results_rank{accelerator.process_index}.jsonl"
         
-        with open(consistency_results_file_ranked, 'w', encoding='utf-8') as res_f:
+        with open(consistency_results_file_ranked, 'w', encoding='utf-8') as cons_f, open(masked_traces_results_file_ranked, 'w', encoding='utf-8') as trace_f:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                if i == 1:
-                    break
+                # if i == 10:
+                #     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
-                consistency_score = ragc.get_score(qid, user_query, prediction, trace, repeats=5)
+                consistency_score, answer_list, masked_traces = ragc.get_score(qid, user_query, prediction, trace, repeats=10)
                 print(consistency_score)
-                item = {
+                
+                #! == Print 
+                # Remove contents from docs
+                new_masked_traces = [
+                    [
+                        {
+                            "think": step["think"],
+                            "search_query": step["search_query"],
+                            "docs": [{"id": doc["id"]} for doc in step["docs"]]
+                        } if "docs" in step else step
+                        for step in masked_trace
+                    ]
+                    for masked_trace in masked_traces
+                ]
+                
+                cons_item = {
                     "qid": qid,
                     "query": user_query,
                     "gt_answers": sample['gt_answers'],
                     "pred_answer": prediction,
                     "em": sample['em'],
-                    'consistency': consistency_score
+                    "consistency": consistency_score,
+                    "answer_list": answer_list
                 }
-                res_f.write(json.dumps(item) + '\n')
-            
+                trace_item = {
+                    "qid": qid,
+                    "query": user_query,
+                    "masked_traces": new_masked_traces
+                }
+                cons_f.write(json.dumps(cons_item) + '\n')
+                trace_f.write(json.dumps(trace_item) + '\n')
+
+def merge_result_files(args):
+    if args.rag_method in ['flare', 'dragin']:
+        consistency_results_shard_file = f"{args.output_dir}/consistency_results_th{args.hallucination_threshold}_rank*.jsonl"
+        masked_traces_results_shard_file = f"{args.output_dir}/masked_traces_results_th{args.hallucination_threshold}_rank*.jsonl"
+    else:
+        consistency_results_shard_file = f"{args.output_dir}/consistency_results_rank*.jsonl"
+        masked_traces_results_shard_file = f"{args.output_dir}/masked_traces_results_rank*.jsonl"
+
+    consistency_results_shard_file = sorted(glob.glob(consistency_results_shard_file))
+    masked_traces_results_shard_file = sorted(glob.glob(masked_traces_results_shard_file))
+    
+    with open(args.consistency_results_file, "a") as fout:
+        for shard_file in consistency_results_shard_file:
+            if shard_file == args.consistency_results_file:
+                continue
+            with open(shard_file, "r") as fin:
+                for line in fin:
+                    fout.write(line)
+            os.remove(shard_file)
+            print(f"Deleted shard file: {shard_file}")
+    
+    with open(args.masked_traces_results_file, "a") as fout:
+        for shard_file in masked_traces_results_shard_file:
+            if shard_file == args.masked_traces_results_file:
+                continue
+            with open(shard_file, "r") as fin:
+                for line in fin:
+                    fout.write(line)
+            os.remove(shard_file)
+            print(f"Deleted shard file: {shard_file}")
+
+def evaluation(args):
+    correctness_list, consistency_list = [], []
+    with open(args.inference_results_file, 'r') as infile:
+        for line in infile:
+            data = json.loads(line)
+            correctness_list.append(data['em'])
+            consistency_list.append(data['consistency'])
+    
+    print("\nEvaluation Result:")    
+    print(f"AUROC: {get_auroc(correctness_list, consistency_list)}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo-v0.3")
+    parser.add_argument('--model_name_or_path', type=str, default="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo")
     parser.add_argument('--paraphrase_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
@@ -299,7 +370,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_0 (rag_methods_2k)')
+    parser.add_argument('--run', type=str, default='run_1 (rag_methods_2k)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -317,9 +388,11 @@ if __name__ == "__main__":
     if args.rag_method in ['flare', 'dragin']:
         args.inference_results_file = f"{args.output_dir}/inference_results_th{args.hallucination_threshold}.jsonl"
         args.consistency_results_file = f"{args.output_dir}/consistency_results_th{args.hallucination_threshold}.jsonl"
+        args.masked_traces_results_file = f"{args.output_dir}/masked_traces_results_th{args.hallucination_threshold}.jsonl"
     else:
         args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
         args.consistency_results_file = f"{args.output_dir}/consistency_results.jsonl"
+        args.masked_traces_results_file = f"{args.output_dir}/masked_traces_results.jsonl"
         
     os.makedirs(os.path.dirname(args.output_dir), exist_ok=True)
     
@@ -331,7 +404,7 @@ if __name__ == "__main__":
     set_seed(args.seed)
     rag_consistency_score(args)
     # merge_result_files(args)
-    # mcts_evaluation(args)
+    # evaluation(args)
     
     # python run_mcts/analysis/ragc_searchr1.py
     # accelerate launch --multi_gpu run_mcts/analysis/ragc_searchr1.py

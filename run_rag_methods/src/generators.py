@@ -40,8 +40,8 @@ class LLMGenerator:
         self.generator = transformers.AutoModelForCausalLM.from_pretrained(
             args.model_name_or_path,
             torch_dtype=torch.bfloat16,
-            attn_implementation="eager"
-        ).to(self.device) # 
+            # attn_implementation="eager" # Disable this for searchR1
+        ).to(self.device)
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path) #  use_fast=False
         self.eos_token_ids = self.generator.config.eos_token_id
         

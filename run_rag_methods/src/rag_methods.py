@@ -1311,7 +1311,8 @@ If you find no further external knowledge needed, you can directly provide the a
         pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
         matches = pattern.findall(text)
         if matches:
-            return matches[-1]
+            # return matches[-1]
+            return matches[0]
         else:
             return None
 
@@ -1319,7 +1320,8 @@ If you find no further external knowledge needed, you can directly provide the a
         pattern = re.compile(r"<search>(.*?)</search>", re.DOTALL)
         matches = pattern.findall(text)
         if matches:
-            return matches[-1]
+            # return matches[-1]
+            return matches[0]
         else:
             return None
 
@@ -1327,7 +1329,8 @@ If you find no further external knowledge needed, you can directly provide the a
         pattern = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
         matches = pattern.findall(text)
         if matches:
-            return matches[-1]
+            # return matches[-1]
+            return matches[0]
         else:
             return None
 
@@ -1338,8 +1341,10 @@ If you find no further external knowledge needed, you can directly provide the a
         path, cnt = [], 0
         while True:
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
-            print(output_text)
-            print('----')
+            
+            # print(self.generator.tokenizer.decode(output_, skip_special_tokens=True))
+            # # print(output_text)
+            # print('----')
             if output_[-1].item() in self.generator.curr_eos:
                 break
         
@@ -1375,15 +1380,15 @@ If you find no further external knowledge needed, you can directly provide the a
                 search_results=passages2string(step['docs'])
             ) for step in generated_trace
         )
-        print(input_prompt + generated_trace_text)
-        print('---')
+        # print(input_prompt + generated_trace_text)
+        # print('---')
         messages = [{"role": "user", "content": input_prompt + generated_trace_text}]
         
         path, cnt = [], 0
         while True:
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
-            print(output_text)
-            print('---***\n')
+            # print(output_text)
+            # print('---***\n')
             
             if output_[-1].item() in self.generator.curr_eos:
                 break
