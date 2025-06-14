@@ -15,7 +15,7 @@ from tqdm import tqdm
 from accelerate import Accelerator
 from accelerate.utils import gather_object
 
-from utils.general_utils import set_seed
+from utils.general_utils import set_seed, sample_sorted_qids, extract_qid_number
 from run_rag_methods.src.rag_methods import *
 from run_rag_methods.src.correctness import em_score, subem_score, f1_score
 
@@ -219,30 +219,48 @@ def evaluate(args):
     print(f"EM (sub): {np.mean(em_sub_evaluation)*100}")
 
 def subsample_generation(args):
+    
+    def get_all_qids_from_jsonl(jsonl_file):
+        qids = []
+        with open(jsonl_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                match = re.search(r'"qid"\s*:\s*"([^"]+)"', line)
+                if match:
+                    qids.append(match.group(1))
+        return qids
+
     sample_size = 500
     src_file = args.inference_results_file
     
+    # Subsampling qids
+    all_qids = get_all_qids_from_jsonl(src_file)
+    sampled_qids = sample_sorted_qids(all_qids, sample_size=sample_size)
+    qid_set = set(sampled_qids)
+    
+    # dst file
     model_ = args.model_name_or_path.split('/')[-1]
-    run_ = "run_4 (rag_methods_500)"
+    run_ = f"run_4 (rag_methods_{sample_size})"
     dst_output_dir = f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}" \
         if args.rag_method in ['direct_inference', 'cot_inference'] \
         else f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"
     os.makedirs(dst_output_dir, exist_ok=True)
-    
     dst_inference_results_file = f"{dst_output_dir}/inference_results_th{args.hallucination_threshold}.jsonl" \
         if args.rag_method in ['flare', 'dragin'] \
         else f"{dst_output_dir}/inference_results.jsonl"
     
-
-    with open(src_file, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
-    if len(lines) < sample_size:
-        raise ValueError(f"Input file only has {len(lines)} lines, but {sample_size} are required.")
+    matched_data = []
+    with open(src_file, 'r', encoding='utf-8') as fin:
+        for line in fin:
+            data = json.loads(line)
+            qid = data.get('qid', '')
+            if qid in qid_set:
+                matched_data.append(data)
+    matched_data.sort(key=lambda item: extract_qid_number(item.get('qid', '')))
     
-    sampled_lines = random.sample(lines, sample_size)
-    with open(dst_inference_results_file, 'w', encoding='utf-8') as f:
-        for line in sampled_lines:
-            f.write(line)
+    with open(dst_inference_results_file, 'w', encoding='utf-8') as fout:
+        for item in matched_data:
+            fout.write(json.dumps(item) + '\n')
+
 
 
 if __name__ == "__main__":
@@ -382,3 +400,40 @@ if __name__ == "__main__":
 # "stat": stat,
 # "n_hallucination": n_halluc,
 # "generation_path": gen_path,
+
+
+
+# def subsample_generation(args):
+    
+#     def extract_qid_number(line):
+#         match = re.search(r'"qid"\s*:\s*"[^_]*_(\d+)"', line)
+#         return int(match.group(1)) if match else float('inf')
+    
+#     sample_size = 500
+#     src_file = args.inference_results_file
+    
+#     model_ = args.model_name_or_path.split('/')[-1]
+#     run_ = "run_4 (rag_methods_500)"
+#     dst_output_dir = f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}" \
+#         if args.rag_method in ['direct_inference', 'cot_inference'] \
+#         else f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"
+#     os.makedirs(dst_output_dir, exist_ok=True)
+    
+#     dst_inference_results_file = f"{dst_output_dir}/inference_results_th{args.hallucination_threshold}.jsonl" \
+#         if args.rag_method in ['flare', 'dragin'] \
+#         else f"{dst_output_dir}/inference_results.jsonl"
+    
+
+#     with open(src_file, 'r', encoding='utf-8') as f:
+#         lines = f.readlines()
+#     lines.sort(key=extract_qid_number)
+
+#     if len(lines) < sample_size:
+#         raise ValueError(f"Input file only has {len(lines)} lines, but {sample_size} are required.")
+    
+#     sampled_lines = random.sample(lines, sample_size)
+#     sampled_lines.sort(key=extract_qid_number)
+#     with open(dst_inference_results_file, 'w', encoding='utf-8') as f:
+#         for line in sampled_lines:
+#             f.write(line)
+

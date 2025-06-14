@@ -45,7 +45,6 @@ def read_jsonl(file_path):
                 data.append(json.loads(line))
     return data
 
-
 def check_system_prompt_support(tokenizer):
     chat = [{"role": "system", "content": 'Test'},]
     try:
@@ -112,7 +111,6 @@ def get_answer(text):
         return matches[-1]
     else:
         return None
-    
 
 def get_document(text):
     pattern = re.compile(r"<document>(.*?)</document>", re.DOTALL)
@@ -149,7 +147,6 @@ def passages2string_v2(retrieval_result):
 
 
 # ============================
-
 def check_entailment(
     model_for_entailment: PreTrainedModel,
     tokenizer_for_entailment: PreTrainedTokenizer,
@@ -229,7 +226,6 @@ def calculate_jaccard_similarity(text1: str, text2: str) -> float:
     union = (vectors[0] | vectors[1]).sum()
     return intersection / union if union != 0 else 0
 
-
 def bidirectional_entailment_clustering(
     model_for_entailment: PreTrainedModel,
     tokenizer_for_entailment: PreTrainedTokenizer,
@@ -280,3 +276,20 @@ def bidirectional_entailment_clustering(
             clusters.append([s_m])
 
     return clusters
+
+
+# ============================
+def extract_qid_number(qid):
+    """Extracts the numeric part from qid like 'dev_12' -> 12."""
+    match = re.search(r'_(\d+)$', qid)
+    return int(match.group(1)) if match else float('inf')
+
+def sort_qids_numerically(qid_list):
+    return sorted(qid_list, key=extract_qid_number)
+
+def sample_sorted_qids(qid_list, sample_size):
+    sorted_qids = sort_qids_numerically(qid_list)
+    return sorted(random.sample(sorted_qids, sample_size), key=extract_qid_number)
+
+
+

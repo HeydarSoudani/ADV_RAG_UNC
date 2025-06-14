@@ -236,10 +236,8 @@ def rag_consistency_score(args):
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 consistency_score, answer_list, masked_traces = ragc.get_score(qid, user_query, prediction, trace, repeats=10)
-                print(consistency_score)
                 
                 #! == Print 
-                # Remove contents from docs
                 new_masked_traces = [
                     [
                         {
@@ -306,13 +304,13 @@ def evaluation(args):
         for line in infile:
             data = json.loads(line)
             correctness_list.append(data['em'])
-            # consistency_list.append(data['consistency'])
+            consistency_list.append(data['consistency'])
             
             # Consistency with EM
-            answer_list, prediction = data['answer_list'], data['pred_answer']
-            num_answers = len(answer_list)
-            num_consistent = sum(em_score(ans, prediction) for ans in answer_list if ans != None)
-            consistency_list.append(num_consistent / num_answers)
+            # answer_list, prediction = data['answer_list'], data['pred_answer']
+            # num_answers = len(answer_list)
+            # num_consistent = sum(em_score(ans, prediction) for ans in answer_list if ans != None)
+            # consistency_list.append(num_consistent / num_answers)
             
     
     print("\nEvaluation Result:")    
@@ -327,11 +325,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
     
@@ -378,7 +376,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_1 (rag_methods_2k)')
+    parser.add_argument('--run', type=str, default='run_4 (rag_methods_500)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -410,9 +408,9 @@ if __name__ == "__main__":
     
     ### === Run Steps ==============
     set_seed(args.seed)
-    rag_consistency_score(args)
+    # rag_consistency_score(args)
     # merge_result_files(args)
-    # evaluation(args)
+    evaluation(args)
     
     # python run_mcts/analysis/ragc_searchr1.py
     # accelerate launch --multi_gpu run_mcts/analysis/ragc_searchr1.py

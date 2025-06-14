@@ -13,7 +13,7 @@ import transformers
 from tqdm import tqdm, trange
 from accelerate import Accelerator
 
-from utils.general_utils import set_seed
+from utils.general_utils import set_seed, sample_sorted_qids
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from run_mcts.src.generate_node import Generator
 from run_mcts.src.MCTS_backbone import MCTS_Searcher
@@ -206,27 +206,43 @@ def mcts_generation(args):
     #     json.dump(reuslts_dict, file, indent=4)
 
 def subsample_generation(args):
+    
+    def get_all_qids_from_folders(folder_path):
+        return [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
+    
+    # src file
     sample_size = 500
     src_dir = args.generation_trees_results_dir
     
-    # === Output file 
-    run_ = "run_5 (mcts_500_rollout4)"
-    # run_ = "run_6 (mcts_500_rollout8)"
+    # dst file
+    run_ = f"run_5 (mcts_{sample_size}_rollout4)"
+    # run_ = f"run_6 (mcts_{sample_size}_rollout8)"
     model_ = args.model_name_or_path.split('/')[-1]
     output_dir = f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
     dst_dir = f'{output_dir}/generation_trees'
     os.makedirs(dst_dir, exist_ok=True)
 
-    # 
-    folders = [f for f in os.listdir(src_dir)]
-    sampled_folders = random.sample(folders, sample_size)
+    all_qids = get_all_qids_from_folders(args.generation_trees_results_dir)
+    sampled_qids = sample_sorted_qids(all_qids, sample_size=sample_size)
     
-    for folder in tqdm(sampled_folders):
-        src_path = os.path.join(src_dir, folder)
-        dst_path = os.path.join(dst_dir, folder)
-        shutil.copytree(src_path, dst_path)
-        # print(f"Copied {folder} to {dst_dir}")
+    for qid in tqdm(sampled_qids):
+        src_path = os.path.join(src_dir, qid)
+        dst_path = os.path.join(dst_dir, qid)
+        if os.path.exists(src_path):
+            shutil.copytree(src_path, dst_path)
+        else:
+            print(f"Warning: Folder {src_path} not found")
+
+
+    # # 
+    # folders = [f for f in os.listdir(src_dir)]
+    # sampled_folders = random.sample(folders, sample_size)
     
+    # for folder in tqdm(sampled_folders):
+    #     src_path = os.path.join(src_dir, folder)
+    #     dst_path = os.path.join(dst_dir, folder)
+    #     shutil.copytree(src_path, dst_path)
+    #     # print(f"Copied {folder} to {dst_dir}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -236,11 +252,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
     # Retriever
@@ -269,7 +285,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_4 (mcts_500_rollout4)')
+    parser.add_argument('--run', type=str, default='run_2 (mcts_2k_rollout4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -333,8 +349,8 @@ if __name__ == "__main__":
         
     ### === Run Steps =============
     set_seed(args.seed)
-    mcts_generation(args)
-    # subsample_generation(args)
+    # mcts_generation(args)
+    subsample_generation(args)
     
     
     # python run_mcts/mcts_generator.py
