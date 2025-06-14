@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 
-import re
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import re
 import json
 import glob
 import torch
-import shutil
-import random
-import argparse
 import datasets
+import argparse
 from tqdm import tqdm
 from accelerate import Accelerator
 from accelerate.utils import gather_object
 
-from utils.general_utils import set_seed, sample_sorted_qids, extract_qid_number
 from run_rag_methods.src.rag_methods import *
 from run_rag_methods.src.correctness import em_score, subem_score, f1_score
+from utils.general_utils import set_seed, sample_sorted_qids, extract_qid_number
 
 
 def get_answer(text):
@@ -260,7 +258,6 @@ def subsample_generation(args):
     with open(dst_inference_results_file, 'w', encoding='utf-8') as fout:
         for item in matched_data:
             fout.write(json.dumps(item) + '\n')
-
 
 
 if __name__ == "__main__":

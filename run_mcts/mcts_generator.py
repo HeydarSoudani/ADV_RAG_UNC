@@ -6,19 +6,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import json
 import torch
 import shutil
-import random
 import argparse
 import datasets
 import transformers
 from tqdm import tqdm, trange
 from accelerate import Accelerator
 
-from utils.general_utils import set_seed, sample_sorted_qids
-from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from run_mcts.src.generate_node import Generator
 from run_mcts.src.MCTS_backbone import MCTS_Searcher
 from run_mcts.src.MCTS_reasoning import Reasoning_MCTS_Node
+from utils.general_utils import set_seed, sample_sorted_qids
 from utils.mcts_utils import Node_Type, stochastic_find_best_solution, print_tree_from_root
+from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 
 
 def mcts_generation(args):
@@ -234,16 +233,6 @@ def subsample_generation(args):
             print(f"Warning: Folder {src_path} not found")
 
 
-    # # 
-    # folders = [f for f in os.listdir(src_dir)]
-    # sampled_folders = random.sample(folders, sample_size)
-    
-    # for folder in tqdm(sampled_folders):
-    #     src_path = os.path.join(src_dir, folder)
-    #     dst_path = os.path.join(dst_dir, folder)
-    #     shutil.copytree(src_path, dst_path)
-    #     # print(f"Copied {folder} to {dst_dir}")
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
@@ -355,37 +344,3 @@ if __name__ == "__main__":
     
     # python run_mcts/mcts_generator.py
     # accelerate launch --multi_gpu  run_mcts/mcts_generator.py
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    # dataset_ = BaseDataset(args.dataset, args.subsec, args.fraction_of_data_to_use)
-    # dataset = dataset_.dataset
-    # sample_index = 0
-    # print(f"Dataset example {sample_index}:")
-    # print(f"Id:             {dataset[sample_index]['qid']}")
-    # print(f"Question:       {dataset[sample_index]['question']}")
-    # print(f"Answers:        {dataset[sample_index]['ground_truths']}")
-    # print(f"Reasoning Steps:{dataset[sample_index]['reasoning_steps']}")
-    # print(f"Gold Context: \n{dataset[sample_index]['positive_ctxs'][0]}\n\n")
