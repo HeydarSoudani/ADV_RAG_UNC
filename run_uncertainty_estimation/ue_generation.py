@@ -12,6 +12,7 @@ from accelerate import Accelerator
 from utils.general_utils import set_seed
 from run_rag_methods.src.rag_methods import *
 from run_uncertainty_estimation.consistency_methods import *
+from run_uncertainty_estimation.uncertainty_estimator import UncertaintyEstimator 
 
 def ue_generation(args):
     # === MultiGPU setup ========================
@@ -85,33 +86,15 @@ def ue_generation(args):
         raise NotImplementedError
     
     if args.consistency_method == 'self_consistency':
-        consistency_model = SelfConsistency(device, args)
+        consistency_model = SelfConsistency(device, args, rag_model)
     elif args.consistency_method == 'reasoning_consistency':
-        consistency_model = ReasoningConsistency(device, args)
+        consistency_model = ReasoningConsistency(device, args, rag_model)
     elif args.consistency_method == 'rag_consistency':
-        consistency_model = RagConsistency(device, args)
+        consistency_model = RagConsistency(device, args, rag_model)
     else:
         raise NotImplementedError
     
-    
-    # White-box
-    p_true = PTrue()
-    p_entropy = PredictiveEntropy()
-    s_entropy = SemanticEntropy()
-    # Black-box
-    num_ss = NumSemanticSet()
-    sum_eigv = SumEigen()
-    ecc = Eccentricity()
-    mat_deg = MatrixDegree()
-    
-    ue_methods = [
-        p_true, p_entropy, s_entropy,
-        num_ss, sum_eigv, ecc, mat_deg
-    ]
-    ue_methods_title = [
-        'p_true', 'p_entropy', 's_entropy',
-        'num_ss', 'sum_eigv', 'ecc', 'mat_deg'
-    ]
+    uncertainty_estimator_model = UncertaintyEstimator()
     
     # === Main Loop ==============================
     accelerator.wait_for_everyone()
@@ -142,18 +125,20 @@ def ue_generation(args):
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
-                # 1) Create input prompt
-                input_message = rag_model.get_input_prompt(trace)
-                
-                # 2) Generate output list
+                # 1) Generate output list
                 masked_traces, final_answer_list = consistency_model.get_masked_traces(qid, user_query, trace)
+                masked_traces_text = [
+                    rag_model.get_input_prompt(masked_trace) for masked_trace in masked_traces
+                ]
                 
-                # 3) Calculate UE scores
-                ue_scores = {}
-                for idx, ue_method in enumerate(ue_methods):
-                    ue_scores[ue_methods_title[idx]] = ue_method()
+                # 2) Calculate UE scores
+                ue_scores = uncertainty_estimator_model.estimate(
+                    user_query,
+                    input_prompts_text = masked_traces_text,
+                    output_texts = final_answer_list
+                )
                 
-                # 4) Print in output files 
+                # 3) Print in output files 
                 cons_item = {
                     "qid": qid,
                     "query": user_query,
