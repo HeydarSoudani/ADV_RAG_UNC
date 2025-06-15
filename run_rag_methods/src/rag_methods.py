@@ -1371,6 +1371,7 @@ If you find no further external knowledge needed, you can directly provide the a
             
         return pred_answer, path
     
+    # --
     def inference_with_partial_trace(self, question, generated_trace):
         input_prompt = self.prompt.format(question=question)
         
@@ -1416,6 +1417,8 @@ If you find no further external knowledge needed, you can directly provide the a
             
         return pred_answer, path
     
+    def get_input_prompt(self, trace):
+        pass
         
         
         

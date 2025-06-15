@@ -10,7 +10,8 @@ from tqdm import tqdm
 from accelerate import Accelerator
 
 from utils.general_utils import set_seed
-
+from run_rag_methods.src.rag_methods import *
+from run_uncertainty_estimation.consistency_methods import *
 
 def ue_generation(args):
     # === MultiGPU setup ========================
@@ -62,12 +63,33 @@ def ue_generation(args):
     filtered_sorted_query_ids = [id_ for id_ in sorted_query_ids if id_ not in generated_qids]
     
     # === Read Models ============================
+    if args.rag_method == "fix_sentence_retrieval":
+        rag_model = FixSentenceRAG(args, device)
+    elif args.rag_method == "fix_length_retrieval":
+        rag_model = FixLengthRAG(args, device)
+    elif args.rag_method == 'ircot':
+        rag_model = IRCOT_RAG(args, device)
+    elif args.rag_method == 'flare':
+        rag_model = FLARE_RAG_V1(args, device)
+    elif args.rag_method == 'dragin':
+        rag_model = DRAGIN_RAG(args, device)
+    elif args.rag_method == 'self_ask':
+        rag_model = SelfAsk_RAG(args, device)
+    elif args.rag_method == 'react':
+        rag_model = ReAct_RAG(args, device)
+    elif args.rag_method == 'search_o1':
+        rag_model = SearchO1_RAG(args, device)
+    elif args.rag_method == 'search_r1':
+        rag_model = SearchR1_RAG(args, device)
+    else:
+        raise NotImplementedError
+    
     if args.consistency_method == 'self_consistency':
-        consistency_generator = SelfConsistency()
+        consistency_model = SelfConsistency(device, args)
     elif args.consistency_method == 'reasoning_consistency':
-        consistency_generator = ReasoningConsistency()
+        consistency_model = ReasoningConsistency(device, args)
     elif args.consistency_method == 'rag_consistency':
-        consistency_generator = RagConsistency()
+        consistency_model = RagConsistency(device, args)
     else:
         raise NotImplementedError
     
@@ -85,6 +107,10 @@ def ue_generation(args):
     ue_methods = [
         p_true, p_entropy, s_entropy,
         num_ss, sum_eigv, ecc, mat_deg
+    ]
+    ue_methods_title = [
+        'p_true', 'p_entropy', 's_entropy',
+        'num_ss', 'sum_eigv', 'ecc', 'mat_deg'
     ]
     
     # === Main Loop ==============================
@@ -117,18 +143,47 @@ def ue_generation(args):
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
                 # 1) Create input prompt
-                
+                input_message = rag_model.get_input_prompt(trace)
                 
                 # 2) Generate output list
-                consistency_generator.inference()
+                masked_traces, final_answer_list = consistency_model.get_masked_traces(qid, user_query, trace)
                 
                 # 3) Calculate UE scores
-                
+                ue_scores = {}
+                for idx, ue_method in enumerate(ue_methods):
+                    ue_scores[ue_methods_title[idx]] = ue_method()
                 
                 # 4) Print in output files 
+                cons_item = {
+                    "qid": qid,
+                    "query": user_query,
+                    "gt_answers": sample['gt_answers'],
+                    "pred_answer": prediction,
+                    "em": sample['em'],
+                    "final_answer_list": final_answer_list,
+                    "ue_scores": ue_scores
+                }
+                cons_f.write(json.dumps(cons_item) + "\n")
                 
-                
-            
+                if trace_f:
+                    new_masked_traces = [
+                        [
+                            {
+                                "think": step["think"],
+                                "search_query": step["search_query"],
+                                "docs": [{"id": doc["id"]} for doc in step["docs"]]
+                            } if "docs" in step else step
+                            for step in masked_trace
+                        ]
+                        for masked_trace in masked_traces
+                    ]
+                    trace_item = {
+                        "qid": qid,
+                        "query": user_query,
+                        "masked_traces": new_masked_traces
+                    }
+                    trace_f.write(json.dumps(trace_item) + '\n')
+
         finally:
             cons_f.close()
             if trace_f:
@@ -176,7 +231,7 @@ if __name__ == "__main__":
     
     # RAG methods (input)
     parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
-        'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot', 'flare', 'dragin',
+        'fix_sentence_retrieval', 'fix_length_retrieval', 'ircot', 'flare', 'dragin',
         'react', 'self_ask', 'search_o1', 'search_r1',
         'RASPberry'
     ])
