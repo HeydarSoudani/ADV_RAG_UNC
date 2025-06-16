@@ -70,7 +70,9 @@ class LLMGenerator:
         
         # For searchR1
         searchr1_sequences = ["</search>", " </search>", "</search>\n", " </search>\n", "</search>\n\n", " </search>\n\n"]
+        searchr1_answer_sequences = ["</answer>", " </answer>", "</answer>\n", " </answer>\n", "</answer>\n\n", " </answer>\n\n"]
         self.searchr1_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(searchr1_sequences, self.tokenizer)])
+        self.searchr1_answer_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(searchr1_answer_sequences, self.tokenizer)])
         
         # for 'react', 'self_ask', 'search_o1'
     

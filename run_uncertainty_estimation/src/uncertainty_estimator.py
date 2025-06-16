@@ -3,39 +3,47 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import torch
 
+from utils.general_utils import find_token_indices
 from run_uncertainty_estimation.ue_methods import *
 
 class UncertaintyEstimator:
     def __init__(self, model, tokenizer, args):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.args = args
 
         self.ue_methods_ = {
             # "confidence": Confidence(),
             # "entropy": Entropy(),
             # "PE": PredictiveEntropy(),
             # "SE": SemanticEntropy(),
-            "p_true": PTrue,
-            "num_ss": None,
-            "sum_eigen": None,
-            "matrix_degree": None,
-            "eccentricity": None
+            "p_true": PTrue(self.model, self.tokenizer),
+            # "num_ss": None,
+            # "sum_eigen": None,
+            # "matrix_degree": None,
+            # "eccentricity": None
         }
     
     def estimate(self,
-        generation_type:str = "new_generations",
+        question, prediction, context:str,
+        input_prompt_text, generated_output_texts,
+        generation_type:str = "existing_generations",
     ):
         
         # = Generation
         if generation_type == "new_generations":
-            sampled_gen_dict = self.sample_generations_batch_hf_local(context, question)
+            sampled_gen_dict = self.sample_generations_batch_hf_local(question, input_prompt_text)
         elif generation_type == "existing_generations": 
-            sampled_gen_dict = self.dict_generations_batch_hf_local(context, question, generated_texts)
+            sampled_gen_dict = self.dict_generations_batch_hf_local(question, input_prompt_text, generated_output_texts)
         else:
             raise NotImplementedError("Generation type is not defined!")
     
         # = Uncertainty Estimation
         ue_scores = {}
         for ue_title, ue_function in self.ue_methods_.items():
-            ue_scores[ue_title] = ue_function(sampled_gen_dict)
+            ue_scores[ue_title] = ue_function(sampled_gen_dict, prediction, context)
+    
+        return ue_scores
     
     
     def sample_generations_batch_hf_local(self, context, question):
@@ -112,32 +120,28 @@ class UncertaintyEstimator:
             "logprobs": logprobs,
         }
     
-    def dict_generations_batch_hf_local(self, context, question, generated_texts):
-        # Input preparation
-        input_text = self.get_prompt_text(context, question)
+    def dict_generations_batch_hf_local(self, question, input_prompt_text, generated_output_texts):
+        logprobs_list, logits_list, tokens_list, tokens_text_list = [], [], [], []
         
-        logprobs_list = []
-        logits_list = []
-        tokens_list = []
-        tokens_text_list = []
-        for generated_text in generated_texts:
+    
+        for generated_output_text in generated_output_texts:
             if self.tokenizer.chat_template:
                 input_prompt_text = self.tokenizer.apply_chat_template(
                     [
-                        {"role": "system", "content": self.system_prompt},
-                        {"role": "user", "content": input_text},
-                        {"role": "assistant", "content": generated_text}
+                        # {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": input_prompt_text},
+                        {"role": "assistant", "content": generated_output_text}
                     ],
                     add_generation_prompt=True,
                     tokenize=False
                 )
         
             # Generation
-            generated_text_ids = self.tokenizer.encode(generated_text, add_special_tokens=False)
+            generated_text_ids = self.tokenizer.encode(generated_output_text, add_special_tokens=False)
             tokens_list.append(generated_text_ids)
             tokens_text_list.append([self.tokenizer.decode(answer_id) for answer_id in generated_text_ids])
             input_prompt_tokens = self.tokenizer.encode(input_prompt_text, return_tensors="pt").to(self.model.device)
-            indices, texts = self.find_token_indices(input_prompt_tokens[0], generated_text)
+            indices, texts = find_token_indices(input_prompt_tokens[0], generated_output_text)
             
             with torch.no_grad():
                 outputs = self.model(input_prompt_tokens)
@@ -154,7 +158,7 @@ class UncertaintyEstimator:
         
         return {
             "question": question,
-            "generated_texts": generated_texts,
+            "generated_texts": generated_output_texts,
             "tokens": tokens_list,
             "tokens_text": tokens_text_list,
             "logits": logits_list,

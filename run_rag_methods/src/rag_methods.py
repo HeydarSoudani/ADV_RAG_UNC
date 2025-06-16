@@ -1333,6 +1333,15 @@ If you find no further external knowledge needed, you can directly provide the a
             return matches[0]
         else:
             return None
+    
+    def get_partial_answer(self, text):
+        pattern = re.compile(r"(.*?)</answer>", re.DOTALL)
+        matches = pattern.findall(text)
+        if matches:
+            # return matches[-1]
+            return matches[0]
+        else:
+            return None
 
     def inference(self, question):
         input_prompt = self.prompt.format(question=question)
@@ -1417,12 +1426,31 @@ If you find no further external knowledge needed, you can directly provide the a
             
         return pred_answer, path
     
-    def get_input_prompt(self, trace):
-        pass
+    def get_input_prompt_self_consistency(self, question, trace):
+        prompt_text = self.prompt.format(question=question)
+        for step in trace[:-1]:
+            prompt_text += f"<think> {step['think']} </think>\n"
+            prompt_text += f"<search> {step['search_query']} </search>\n"
+            prompt_text += f"<information> {passages2string(step['docs'])} </information>\n\n"
+        prompt_text += f"<think> {trace[-1]['think']} </think>\n"
+        prompt_text += f"<answer> "
         
+        return prompt_text
+    
+    def partial_inference_self_consistency(self, input_prompt_text):
+        messages = [{"role": "user", "content": input_prompt_text}]
         
+        answer_list = []
+        for i in range(self.args.n_generations):
+            output_, output_text = self.generator.generate(
+                messages,
+                self.generator.searchr1_answer_stopping_criteria,
+                temperature=1.0
+            )
+            answer = self.get_partial_answer(output_text)
+            answer_list.append(answer)
         
-        
+        return answer_list
         
         
         

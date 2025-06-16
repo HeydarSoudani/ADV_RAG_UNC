@@ -14,7 +14,7 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 ### === Set variables ==========================
 # generation_model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
-generation_model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
+model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 paraphrase_model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 dataset="bamboogle"
 subsec="test"
@@ -29,7 +29,7 @@ run="run_1 (rag_methods_2k)"
 
 # srun python
 accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_rag_methods/run_framework.py \
-    --generation_model_name_or_path "$generation_model_name_or_path" \
+    --model_name_or_path "$model_name_or_path" \
     --paraphrase_model_name_or_path "$paraphrase_model_name_or_path" \
     --dataset "$dataset" \
     --subsec "$subsec" \

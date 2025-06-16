@@ -9,10 +9,10 @@ import argparse
 from tqdm import tqdm
 from accelerate import Accelerator
 
-from utils.general_utils import set_seed
+from utils.general_utils import set_seed, passages2string
 from run_rag_methods.src.rag_methods import *
 from run_uncertainty_estimation.consistency_methods import *
-from run_uncertainty_estimation.uncertainty_estimator import UncertaintyEstimator 
+from run_uncertainty_estimation.src.uncertainty_estimator import UncertaintyEstimator
 
 def ue_generation(args):
     # === MultiGPU setup ========================
@@ -94,7 +94,17 @@ def ue_generation(args):
     else:
         raise NotImplementedError
     
-    uncertainty_estimator_model = UncertaintyEstimator()
+    uncertainty_estimator_model = UncertaintyEstimator(
+        model=rag_model.generator.generator,
+        tokenizer=rag_model.generator.tokenizer,
+        args=args
+    )
+    
+    # === Functions ==============================
+    def get_unique_docs(traces):
+        docs_lst = [doc for trace in traces for step in trace for doc in step['docs']]
+        return list({doc['id']: doc for doc in docs_lst}.values()) 
+    
     
     # === Main Loop ==============================
     accelerator.wait_for_everyone()
@@ -121,22 +131,28 @@ def ue_generation(args):
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
                 if i == 1:
                     break
-                
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
                 # 1) Generate output list
                 masked_traces, final_answer_list = consistency_model.get_masked_traces(qid, user_query, trace)
-                masked_traces_text = [
-                    rag_model.get_input_prompt(masked_trace) for masked_trace in masked_traces
-                ]
+                masked_traces_text = [rag_model.get_input_prompt(masked_trace) for masked_trace in masked_traces]
+                context = passages2string(get_unique_docs(masked_traces))
+                print(final_answer_list)
+                print('---')
+                print(context)
+                print('---')
                 
                 # 2) Calculate UE scores
                 ue_scores = uncertainty_estimator_model.estimate(
                     user_query,
+                    prediction,
+                    context=context,
                     input_prompts_text = masked_traces_text,
                     output_texts = final_answer_list
                 )
+                print(ue_scores)
+                print('---')
                 
                 # 3) Print in output files 
                 cons_item = {
@@ -178,7 +194,7 @@ def ue_generation(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--generation_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--paraphrase_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_token', type=int, default=1024)
     
@@ -222,10 +238,10 @@ if __name__ == "__main__":
     ])
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
-    parser.add_argument("--n_generations", type=int, default=10)
+    parser.add_argument("--n_generations", type=int, default=2)
     parser.add_argument("--cutoff_rollout", type=int, default=-1)
     parser.add_argument("--start_idx", type=int, default=-1)
     parser.add_argument("--end_idx", type=int, default=-1)
@@ -277,3 +293,4 @@ if __name__ == "__main__":
     
     # python run_uncertainty_estimation/run_framework.py
     # accelerate launch --multi_gpu run_uncertainty_estimation/run_framework.py
+

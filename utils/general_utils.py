@@ -293,3 +293,33 @@ def sample_sorted_qids(qid_list, sample_size):
 
 
 
+# for a target text, find the indices of the tokens that are in the target text.
+# If target text cannot be tokenized in the original form, return the indices of the tokens that contain the target text and has the shortest length
+def find_token_indices(
+    tokens: list,
+    tokenizer: PreTrainedTokenizer,
+    target_text: str,
+):
+    indices = []
+    texts = []
+    begin = 0
+    found = False
+    while begin < len(tokens):
+        for end in range(begin + 1, len(tokens)):
+            if target_text in tokenizer.decode(tokens[begin:end]):
+                # move begin
+                while target_text in tokenizer.decode(tokens[begin:end]):
+                    begin += 1
+                begin -= 1
+                index_list = [i for i in range(begin, end)]
+                indices.append(index_list)
+                texts.append(tokenizer.decode(tokens[begin:end]))
+                begin = end
+                found = True
+                break
+        if not found:
+            break
+        else:
+            found = False
+    return indices, texts
+

@@ -12,7 +12,7 @@ from run_uncertainty_estimation.ue_generation import ue_generation
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--generation_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--paraphrase_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_token', type=int, default=1024)
     
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
-    parser.add_argument("--n_generations", type=int, default=10)
+    parser.add_argument("--n_generations", type=int, default=2)
     parser.add_argument("--cutoff_rollout", type=int, default=-1)
     parser.add_argument("--start_idx", type=int, default=-1)
     parser.add_argument("--end_idx", type=int, default=-1)
