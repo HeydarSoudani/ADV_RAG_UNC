@@ -405,13 +405,18 @@ def get_D_mat(W):
     return D
 
 def get_L_mat(W, symmetric=True):
-    # Compute the normalized Laplacian matrix from the degree matrix and weighted adjacency matrix
     D = get_D_mat(W)
     if symmetric:
-        L = np.linalg.inv(np.sqrt(D)) @ (D - W) @ np.linalg.inv(np.sqrt(D))
+        # D is diagonal: extract diagonal, compute sqrt, and build D^{-1/2}
+        d = np.diag(D)
+        with np.errstate(divide='ignore'):
+            d_inv_sqrt = 1.0 / np.sqrt(d)
+        d_inv_sqrt[np.isinf(d_inv_sqrt)] = 0  # Handle division by zero
+
+        D_inv_sqrt = np.diag(d_inv_sqrt)
+        L = D_inv_sqrt @ (D - W) @ D_inv_sqrt
     else:
         raise NotImplementedError()
-        # L = np.linalg.inv(D) @ (D - W)
     return L.copy()
 
 def get_eig(L, thres=None):
@@ -508,6 +513,17 @@ def calculate_U_deg(
     U_deg = np.trace(m * np.identity(m) - D) / (m**2)
     return U_deg
 
+# the main code from TruthTorchLM
+# def get_L_mat(W, symmetric=True):
+#     # Compute the normalized Laplacian matrix from the degree matrix and weighted adjacency matrix
+#     D = get_D_mat(W)
+#     print('aa')
+#     if symmetric:
+#         L = np.linalg.inv(np.sqrt(D)) @ (D - W) @ np.linalg.inv(np.sqrt(D))
+#     else:
+#         raise NotImplementedError()
+#         # L = np.linalg.inv(D) @ (D - W)
+#     return L.copy()
 
 # ============================
 def extract_qid_number(qid):

@@ -8,10 +8,11 @@ from utils.general_utils import find_token_indices
 from run_uncertainty_estimation.ue_methods import *
 
 class UncertaintyEstimator:
-    def __init__(self, model, tokenizer, args):
+    def __init__(self, model, tokenizer, device, args):
         self.model = model
         self.tokenizer = tokenizer
         self.args = args
+        entailment_model_device = device
         model_for_entailment = DebertaForSequenceClassification.from_pretrained("microsoft/deberta-large-mnli").to(entailment_model_device)
         tokenizer_for_entailment = DebertaTokenizer.from_pretrained("microsoft/deberta-large-mnli")
 
@@ -21,10 +22,6 @@ class UncertaintyEstimator:
             "sum_eigen": SumEigenUncertainty(model_for_entailment, tokenizer_for_entailment),
             "eccentricity": EccentricityUncertainty(model_for_entailment, tokenizer_for_entailment),
             "matrix_degree": MatrixDegreeUncertainty(model_for_entailment, tokenizer_for_entailment),
-            # "confidence": Confidence(),
-            # "entropy": Entropy(),
-            # "PE": PredictiveEntropy(),
-            # "SE": SemanticEntropy(),
         }
     
     def estimate(self,

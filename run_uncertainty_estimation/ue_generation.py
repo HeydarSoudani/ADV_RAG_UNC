@@ -106,7 +106,8 @@ def ue_generation(args):
     uncertainty_estimator_model = UncertaintyEstimator(
         model=secondary_model,
         tokenizer=secondary_tokenizer,
-        args=args
+        device=device,
+        args=args,
     )
     
     # === Functions ==============================
