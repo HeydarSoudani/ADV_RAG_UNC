@@ -47,9 +47,9 @@ def get_answer(text):
     return pred
 
 class BasicRAG:
-    def __init__(self, args, device):
+    def __init__(self, generation_model, generation_tokenizer, device, args):
         self.args = args
-        self.generator = LLMGenerator(args, device)
+        self.generator = LLMGenerator(generation_model, generation_tokenizer, device, args)
         
         # === Retrievers ============================= 
         if args.retriever_name == 'bm25':
@@ -1298,8 +1298,8 @@ class SearchO1_RAG(BasicRAG):
         
         
 class SearchR1_RAG(BasicRAG):
-    def __init__(self, args, device):
-        super().__init__(args, device)
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        super().__init__(generation_model, generation_tokenizer, device, args)
         self.curr_search_template = '\n\n{output_text}<information>{search_results}</information>\n\n'
         self.prompt = """Answer the given question. \
 You must conduct reasoning inside <think> and </think> first every time you get new information. \
@@ -1433,7 +1433,7 @@ If you find no further external knowledge needed, you can directly provide the a
             prompt_text += f"<search> {step['search_query']} </search>\n"
             prompt_text += f"<information> {passages2string(step['docs'])} </information>\n\n"
         prompt_text += f"<think> {trace[-1]['think']} </think>\n"
-        prompt_text += f"<answer> "
+        # prompt_text += f"<answer> "
         
         return prompt_text
     
@@ -1447,8 +1447,10 @@ If you find no further external knowledge needed, you can directly provide the a
                 self.generator.searchr1_answer_stopping_criteria,
                 temperature=1.0
             )
-            answer = self.get_partial_answer(output_text)
-            answer_list.append(answer)
+            # print(output_text)
+            # print('-')
+            answer = self.get_answer(output_text)
+            answer_list.append(answer.strip())
         
         return answer_list
         

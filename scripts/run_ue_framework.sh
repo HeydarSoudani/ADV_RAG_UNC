@@ -24,7 +24,6 @@ index_path="data/search_r1_files/bm25"
 retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
 rag_method="search_r1"
 consistency_method="self_consistency"
-ue_method="ptrue"
 run="run_1 (rag_methods_2k)"
 
 # srun python

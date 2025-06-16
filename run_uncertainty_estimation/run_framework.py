@@ -12,7 +12,7 @@ from run_uncertainty_estimation.ue_generation import ue_generation
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
     parser.add_argument('--paraphrase_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_token', type=int, default=1024)
     
@@ -88,15 +88,24 @@ if __name__ == "__main__":
     
     # === Files ====================
     model_ = args.model_name_or_path.split('/')[-1]
-    args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
-    args.generation_trees_results_dir = f'{args.output_dir}/generation_trees'
-    args.discrimination_results_file = f"{args.output_dir}/discrimination_results_{args.discriminator_method}.jsonl"
-    os.makedirs(args.generation_trees_results_dir, exist_ok=True)
+    args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"
+    os.makedirs(args.output_dir, exist_ok=True)
     
-    args.reasoning_path_generations_dir = f'{args.output_dir}/paraphrased_paths'
-    os.makedirs(args.reasoning_path_generations_dir, exist_ok=True)
+    if args.rag_method in ['flare', 'dragin']:
+        args.inference_results_file = f"{args.output_dir}/inference_results_th{args.hallucination_threshold}.jsonl"
+        args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}.jsonl"
+        if args.consistency_method == "rag_consistency":
+            args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces_th{args.hallucination_threshold}.jsonl"
+    else:
+        args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
+        args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results.jsonl"
+        if args.consistency_method == "rag_consistency":
+            args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces.jsonl"
     
-        
+    # === Prompt files =============
+    args.query_decomposition_prompt_file = "run_mcts/prompts/query_decomposition_prompt_template.txt"
+    args.semantic_equivalence_prompt_file = "run_mcts/prompts/semantic_equivalence_prompt_template.txt"
+    
     ### === Run Steps =============
     set_seed(args.seed)
     ue_generation(args)

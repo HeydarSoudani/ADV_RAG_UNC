@@ -22,7 +22,7 @@ class PTrue:
         system_prompt: str = PTRUE_SYSTEM_PROMPT,
         user_prompt: str = PTRUE_USER_PROMPT,
         model_output: str = PTRUE_MODEL_OUTPUT,
-        with_context: bool = False,
+        with_context: bool = True,
     ):
         super().__init__()
         self.model = model
@@ -70,8 +70,11 @@ class PTrue:
                 {"role": "assistant", "content": self.model_output},    
             ]
         
-        
         prompt = self.tokenizer.apply_chat_template(chat, tokenize=False)
+        
+        print(prompt)
+        print('-')
+        
         prompt_tokens = self.tokenizer.encode(prompt, return_tensors="pt").to(self.model.device)
         with torch.no_grad():
             outputs = self.model(prompt_tokens)

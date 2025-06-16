@@ -13,30 +13,38 @@ class UncertaintyEstimator:
         self.args = args
 
         self.ue_methods_ = {
-            # "confidence": Confidence(),
-            # "entropy": Entropy(),
-            # "PE": PredictiveEntropy(),
-            # "SE": SemanticEntropy(),
             "p_true": PTrue(self.model, self.tokenizer),
             # "num_ss": None,
             # "sum_eigen": None,
             # "matrix_degree": None,
-            # "eccentricity": None
+            # "eccentricity": None,
+            # "confidence": Confidence(),
+            # "entropy": Entropy(),
+            # "PE": PredictiveEntropy(),
+            # "SE": SemanticEntropy(),
         }
     
     def estimate(self,
         question, prediction, context:str,
-        input_prompt_text, generated_output_texts,
+        input_prompt_texts, generated_output_texts,
         generation_type:str = "existing_generations",
     ):
         
-        # = Generation
-        if generation_type == "new_generations":
-            sampled_gen_dict = self.sample_generations_batch_hf_local(question, input_prompt_text)
-        elif generation_type == "existing_generations": 
-            sampled_gen_dict = self.dict_generations_batch_hf_local(question, input_prompt_text, generated_output_texts)
+        if "entropy" in list(self.ue_methods_.keys()):
+            # = Generation
+            if generation_type == "new_generations":
+                sampled_gen_dict = self.sample_generations_batch_hf_local(question, input_prompt_texts)
+            elif generation_type == "existing_generations": 
+                sampled_gen_dict = self.dict_generations_batch_hf_local(question, input_prompt_texts, generated_output_texts)
+            else:
+                raise NotImplementedError("Generation type is not defined!")
+        
         else:
-            raise NotImplementedError("Generation type is not defined!")
+            sampled_gen_dict = {
+                "question": question,
+                "generated_texts": generated_output_texts
+            }
+
     
         # = Uncertainty Estimation
         ue_scores = {}
@@ -120,16 +128,16 @@ class UncertaintyEstimator:
             "logprobs": logprobs,
         }
     
-    def dict_generations_batch_hf_local(self, question, input_prompt_text, generated_output_texts):
+    def dict_generations_batch_hf_local(self, question, input_prompt_texts, generated_output_texts):
         logprobs_list, logits_list, tokens_list, tokens_text_list = [], [], [], []
         
     
-        for generated_output_text in generated_output_texts:
+        for idx, generated_output_text in enumerate(generated_output_texts):
             if self.tokenizer.chat_template:
                 input_prompt_text = self.tokenizer.apply_chat_template(
                     [
                         # {"role": "system", "content": self.system_prompt},
-                        {"role": "user", "content": input_prompt_text},
+                        {"role": "user", "content": input_prompt_texts[idx]},
                         {"role": "assistant", "content": generated_output_text}
                     ],
                     add_generation_prompt=True,
@@ -141,7 +149,7 @@ class UncertaintyEstimator:
             tokens_list.append(generated_text_ids)
             tokens_text_list.append([self.tokenizer.decode(answer_id) for answer_id in generated_text_ids])
             input_prompt_tokens = self.tokenizer.encode(input_prompt_text, return_tensors="pt").to(self.model.device)
-            indices, texts = find_token_indices(input_prompt_tokens[0], generated_output_text)
+            indices, texts = find_token_indices(input_prompt_tokens[0], self.tokenizer, generated_output_text)
             
             with torch.no_grad():
                 outputs = self.model(input_prompt_tokens)

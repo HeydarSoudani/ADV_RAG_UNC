@@ -34,15 +34,12 @@ class StopOnSequence(transformers.StoppingCriteria):
         return False
 
 class LLMGenerator:
-    def __init__(self, args, device):
-        self.args = args
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        self.generator = generation_model
+        self.tokenizer = generation_tokenizer
         self.device = device
-        self.generator = transformers.AutoModelForCausalLM.from_pretrained(
-            args.model_name_or_path,
-            torch_dtype=torch.bfloat16,
-            # attn_implementation="eager" # Disable this for searchR1
-        ).to(self.device)
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path) #  use_fast=False
+        self.args = args
+        
         self.eos_token_ids = self.generator.config.eos_token_id
         
         # For 'fix_length_retrieval', 'fix_sentence_retrieval', 'flare', 'dragin'
