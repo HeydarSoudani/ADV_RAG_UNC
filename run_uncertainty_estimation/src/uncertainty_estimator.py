@@ -2,6 +2,7 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import torch
+from transformers import DebertaForSequenceClassification, DebertaTokenizer
 
 from utils.general_utils import find_token_indices
 from run_uncertainty_estimation.ue_methods import *
@@ -11,13 +12,15 @@ class UncertaintyEstimator:
         self.model = model
         self.tokenizer = tokenizer
         self.args = args
+        model_for_entailment = DebertaForSequenceClassification.from_pretrained("microsoft/deberta-large-mnli").to(entailment_model_device)
+        tokenizer_for_entailment = DebertaTokenizer.from_pretrained("microsoft/deberta-large-mnli")
 
         self.ue_methods_ = {
             "p_true": PTrue(self.model, self.tokenizer),
-            # "num_ss": None,
-            # "sum_eigen": None,
-            # "matrix_degree": None,
-            # "eccentricity": None,
+            "num_ss": NumSemanticSet(model_for_entailment, tokenizer_for_entailment),
+            "sum_eigen": SumEigenUncertainty(model_for_entailment, tokenizer_for_entailment),
+            "eccentricity": EccentricityUncertainty(model_for_entailment, tokenizer_for_entailment),
+            "matrix_degree": MatrixDegreeUncertainty(model_for_entailment, tokenizer_for_entailment),
             # "confidence": Confidence(),
             # "entropy": Entropy(),
             # "PE": PredictiveEntropy(),

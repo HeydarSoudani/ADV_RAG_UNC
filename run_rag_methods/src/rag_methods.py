@@ -1295,8 +1295,7 @@ class SearchO1_RAG(BasicRAG):
         user_prompt = get_task_instruction_openqa(question)
         prompt = [{"role": "user", "content": self.instruction + user_prompt}]
         # TODO
-        
-        
+    
 class SearchR1_RAG(BasicRAG):
     def __init__(self, generation_model, generation_tokenizer, device, args):
         super().__init__(generation_model, generation_tokenizer, device, args)
@@ -1449,8 +1448,9 @@ If you find no further external knowledge needed, you can directly provide the a
             )
             # print(output_text)
             # print('-')
-            answer = self.get_answer(output_text)
-            answer_list.append(answer.strip())
+            answer_ = self.get_answer(output_text)
+            answer = answer_.strip() if answer_ else ''
+            answer_list.append(answer)
         
         return answer_list
         

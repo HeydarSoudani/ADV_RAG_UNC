@@ -70,6 +70,7 @@ def ue_generation(args):
     secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, torch_dtype=torch.bfloat16).to(device)
     secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
     
+    # -
     if args.rag_method == "fix_sentence_retrieval":
         rag_model = FixSentenceRAG(args, device)
     elif args.rag_method == "fix_length_retrieval":
@@ -198,6 +199,7 @@ def ue_generation(args):
                 trace_f.close()
 
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
@@ -245,7 +247,7 @@ if __name__ == "__main__":
     ])
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)

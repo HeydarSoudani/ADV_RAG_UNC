@@ -24,7 +24,6 @@ class PTrue:
         model_output: str = PTRUE_MODEL_OUTPUT,
         with_context: bool = True,
     ):
-        super().__init__()
         self.model = model
         self.tokenizer = tokenizer
         self.number_of_ideas = number_of_ideas

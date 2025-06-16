@@ -1,18 +1,18 @@
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import re
 import json
 import copy
 import torch
 import random, os
 import numpy as np
+from sklearn.metrics import jaccard_score
 from sklearn.feature_extraction.text import CountVectorizer
-from transformers import (
-    PreTrainedModel,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
-import os
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from transformers import DebertaForSequenceClassification, DebertaTokenizer
+from transformers import PreTrainedModel, PreTrainedTokenizer, PreTrainedTokenizerFast
+
 from run_mcts.src.templates import ENTAILMENT_PROMPT, DEFAULT_SYSTEM_PROMPT
 
 def set_seed(seed):
@@ -276,6 +276,237 @@ def bidirectional_entailment_clustering(
             clusters.append([s_m])
 
     return clusters
+
+def entailment_probability(
+    model_for_entailment: PreTrainedModel,
+    tokenizer_for_entailment: PreTrainedTokenizer,
+    context: str,
+    seq1: str,
+    seq2: str,
+    mode="minus_contradiction",
+    temperature: float = 3.0,
+):
+    inputs = tokenizer_for_entailment.encode_plus(
+        text=context + " " + seq1,
+        text_pair=context + " " + seq2,
+        return_tensors="pt",
+        truncation=True,
+        max_length=model_for_entailment.config.max_position_embeddings,
+    ).to(model_for_entailment.device)
+
+    outputs = model_for_entailment(**inputs)
+    logits = outputs.logits
+    probs = torch.softmax(
+        logits / temperature, dim=-1
+    )  # contradiction, neutral, entailment
+    if mode == "minus_contradiction":
+        return 1 - probs[0][0]
+    elif mode == "entailment":
+        return probs[0][2]
+
+def check_entailment_one_hot(
+    model_for_entailment: PreTrainedModel,
+    tokenizer_for_entailment: PreTrainedTokenizer,
+    context: str,
+    seq1: str,
+    seq2: str,
+):
+    out_class = check_entailment(
+        model_for_entailment, tokenizer_for_entailment, context, seq1, seq2
+    )
+    one_hot = [0, 0, 0]
+    if out_class == 2:  # Entailment
+        one_hot[0] = 1
+    elif out_class == 1:  # Neutral
+        one_hot[1] = 1
+    elif out_class == 0:  # Contradiction
+        one_hot[2] = 1
+    return one_hot
+
+def calculate_affinity_matrix(
+    texts: list[str],
+    context: str,
+    method_for_similarity: str = "semantic",
+    model_for_entailment: PreTrainedModel = None,
+    tokenizer_for_entailment: PreTrainedTokenizer = None,
+    temperature: float = 3.0,
+):
+
+    if (
+        model_for_entailment is None or tokenizer_for_entailment is None
+    ) and method_for_similarity == "semantic":
+        model_for_entailment = DebertaForSequenceClassification.from_pretrained(
+            "microsoft/deberta-large-mnli"
+        )
+        tokenizer_for_entailment = DebertaTokenizer.from_pretrained(
+            "microsoft/deberta-large-mnli"
+        )
+
+    n = len(texts)
+    affinity_matrix = np.ones((n, n))
+
+    if method_for_similarity == "semantic":
+        for i in range(n):
+            for j in range(i + 1, n):
+                left = entailment_probability(
+                    model_for_entailment,
+                    tokenizer_for_entailment,
+                    context,
+                    texts[i],
+                    texts[j],
+                    temperature=temperature,
+                ).item()
+                right = entailment_probability(
+                    model_for_entailment,
+                    tokenizer_for_entailment,
+                    context,
+                    texts[j],
+                    texts[i],
+                    temperature=temperature,
+                ).item()
+                affinity_matrix[i][j] = affinity_matrix[j][i] = (
+                    left + right) / 2
+    elif method_for_similarity == "jaccard":
+        vectorizer = CountVectorizer().fit_transform(texts)
+        vectors = vectorizer.toarray()
+        for i in range(n):
+            for j in range(i + 1, n):
+                affinity_matrix[i][j] = affinity_matrix[j][i] = jaccard_score(
+                    vectors[i], vectors[j], average="macro"
+                )
+
+    elif method_for_similarity == "kernel":
+        w = np.array([1, 0.5, 0])  # Pre-defined
+        for i in range(n):
+            for j in range(i + 1, n):
+                left = check_entailment_one_hot(
+                    model_for_entailment,
+                    tokenizer_for_entailment,
+                    context,
+                    texts[i],
+                    texts[j],
+                )
+                right = check_entailment_one_hot(
+                    model_for_entailment,
+                    tokenizer_for_entailment,
+                    context,
+                    texts[j],
+                    texts[i],
+                )
+                affinity_matrix[i, j] = affinity_matrix[j, i] = np.dot(
+                    w, left
+                ) + np.dot(w, right)
+            affinity_matrix[i, i] = 2
+
+    return affinity_matrix
+
+def get_D_mat(W):
+    D = np.diag(np.sum(W, axis=1))
+    return D
+
+def get_L_mat(W, symmetric=True):
+    # Compute the normalized Laplacian matrix from the degree matrix and weighted adjacency matrix
+    D = get_D_mat(W)
+    if symmetric:
+        L = np.linalg.inv(np.sqrt(D)) @ (D - W) @ np.linalg.inv(np.sqrt(D))
+    else:
+        raise NotImplementedError()
+        # L = np.linalg.inv(D) @ (D - W)
+    return L.copy()
+
+def get_eig(L, thres=None):
+    # This function assumes L is symmetric
+    # compute the eigenvalues and eigenvectors of the laplacian matrix
+    eigvals, eigvecs = np.linalg.eigh(L)
+    if thres is not None:
+        keep_mask = eigvals < thres
+        eigvals, eigvecs = eigvals[keep_mask], eigvecs[:, keep_mask]
+    return eigvals, eigvecs
+
+def calculate_U_num_set(
+    texts: list[str],
+    context: str,
+    method_for_similarity: str = "semantic",
+    model_for_entailment: PreTrainedModel = None,
+    tokenizer_for_entailment: PreTrainedTokenizer = None,
+):
+
+    clusters = bidirectional_entailment_clustering(
+        model_for_entailment,
+        tokenizer_for_entailment,
+        context,
+        texts,
+        method_for_similarity,
+    )
+    return len(clusters)
+
+def calculate_U_eigv(
+    texts: list[str],
+    context: str,
+    method_for_similarity: str = "semantic",
+    temperature: float = 3.0,
+    model_for_entailment: PreTrainedModel = None,
+    tokenizer_for_entailment: PreTrainedTokenizer = None,
+):
+    W = calculate_affinity_matrix(
+        texts,
+        context,
+        temperature=temperature,
+        model_for_entailment=model_for_entailment,
+        tokenizer_for_entailment=tokenizer_for_entailment,
+        method_for_similarity=method_for_similarity,
+    )
+    L = get_L_mat(W)
+    eigvals = np.linalg.eigvalsh(L)
+    U_eigv = sum(max(0, 1 - eig) for eig in eigvals)
+    return U_eigv
+
+def calculate_U_ecc(
+    texts: list[str],
+    context: str,
+    method_for_similarity: str = "semantic",
+    temperature: float = 3.0,
+    eigen_threshold: float = 0.9,
+    model_for_entailment: PreTrainedModel = None,
+    tokenizer_for_entailment: PreTrainedTokenizer = None,
+):
+    W = calculate_affinity_matrix(
+        texts,
+        context,
+        model_for_entailment=model_for_entailment,
+        tokenizer_for_entailment=tokenizer_for_entailment,
+        method_for_similarity=method_for_similarity,
+        temperature=temperature,
+    )
+    L = get_L_mat(W, symmetric=True)
+    eigvals, eigvecs = get_eig(L, thres=eigen_threshold)
+    V = eigvecs
+    V_mean = np.mean(V, axis=0)
+    V_prime = V - V_mean
+
+    U_ecc = np.linalg.norm(V_prime, axis=1).sum()
+    return U_ecc
+
+def calculate_U_deg(
+    texts: list[str],
+    context: str,
+    method_for_similarity: str = "semantic",
+    temperature: float = 3.0,
+    model_for_entailment: PreTrainedModel = None,
+    tokenizer_for_entailment: PreTrainedTokenizer = None,
+):
+    W = calculate_affinity_matrix(
+        texts,
+        context,
+        temperature=temperature,
+        model_for_entailment=model_for_entailment,
+        tokenizer_for_entailment=tokenizer_for_entailment,
+        method_for_similarity=method_for_similarity,
+    )
+    D = get_D_mat(W)
+    m = len(W)
+    U_deg = np.trace(m * np.identity(m) - D) / (m**2)
+    return U_deg
 
 
 # ============================
