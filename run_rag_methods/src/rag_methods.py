@@ -1315,6 +1315,15 @@ If you find no further external knowledge needed, you can directly provide the a
         else:
             return None
 
+    def get_partial_think(self, text):
+        pattern = re.compile(r"(.*?)</think>", re.DOTALL)
+        matches = pattern.findall(text)
+        if matches:
+            # return matches[-1]
+            return matches[0]
+        else:
+            return None
+
     def get_query(self, text):
         pattern = re.compile(r"<search>(.*?)</search>", re.DOTALL)
         matches = pattern.findall(text)
@@ -1382,23 +1391,17 @@ If you find no further external knowledge needed, you can directly provide the a
     # --
     def inference_with_partial_trace(self, question, generated_trace):
         input_prompt = self.prompt.format(question=question)
-        
         generated_trace_text = ''.join(
             self.curr_search_template.format(
                 output_text=f"<think> {step['think'] }</think>\n<search> {step['search_query']} </search>\n",
                 search_results=passages2string(step['docs'])
             ) for step in generated_trace
         )
-        # print(input_prompt + generated_trace_text)
-        # print('---')
         messages = [{"role": "user", "content": input_prompt + generated_trace_text}]
         
         path, cnt = [], 0
         while True:
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
-            # print(output_text)
-            # print('---***\n')
-            
             if output_[-1].item() in self.generator.curr_eos:
                 break
         
@@ -1437,22 +1440,47 @@ If you find no further external knowledge needed, you can directly provide the a
         return prompt_text
     
     def partial_inference_self_consistency(self, input_prompt_text):
-        messages = [{"role": "user", "content": input_prompt_text}]
-        
         answer_list = []
+        messages = [{"role": "user", "content": input_prompt_text}]
         for i in range(self.args.n_generations):
             output_, output_text = self.generator.generate(
                 messages,
                 self.generator.searchr1_answer_stopping_criteria,
                 temperature=1.0
             )
-            # print(output_text)
-            # print('-')
             answer_ = self.get_answer(output_text)
             answer = answer_.strip() if answer_ else ''
             answer_list.append(answer)
         
         return answer_list
+    
+    def get_input_prompt_reasoning_consistency(self, question, trace):
+        prompt_text = self.prompt.format(question=question)
+        for step in trace[:-1]:
+            prompt_text += f"<think> {step['think']} </think>\n"
+            prompt_text += f"<search> {step['search_query']} </search>\n"
+            prompt_text += f"<information> {passages2string(step['docs'])} </information>\n\n"
+        # prompt_text += f"<think> {trace[-1]['think']} "
+        
+        return prompt_text 
+        
+    def partial_inference_reasoning_consistency(self, input_prompt_text):
+        messages = [{"role": "user", "content": input_prompt_text}]
+        _, output_text = self.generator.generate(
+            messages,
+            self.generator.searchr1_answer_stopping_criteria,
+            temperature=1.0
+        )
+        
+        answer_ = self.get_answer(output_text)
+        answer = answer_.strip() if answer_ else ''
+        think_ = self.get_think(output_text)
+        think = think_.strip() if think_ else ''
+        return think, answer
+        
+        # partial_think_ = self.get_partial_think(output_text)
+        # partial_think = partial_think_.strip() if partial_think_ else ''
+        # return partial_think, answer
         
         
         

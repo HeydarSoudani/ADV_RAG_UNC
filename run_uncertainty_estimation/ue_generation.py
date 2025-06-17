@@ -3,12 +3,14 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import glob
 import json
 import torch
 import argparse
 import transformers
 from tqdm import tqdm
 from accelerate import Accelerator
+from sklearn.metrics import roc_auc_score
 
 from utils.general_utils import set_seed, passages2string
 from run_rag_methods.src.rag_methods import *
@@ -118,7 +120,6 @@ def ue_generation(args):
     # === Main Loop ==============================
     accelerator.wait_for_everyone()
     with accelerator.split_between_processes(filtered_sorted_query_ids) as sorted_query_ids_shard:
-        
         consistency_results_file_ranked = (
             f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl"
             if args.rag_method in ['flare', 'dragin'] 
@@ -138,7 +139,7 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                if i == 5:
+                if i == 2:
                     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
@@ -146,11 +147,6 @@ def ue_generation(args):
                 # 1) Generate output list
                 masked_traces, masked_traces_text, final_answer_list = consistency_model.get_masked_traces(qid, user_query, trace)
                 context = passages2string(get_unique_docs(masked_traces))
-                
-                print(final_answer_list)
-                print('---')
-                # print(context)
-                # print('---')
                 
                 # 2) Calculate UE scores
                 ue_scores = uncertainty_estimator_model.estimate(
@@ -160,8 +156,6 @@ def ue_generation(args):
                     input_prompt_texts = masked_traces_text,
                     generated_output_texts = final_answer_list
                 )
-                print(ue_scores)
-                print('---')
                 
                 # 3) Print in output files 
                 cons_item = {
@@ -199,6 +193,67 @@ def ue_generation(args):
             if trace_f:
                 trace_f.close()
 
+def merge_result_files(args):
+    
+    consistency_results_file_ranked = (
+        f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}_rank*.jsonl"
+        if args.rag_method in ['flare', 'dragin'] 
+        else f"{args.output_dir}/{args.consistency_method}_results_rank*.jsonl"
+    )
+    consistency_results_shard_files = sorted(glob.glob(consistency_results_file_ranked))
+    with open(args.consistency_results_file, "a") as fout:
+        for shard_file in consistency_results_shard_files:
+            if shard_file == args.consistency_results_file:
+                continue
+            with open(shard_file, "r") as fin:
+                for line in fin:
+                    fout.write(line)
+            os.remove(shard_file)
+            print(f"Deleted shard file: {shard_file}")
+         
+    write_traces = args.consistency_method == 'rag_consistency'   
+    if write_traces:
+        masked_traces_results_file_ranked = (
+            f"{args.output_dir}/{args.consistency_method}_masked_traces_results_th{args.hallucination_threshold}_rank*.jsonl"
+            if args.rag_method in ['flare', 'dragin'] 
+            else f"{args.output_dir}/{args.consistency_method}_masked_traces_results_rank*.jsonl"
+        )
+        masked_traces_results_shard_files = sorted(glob.glob(masked_traces_results_file_ranked))
+        with open(args.masked_traces_results_file, "a") as fout:
+            for shard_file in masked_traces_results_shard_files:
+                if shard_file == args.masked_traces_results_file:
+                    continue
+                with open(shard_file, "r") as fin:
+                    for line in fin:
+                        fout.write(line)
+                os.remove(shard_file)
+                print(f"Deleted shard file: {shard_file}")
+
+def get_auroc(correctness, confidence):
+    try:
+        auroc = roc_auc_score(correctness, confidence)
+    except:
+        print("Auroc couldn't be calculated because there is only one class. Returning 0.5 as auroc.")
+        auroc = 0.5
+    return auroc
+
+def evaluation(args):
+    correctness_list, uncertainty_obj = [], {}
+    with open(args.consistency_results_file, 'r') as infile:
+        for line in infile:
+            data = json.loads(line)
+            correctness = data['em']
+            correctness_list.append(correctness)
+            
+            ue_scores = data['ue_scores']
+            for ue_metric, ue_value in ue_scores.items():
+                if ue_metric in uncertainty_obj.keys():
+                    uncertainty_obj[ue_metric].append(ue_value['confidence'])
+                else:
+                    uncertainty_obj[ue_metric] = [ue_value['confidence']]
+          
+        for ue_metric, conf_list in uncertainty_obj.items():
+            print(f"{ue_metric}: {get_auroc(correctness_list, conf_list)}")
 
 
 if __name__ == "__main__":
@@ -248,22 +303,12 @@ if __name__ == "__main__":
     ])
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='reasoning_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
-    parser.add_argument("--n_generations", type=int, default=10)
-    parser.add_argument("--cutoff_rollout", type=int, default=-1)
-    parser.add_argument("--start_idx", type=int, default=-1)
-    parser.add_argument("--end_idx", type=int, default=-1)
-    parser.add_argument("--mask_left_boundary", type=float, default=0.2)
-    parser.add_argument("--mask_right_boundary", type=float, default=0.5)
-    parser.add_argument("--rc_mode", type=str, default="mid", choices=["loose", "mid", "strict", "maj"])
-    parser.add_argument("--rc_temperature", type=float, default=1.0)
-    parser.add_argument("--rc_n_completions", type=int, default=1)
-    parser.add_argument("--rc_criteria", type=str, default="freq", choices=["freq", "reward"])
-    parser.add_argument("--threshold", type=float, default=0.999)
-    parser.add_argument("--extend_rc_mode", type=str, default="majority_vote", choices=["original", "BoN", "majority_vote"])
-    parser.add_argument("--best_of", type=int, default=5)
+    parser.add_argument("--n_generations", type=int, default=5)
+    parser.add_argument("--mask_left_boundary", type=float, default=0.1)
+    parser.add_argument("--mask_right_boundary", type=float, default=0.4)
     
     # Others
     parser.add_argument('--device', type=int, default=0)
@@ -297,8 +342,38 @@ if __name__ == "__main__":
     ### === Run Steps =============
     set_seed(args.seed)
     ue_generation(args)
-    
+    # merge_result_files(args)
+    # evaluation(args)
     
     # python run_uncertainty_estimation/ue_generation.py
     # accelerate launch --multi_gpu run_uncertainty_estimation/ue_generation.py
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+    # parser.add_argument("--cutoff_rollout", type=int, default=-1)
+    # parser.add_argument("--start_idx", type=int, default=-1)
+    # parser.add_argument("--end_idx", type=int, default=-1)
+    # parser.add_argument("--rc_mode", type=str, default="mid", choices=["loose", "mid", "strict", "maj"])
+    # parser.add_argument("--rc_temperature", type=float, default=1.0)
+    # parser.add_argument("--rc_n_completions", type=int, default=1)
+    # parser.add_argument("--rc_criteria", type=str, default="freq", choices=["freq", "reward"])
+    # parser.add_argument("--threshold", type=float, default=0.999)
+    # parser.add_argument("--extend_rc_mode", type=str, default="majority_vote", choices=["original", "BoN", "majority_vote"])
+    # parser.add_argument("--best_of", type=int, default=5)

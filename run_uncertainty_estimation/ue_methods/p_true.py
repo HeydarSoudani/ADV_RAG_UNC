@@ -36,8 +36,6 @@ class PTrue:
             self.user_prompt = PTRUE_USER_PROMPT_WITH_CONTEXT
     
     def __call__(self, sampled_gen_dict, prediction, context:str):
-        # { "question", "generated_texts", "tokens": tokens_list, "tokens_text": tokens_text_list, "logits": logits_list, "logprobs": logprobs_list}
-        
         ideas = sampled_gen_dict["generated_texts"]
         ideas = "\n".join(ideas)
         
@@ -66,14 +64,10 @@ class PTrue:
                         context=context,
                     ),
                 },
-                {"role": "assistant", "content": self.model_output},    
+                {"role": "assistant", "content": self.model_output},
             ]
         
         prompt = self.tokenizer.apply_chat_template(chat, tokenize=False)
-        
-        print(prompt)
-        print('-')
-        
         prompt_tokens = self.tokenizer.encode(prompt, return_tensors="pt").to(self.model.device)
         with torch.no_grad():
             outputs = self.model(prompt_tokens)
@@ -83,7 +77,6 @@ class PTrue:
         logprobs = logprobs[0, :-1, :]
         logprobs = torch.gather(logprobs, dim=1, index=prompt_tokens[0][1:].view(-1, 1))
         logprobs = logprobs.view(-1).tolist()
-
         indices, texts = find_token_indices(prompt_tokens[0][1:], self.tokenizer, "true")
 
         loss_true = 0

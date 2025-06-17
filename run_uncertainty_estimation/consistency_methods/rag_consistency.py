@@ -1,19 +1,9 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-import json
-import glob
-import torch
 import random
-import argparse
-import transformers
-from tqdm import tqdm
-from accelerate import Accelerator
-from sklearn.metrics import roc_auc_score
 
-from utils.general_utils import set_seed
 from run_rag_methods.src.rag_methods import *
-from run_rag_methods.src.correctness import em_score
 from run_mcts.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from run_mcts.src.models.generate_paraphrase import (
