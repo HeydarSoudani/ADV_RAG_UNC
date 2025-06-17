@@ -1446,7 +1446,7 @@ If you find no further external knowledge needed, you can directly provide the a
             output_, output_text = self.generator.generate(
                 messages,
                 self.generator.searchr1_answer_stopping_criteria,
-                temperature=1.0
+                temperature=self.args.consistency_temperature
             )
             answer_ = self.get_answer(output_text)
             answer = answer_.strip() if answer_ else ''
@@ -1469,7 +1469,7 @@ If you find no further external knowledge needed, you can directly provide the a
         _, output_text = self.generator.generate(
             messages,
             self.generator.searchr1_answer_stopping_criteria,
-            temperature=1.0
+            temperature=self.args.consistency_temperature
         )
         
         answer_ = self.get_answer(output_text)

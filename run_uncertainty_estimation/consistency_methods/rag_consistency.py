@@ -140,7 +140,11 @@ class RagConsistency:
             for pt in paraphrased_thinks:
                 input_text_pt = input_prompt_text + f"<think> {pt} </think>\n<answer>"
                 messages = [{"role": "user", "content": input_text_pt}]
-                _, output_text = self.rag_model.generator.generate(messages, self.rag_model.generator.searchr1_stopping_criteria)
+                _, output_text = self.rag_model.generator.generate(
+                    messages,
+                    self.rag_model.generator.searchr1_stopping_criteria,
+                    temperature=self.args.consistency_temperature
+                )
                 pred_answer = self.get_partial_answer(output_text)
                 new_trace = [{'think': pt, 'answer': pred_answer}]
                 masked_traces.append(new_trace)
