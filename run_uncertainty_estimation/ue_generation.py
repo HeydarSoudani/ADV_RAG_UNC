@@ -15,6 +15,7 @@ from sklearn.metrics import roc_auc_score
 from utils.general_utils import set_seed, passages2string
 from run_rag_methods.src.rag_methods import *
 from run_uncertainty_estimation.consistency_methods import *
+from run_rag_methods.src.correctness import em_score, subem_score, f1_score
 from run_uncertainty_estimation.src.uncertainty_estimator import UncertaintyEstimator
 
 def ue_generation(args):
@@ -140,7 +141,7 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 1:
+                # if i == 10:
                 #     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
@@ -159,8 +160,7 @@ def ue_generation(args):
                     input_prompt_texts = masked_traces_text,
                     generated_output_texts = final_answer_list
                 )
-                
-                print(ue_scores)
+                # print(ue_scores)
                 
                 # 3) Print in output files 
                 cons_item = {
@@ -242,7 +242,7 @@ def get_auroc(correctness, confidence):
         auroc = 0.5
     return auroc
 
-def evaluation(args):
+def evaluation_correlation(args):
     correctness_list, uncertainty_obj = [], {}
     with open(args.consistency_results_file, 'r') as infile:
         for line in infile:
@@ -260,6 +260,28 @@ def evaluation(args):
         for ue_metric, conf_list in uncertainty_obj.items():
             print(f"{ue_metric}: {get_auroc(correctness_list, conf_list)}")
 
+def correctness_evaluation_mv(args):
+    em_full_evaluation, em_sub_evaluation = [], []
+    with open(args.consistency_results_file, 'r') as infile:
+        for line in infile:
+            data = json.loads(line)
+            gt_answers = data['gt_answers']
+            pred_answer = data['ue_scores']['majority_voting']['most_confident_answer'][0]
+
+            if pred_answer:
+                correctness_em = em_score(pred_answer, gt_answers)
+                correctness_em_sub = subem_score(pred_answer, gt_answers)
+            else:
+                correctness_em, correctness_em_sub = 0, 0
+
+            em_full_evaluation.append(correctness_em)
+            em_sub_evaluation.append(correctness_em_sub)
+
+    # === Print results ========================
+    print(f"\nEvaluation Result {args.consistency_method}:")
+    print(f"EM (full): {np.mean(em_full_evaluation)*100}")
+    print(f"EM (sub): {np.mean(em_sub_evaluation)*100}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -269,10 +291,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -308,10 +330,10 @@ if __name__ == "__main__":
     ])
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
-    parser.add_argument("--n_generations", type=int, default=5)
+    parser.add_argument("--n_generations", type=int, default=10)
     parser.add_argument("--mask_left_boundary", type=float, default=0.1)
     parser.add_argument("--mask_right_boundary", type=float, default=0.4)
     parser.add_argument("--consistency_temperature", type=float, default=1.0)
@@ -347,39 +369,10 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    ue_generation(args)
+    # ue_generation(args)
     # merge_result_files(args)
-    # evaluation(args)
+    # evaluation_correlation(args)
+    correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_generation.py
     # accelerate launch --multi_gpu run_uncertainty_estimation/ue_generation.py
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
-    # parser.add_argument("--cutoff_rollout", type=int, default=-1)
-    # parser.add_argument("--start_idx", type=int, default=-1)
-    # parser.add_argument("--end_idx", type=int, default=-1)
-    # parser.add_argument("--rc_mode", type=str, default="mid", choices=["loose", "mid", "strict", "maj"])
-    # parser.add_argument("--rc_temperature", type=float, default=1.0)
-    # parser.add_argument("--rc_n_completions", type=int, default=1)
-    # parser.add_argument("--rc_criteria", type=str, default="freq", choices=["freq", "reward"])
-    # parser.add_argument("--threshold", type=float, default=0.999)
-    # parser.add_argument("--extend_rc_mode", type=str, default="majority_vote", choices=["original", "BoN", "majority_vote"])
-    # parser.add_argument("--best_of", type=int, default=5)

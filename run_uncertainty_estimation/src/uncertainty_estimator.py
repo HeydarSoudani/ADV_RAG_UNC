@@ -23,14 +23,14 @@ class UncertaintyEstimator:
         
         self.ue_methods_ = {
             "majority_voting": MajorityVoting(self.se_model),
-            "p_true": PTrue(self.model, self.tokenizer),
-            "num_ss": NumSemanticSet(model_for_entailment, tokenizer_for_entailment),
-            "sum_eigen": SumEigenUncertainty(model_for_entailment, tokenizer_for_entailment),
-            "eccentricity": EccentricityUncertainty(model_for_entailment, tokenizer_for_entailment),
-            "matrix_degree": MatrixDegreeUncertainty(model_for_entailment, tokenizer_for_entailment),
-            "predictive_entropy": PredictiveEntropy(),
-            "semantic_entropy": SemanticEntropy(model_for_entailment, tokenizer_for_entailment),
-            "sar": SAR(self.tokenizer)
+            # "p_true": PTrue(self.model, self.tokenizer),
+            # "num_ss": NumSemanticSet(model_for_entailment, tokenizer_for_entailment),
+            # "sum_eigen": SumEigenUncertainty(model_for_entailment, tokenizer_for_entailment),
+            # "eccentricity": EccentricityUncertainty(model_for_entailment, tokenizer_for_entailment),
+            # "matrix_degree": MatrixDegreeUncertainty(model_for_entailment, tokenizer_for_entailment),
+            # "predictive_entropy": PredictiveEntropy(),
+            # "semantic_entropy": SemanticEntropy(model_for_entailment, tokenizer_for_entailment),
+            # "sar": SAR(self.tokenizer)
         }
         self.white_box_ue_methods = ['predictive_entropy', 'semantic_entropy', 'mars', 'lars', 'sar']
         self.wanted_ue_methods = list(self.ue_methods_.keys())

@@ -59,7 +59,7 @@ if __name__ == "__main__":
     parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
-    parser.add_argument("--n_generations", type=int, default=5)
+    parser.add_argument("--n_generations", type=int, default=10)
     parser.add_argument("--mask_left_boundary", type=float, default=0.1)
     parser.add_argument("--mask_right_boundary", type=float, default=0.4)
     parser.add_argument("--consistency_temperature", type=float, default=1.0)
