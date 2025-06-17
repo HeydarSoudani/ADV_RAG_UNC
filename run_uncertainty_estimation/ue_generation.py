@@ -110,6 +110,7 @@ def ue_generation(args):
         tokenizer=secondary_tokenizer,
         device=device,
         args=args,
+        generated_output_template=rag_model.answer_template
     )
     
     # === Functions ==============================
@@ -139,14 +140,16 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                if i == 10:
-                    break
+                # if i == 1:
+                #     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
                 # 1) Generate output list
+                # TODO: if exists ... (for the case of adding new UE method)
                 masked_traces, masked_traces_text, final_answer_list = consistency_model.get_masked_traces(qid, user_query, trace)
                 context = passages2string(get_unique_docs(masked_traces))
+                
                 
                 # 2) Calculate UE scores
                 ue_scores = uncertainty_estimator_model.estimate(
@@ -156,6 +159,8 @@ def ue_generation(args):
                     input_prompt_texts = masked_traces_text,
                     generated_output_texts = final_answer_list
                 )
+                
+                print(ue_scores)
                 
                 # 3) Print in output files 
                 cons_item = {
@@ -303,7 +308,7 @@ if __name__ == "__main__":
     ])
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=5)

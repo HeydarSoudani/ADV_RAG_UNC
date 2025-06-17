@@ -3,7 +3,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gpus=4
 #SBATCH --cpus-per-task=4
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --time=3:00:00
 #SBATCH --mem=80GB
 #SBATCH --output=script_logging/slurm_%A.out
@@ -27,7 +27,7 @@ consistency_method="rag_consistency"
 run="run_4 (rag_methods_500)"
 
 # srun python
-accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_rag_methods/run_framework.py \
+accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_uncertainty_estimation/run_framework.py \
     --model_name_or_path "$model_name_or_path" \
     --secondary_model_name_or_path "$secondary_model_name_or_path" \
     --dataset "$dataset" \
@@ -38,7 +38,6 @@ accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_rag_methods/run_framework.py
     --retrieval_model_path "$retrieval_model_path" \
     --rag_method "$rag_method" \
     --consistency_method "$consistency_method" \
-    --ue_method "$ue_method" \
     --run "$run"
 
 
@@ -51,6 +50,9 @@ accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_rag_methods/run_framework.py
     # 'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot',
     # 'flare', 'dragin',
     # 'self_ask', 'react', 'search_o1', 'search_r1'
+
+### consistency_method:
+    # 'self_consistency', 'reasoning_consistency', 'rag_consistency'
 
 ### retriever_model:
     # 'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'

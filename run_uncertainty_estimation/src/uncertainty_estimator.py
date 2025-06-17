@@ -6,31 +6,43 @@ from transformers import DebertaForSequenceClassification, DebertaTokenizer
 
 from utils.general_utils import find_token_indices
 from run_uncertainty_estimation.ue_methods import *
+from run_mcts.src.models.semantic_equivalence import SemanticEquivalenceGenerator
+
 
 class UncertaintyEstimator:
-    def __init__(self, model, tokenizer, device, args):
+    def __init__(self, model, tokenizer, device, args, generated_output_template=None):
         self.model = model
         self.tokenizer = tokenizer
         self.args = args
         entailment_model_device = device
         model_for_entailment = DebertaForSequenceClassification.from_pretrained("microsoft/deberta-large-mnli").to(entailment_model_device)
         tokenizer_for_entailment = DebertaTokenizer.from_pretrained("microsoft/deberta-large-mnli")
-
+        self.generated_output_template = generated_output_template
+        self.se_model = SemanticEquivalenceGenerator(args, device, model, tokenizer)
+        
+        
         self.ue_methods_ = {
+            "majority_voting": MajorityVoting(self.se_model),
             "p_true": PTrue(self.model, self.tokenizer),
             "num_ss": NumSemanticSet(model_for_entailment, tokenizer_for_entailment),
             "sum_eigen": SumEigenUncertainty(model_for_entailment, tokenizer_for_entailment),
             "eccentricity": EccentricityUncertainty(model_for_entailment, tokenizer_for_entailment),
             "matrix_degree": MatrixDegreeUncertainty(model_for_entailment, tokenizer_for_entailment),
+            "predictive_entropy": PredictiveEntropy(),
+            "semantic_entropy": SemanticEntropy(model_for_entailment, tokenizer_for_entailment),
+            "sar": SAR(self.tokenizer)
         }
+        self.white_box_ue_methods = ['predictive_entropy', 'semantic_entropy', 'mars', 'lars', 'sar']
+        self.wanted_ue_methods = list(self.ue_methods_.keys())
     
     def estimate(self,
         question, prediction, context:str,
-        input_prompt_texts, generated_output_texts,
+        input_prompt_texts,
+        generated_output_texts,
         generation_type:str = "existing_generations",
     ):
         
-        if "entropy" in list(self.ue_methods_.keys()):
+        if any(item in self.white_box_ue_methods for item in self.wanted_ue_methods):
             # = Generation
             if generation_type == "new_generations":
                 sampled_gen_dict = self.sample_generations_batch_hf_local(question, input_prompt_texts)
@@ -45,14 +57,12 @@ class UncertaintyEstimator:
                 "generated_texts": generated_output_texts
             }
 
-    
         # = Uncertainty Estimation
         ue_scores = {}
         for ue_title, ue_function in self.ue_methods_.items():
             ue_scores[ue_title] = ue_function(sampled_gen_dict, prediction, context)
     
         return ue_scores
-    
     
     def sample_generations_batch_hf_local(self, context, question):
         
@@ -131,14 +141,14 @@ class UncertaintyEstimator:
     def dict_generations_batch_hf_local(self, question, input_prompt_texts, generated_output_texts):
         logprobs_list, logits_list, tokens_list, tokens_text_list = [], [], [], []
         
-    
         for idx, generated_output_text in enumerate(generated_output_texts):
             if self.tokenizer.chat_template:
+                generated_output_text_ = self.generated_output_template.format(answer=generated_output_text) if self.generated_output_template else generated_output_text
                 input_prompt_text = self.tokenizer.apply_chat_template(
                     [
                         # {"role": "system", "content": self.system_prompt},
                         {"role": "user", "content": input_prompt_texts[idx]},
-                        {"role": "assistant", "content": generated_output_text}
+                        {"role": "assistant", "content": generated_output_text_}
                     ],
                     add_generation_prompt=True,
                     tokenize=False
@@ -150,11 +160,10 @@ class UncertaintyEstimator:
             tokens_text_list.append([self.tokenizer.decode(answer_id) for answer_id in generated_text_ids])
             input_prompt_tokens = self.tokenizer.encode(input_prompt_text, return_tensors="pt").to(self.model.device)
             indices, texts = find_token_indices(input_prompt_tokens[0], self.tokenizer, generated_output_text)
-            
+
             with torch.no_grad():
                 outputs = self.model(input_prompt_tokens)
                 logits = outputs.logits
-
             logits_list.append(logits[0, indices[-1][0]-1:indices[-1][-1], :])
             
             logprobs = torch.log_softmax(logits, dim=-1)

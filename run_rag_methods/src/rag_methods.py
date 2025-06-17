@@ -1300,6 +1300,7 @@ class SearchR1_RAG(BasicRAG):
     def __init__(self, generation_model, generation_tokenizer, device, args):
         super().__init__(generation_model, generation_tokenizer, device, args)
         self.curr_search_template = '\n\n{output_text}<information>{search_results}</information>\n\n'
+        self.answer_template = '<answer>{answer}</answer>'
         self.prompt = """Answer the given question. \
 You must conduct reasoning inside <think> and </think> first every time you get new information. \
 After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. \
