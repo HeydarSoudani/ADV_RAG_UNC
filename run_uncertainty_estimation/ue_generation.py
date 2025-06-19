@@ -141,8 +141,8 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 10:
-                #     break
+                if i == 1:
+                    break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
@@ -261,26 +261,41 @@ def evaluation_correlation(args):
             print(f"{ue_metric}: {get_auroc(correctness_list, conf_list)}")
 
 def correctness_evaluation_mv(args):
-    em_full_evaluation, em_sub_evaluation = [], []
+    em_mv_full_evaluation, em_mv_sub_evaluation = [], []
+    em_org_full_evaluation, em_org_sub_evaluation = [], []
     with open(args.consistency_results_file, 'r') as infile:
         for line in infile:
             data = json.loads(line)
             gt_answers = data['gt_answers']
-            pred_answer = data['ue_scores']['majority_voting']['most_confident_answer'][0]
-
-            if pred_answer:
-                correctness_em = em_score(pred_answer, gt_answers)
-                correctness_em_sub = subem_score(pred_answer, gt_answers)
+            
+            pred_answer_mc = data['ue_scores']['majority_voting']['most_confident_answer'][0]
+            if pred_answer_mc:
+                correctness_em = em_score(pred_answer_mc, gt_answers)
+                correctness_em_sub = subem_score(pred_answer_mc, gt_answers)
             else:
                 correctness_em, correctness_em_sub = 0, 0
-
-            em_full_evaluation.append(correctness_em)
-            em_sub_evaluation.append(correctness_em_sub)
-
+            em_mv_full_evaluation.append(correctness_em)
+            em_mv_sub_evaluation.append(correctness_em_sub)
+            
+            
+            pred_answer_org = data['pred_answer']
+            if pred_answer_org:
+                correctness_em = em_score(pred_answer_org, gt_answers)
+                correctness_em_sub = subem_score(pred_answer_org, gt_answers)
+            else:
+                correctness_em, correctness_em_sub = 0, 0
+            em_org_full_evaluation.append(correctness_em)
+            em_org_sub_evaluation.append(correctness_em_sub)
+            
+    
     # === Print results ========================
-    print(f"\nEvaluation Result {args.consistency_method}:")
-    print(f"EM (full): {np.mean(em_full_evaluation)*100}")
-    print(f"EM (sub): {np.mean(em_sub_evaluation)*100}")
+    print(f"\nEvaluation Result (MC) {args.consistency_method}:")
+    print(f"EM (full): {np.mean(em_mv_full_evaluation)*100}")
+    print(f"EM (sub): {np.mean(em_mv_sub_evaluation)*100}")
+    
+    print(f"\nEvaluation Result (Org):")
+    print(f"EM (full): {np.mean(em_org_full_evaluation)*100}")
+    print(f"EM (sub): {np.mean(em_org_sub_evaluation)*100}")
 
 
 if __name__ == "__main__":
@@ -291,10 +306,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -369,10 +384,10 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    # ue_generation(args)
+    ue_generation(args)
     # merge_result_files(args)
     # evaluation_correlation(args)
-    correctness_evaluation_mv(args)
+    # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_generation.py
     # accelerate launch --multi_gpu run_uncertainty_estimation/ue_generation.py

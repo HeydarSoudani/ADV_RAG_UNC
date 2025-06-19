@@ -9,6 +9,7 @@ import glob
 import torch
 import datasets
 import argparse
+import transformers
 from tqdm import tqdm
 from accelerate import Accelerator
 from accelerate.utils import gather_object
@@ -97,6 +98,9 @@ def rag_generation(args):
 
 
     # === Select RAG Method =====================
+    generation_model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16).to(device) # attn_implementation="eager" # Disable this for searchR1
+    generation_tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
+    
     if args.rag_method == 'direct_inference':
         rag_model = DirectInference(args, device)
     elif args.rag_method == 'cot_inference':
@@ -120,7 +124,7 @@ def rag_generation(args):
     elif args.rag_method == 'search_o1':
         rag_model = SearchO1_RAG(args, device)
     elif args.rag_method == 'search_r1':
-        rag_model = SearchR1_RAG(args, device)
+        rag_model = SearchR1_RAG(generation_model, generation_tokenizer, device, args)
     else:
         raise NotImplementedError
 
@@ -135,8 +139,8 @@ def rag_generation(args):
             inference_results_file_ranked = f"{args.output_dir}/inference_results_rank{accelerator.process_index}.jsonl"
         with open(inference_results_file_ranked, 'w') as res_f:
             for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
-                if i == 1:
-                    break
+                # if i == 1:
+                #     break
                 qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
                 question = question.strip()
                 if question[-1] != '?':
@@ -268,11 +272,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='2wikimultihopqa', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
+    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=10.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
     
@@ -343,11 +347,11 @@ if __name__ == "__main__":
 
     ### === Run Steps ============================
     set_seed(args.seed)
-    # rag_generation(args)
+    rag_generation(args)
     # merge_result_files(args)
     # get_num_retrieval(args)
     # evaluate(args)
-    subsample_generation(args)
+    # subsample_generation(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py

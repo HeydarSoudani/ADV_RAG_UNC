@@ -1,7 +1,6 @@
 import re
 import torch
 
-
 def get_paraphrased_query(text):
     pattern = re.compile(r"<paraphrased_query>(.*?)</paraphrased_query>", re.DOTALL)
     matches = pattern.findall(text)
@@ -17,7 +16,6 @@ def get_paraphrased_think(text):
         return matches
     else:
         return None
-
 
 class SearchQueryGenerator:
     def __init__(self, args, generator, tokenizer) -> None:
@@ -100,6 +98,46 @@ class SearchQueryGenerator:
         
         return generated_texts
 
+    def inference(self, qid, original_sq, repeat=5):
+        sq_prompt = self.get_instruction(original_sq, n=repeat)
+        sq_output = self.generate(sq_prompt, temperature=0.7)[0]
+        paraphrased_queries = get_paraphrased_query(sq_output)
+
+        # check if paraphrased_queries are None
+        if paraphrased_queries == None:
+            print(f"Paraphrased queries are not provided for query {qid} ...")
+            for i in range(self.args.retry):
+                print(f"Paraphrased queries, try {i+1} ...")
+                sq_output = self.generate(sq_prompt, temperature=1.0)[0]
+                paraphrased_queries = get_paraphrased_query(sq_output)
+                if paraphrased_queries != None:
+                    break
+            else:
+                print(f"Failed to generate 'paraphrased queries' after all retries for query {qid}!!!")
+                paraphrased_queries = []
+        
+        # Check if the number of paraphrased_queries is equal to "repeat"
+        if paraphrased_queries is None:
+            paraphrased_queries = []
+
+        max_iterations = 10
+        iteration = 0
+        while len(paraphrased_queries) != repeat and iteration < max_iterations:
+            remaining = repeat - len(paraphrased_queries)        
+            extra_prompt = self.get_instruction(original_sq, n=remaining)
+            extra_output = self.generate(extra_prompt, temperature=1.0)[0]
+            extra_queries = get_paraphrased_query(extra_output)
+
+            if extra_queries:
+                paraphrased_queries.extend(extra_queries)
+                paraphrased_queries = paraphrased_queries[:repeat]  # trim if over
+            else:
+                print(f"Failed to generate extra queries on iteration {iteration + 1}")
+            iteration += 1
+        if len(paraphrased_queries) != repeat:
+            print(f"Warning: Only generated {len(paraphrased_queries)} queries out of {repeat} after {iteration} iterations.")
+        
+        return paraphrased_queries
 
 
 class ThinkGenerator:

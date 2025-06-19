@@ -4,7 +4,7 @@
 #SBATCH --gpus=4
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_h100
-#SBATCH --time=2:00:00
+#SBATCH --time=1:00:00
 #SBATCH --mem=80GB
 #SBATCH --output=script_logging/slurm_%A.out
 
@@ -16,8 +16,8 @@ module load Python/3.12.3-GCCcore-13.3.0
 # model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
 secondary_model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="bamboogle"
-subsec="test"
+dataset="hotpotqa"
+subsec="dev"
 fraction_of_data_to_use=1.0
 retriever_name="rerank_l6"
 index_path="data/search_r1_files/bm25"
@@ -25,6 +25,7 @@ retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
 rag_method="search_r1"
 consistency_method="rag_consistency"
 run="run_4 (rag_methods_500)"
+n_generations=10
 
 # srun python
 accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_uncertainty_estimation/run_framework.py \
@@ -38,6 +39,7 @@ accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_uncertainty_estimation/run_f
     --retrieval_model_path "$retrieval_model_path" \
     --rag_method "$rag_method" \
     --consistency_method "$consistency_method" \
+    --n_generations "$n_generations" \
     --run "$run"
 
 
