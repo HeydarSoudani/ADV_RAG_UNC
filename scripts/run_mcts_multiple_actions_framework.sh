@@ -16,7 +16,7 @@ module load Python/3.12.3-GCCcore-13.3.0
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 dataset="bamboogle"
 subsec="test"
-run="run_4 (mcts_500_rollout4)"
+run="run_9 (mcts_mactions_500_rollout4)"
 # Generator
 fraction_of_data_to_use=1.0
 retriever_name="rerank_l6"
@@ -28,7 +28,7 @@ max_depth_allowed=6
 discriminator_method="rag_consistency"
 
 # srun python 
-accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_mcts/run_framework.py \
+accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_mcts_two_actions/run_framework.py \
     --model_name_or_path "$model_name_or_path" \
     --dataset "$dataset" \
     --subsec "$subsec" \

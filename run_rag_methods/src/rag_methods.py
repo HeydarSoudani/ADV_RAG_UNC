@@ -1394,17 +1394,21 @@ If you find no further external knowledge needed, you can directly provide the a
         input_prompt = self.prompt.format(question=question)
         generated_trace_text = ''.join(
             self.curr_search_template.format(
-                output_text=f"<think> {step['think'] }</think>\n<search> {step['search_query']} </search>\n",
+                output_text=f"<think> {step['think']} </think>\n<search> {step['search_query']} </search>\n",
                 search_results=passages2string(step['docs'])
             ) for step in generated_trace
         )
-        messages = [{"role": "user", "content": input_prompt + generated_trace_text}]
+        input_prompt += generated_trace_text
+        messages = [{"role": "user", "content": input_prompt}]
         
         path, cnt = [], 0
         while True:
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
             if output_[-1].item() in self.generator.curr_eos:
                 break
+        
+            # print(output_text)
+            # print('--')
         
             tmp_query = self.get_query(output_text)
             if tmp_query:

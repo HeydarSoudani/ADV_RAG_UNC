@@ -12,13 +12,13 @@ import transformers
 from tqdm import tqdm, trange
 from accelerate import Accelerator
 
-from run_mcts.src.generate_node import Generator
-from run_mcts.src.MCTS_backbone import MCTS_Searcher
-from run_mcts.src.MCTS_reasoning import Reasoning_MCTS_Node
+
+from run_mcts_multiple_actions.src.MCTS_backbone import MCTS_Searcher
+from run_mcts_multiple_actions.src.MCTS_reasoning import Reasoning_MCTS_Node
+from run_mcts_multiple_actions.src.generate_node import Generator
 from utils.general_utils import set_seed, sample_sorted_qids
 from utils.mcts_utils import Node_Type, stochastic_find_best_solution, print_tree_from_root
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
-
 
 def mcts_generation(args):
     # === MultiGPU setup =======================
@@ -87,7 +87,7 @@ def mcts_generation(args):
         retriever = RerankRetriever(args)
     elif args.retriever_name in ['e5', 'bge', 'reasonir']:
         retriever = DenseRetriever(args)
-    
+        
     
     # === LLM Generator ==========================
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
@@ -112,7 +112,7 @@ def mcts_generation(args):
             question = question.strip()
             if question[-1] != '?':
                 question += '?'
-            
+    
             #! build an MCTS searcher
             mcts_searcher = MCTS_Searcher(
                 exploration_weight=args.mcts_exploration_weight,
@@ -170,67 +170,11 @@ def mcts_generation(args):
             with open(f"{args.generation_trees_results_dir}/{qid}/rollout_solutions.jsonl", "w") as f:
                 for item in js2:
                     f.write(json.dumps(item) + "\n")
+    
 
-            #! record conf analysis 
-            # un_object = {}
-            # for node in all_solution_nodes:
-            #     depth = len(node.solution_trace) -1
-            #     # all_keys = list(node.solution_trace.keys())
-            #     # print(all_keys)
-            #     last_key = max(list(node.solution_trace.keys()))
-            #     # print(node.solution_trace)
-            #     un_object[depth] = {
-                    
-            #         "ue_param": node.solution_trace[last_key]["think_answer"]["scores"][1]["param"]["PE"]["uncertainty"],
-            #         "ue_cont": node.solution_trace[last_key]["think_answer"]["scores"][1]["cont"]["PE"]["uncertainty"],
-            #         "prediction": node.solution_trace[last_key]["think_answer"]["answer"],
-            #         "reward": node.solution_trace[last_key]["think_answer"]["node_reward"]
-            #     }
-            # # print(un_object)
-            # sorted_data = dict(sorted(un_object.items(), key=lambda item: int(item[0])))
-            # print('-' * 40)
-            # print(f'Gt: {all_solution_nodes[0].solution_trace[0]['ground_truth']}')
-            # for key, value in sorted_data.items():
-            #     print(f"D {key} | {value['ue_param']:.3f} | {value['ue_cont']:.3f} | {value['reward']:.3f} | {value['prediction']}")
-            # print('-' * 40)
-
-
-    # # === Save results ===========================
-    # reuslts_dict = {
-    #     'Tokens': node_generator.counter.token / len(dataset),
-    #     'Sentences': node_generator.counter.sentence / len(dataset),
-    #     'Retrieves': node_generator.counter.retrieve / len(dataset)
-    # }
-    # with open(args.statistics_results_file, 'w') as file:
-    #     json.dump(reuslts_dict, file, indent=4)
 
 def subsample_generation(args):
-    
-    def get_all_qids_from_folders(folder_path):
-        return [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
-    
-    # src file
-    sample_size = 500
-    src_dir = args.generation_trees_results_dir
-    
-    # dst file
-    run_ = f"run_5 (mcts_{sample_size}_rollout4)"
-    # run_ = f"run_6 (mcts_{sample_size}_rollout8)"
-    model_ = args.model_name_or_path.split('/')[-1]
-    output_dir = f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.retriever_name}"
-    dst_dir = f'{output_dir}/generation_trees'
-    os.makedirs(dst_dir, exist_ok=True)
-
-    all_qids = get_all_qids_from_folders(args.generation_trees_results_dir)
-    sampled_qids = sample_sorted_qids(all_qids, sample_size=sample_size)
-    
-    for qid in tqdm(sampled_qids):
-        src_path = os.path.join(src_dir, qid)
-        dst_path = os.path.join(dst_dir, qid)
-        if os.path.exists(src_path):
-            shutil.copytree(src_path, dst_path)
-        else:
-            print(f"Warning: Folder {src_path} not found")
+    pass
 
 
 if __name__ == "__main__":

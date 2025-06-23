@@ -61,7 +61,6 @@ class QueryRewriter:
             }
         ]
     
-    
     def get_instruction(self, history, original_search_query, n=5):
         # --
         input_text = ''

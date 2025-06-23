@@ -141,8 +141,8 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                if i == 1:
-                    break
+                # if i == 1:
+                #     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
@@ -384,10 +384,10 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    ue_generation(args)
-    # merge_result_files(args)
-    # evaluation_correlation(args)
-    # correctness_evaluation_mv(args)
+    # ue_generation(args)
+    merge_result_files(args)
+    evaluation_correlation(args)
+    correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_generation.py
     # accelerate launch --multi_gpu run_uncertainty_estimation/ue_generation.py

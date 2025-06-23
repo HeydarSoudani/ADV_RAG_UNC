@@ -311,7 +311,10 @@ class RerankRetriever(BaseRetriever):
     
         # Second-stage
         self.cross_encoder = CrossEncoder(config.retrieval_model_path, max_length=config.retrieval_query_max_length)
-        
+    
+    def set_topk(self, new_k):
+        self.topk = new_k
+      
     def _check_contain_doc(self):
         return self.searcher.doc(0).raw() is not None
     
