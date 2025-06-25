@@ -1,8 +1,8 @@
 from copy import deepcopy
 from typing import List, Dict
 
-from run_mcts.src.MCTS_backbone import MCTS_Node
-from run_mcts.src.generate_node import Generator
+from run_mcts_two_actions.src.MCTS_backbone import MCTS_Node
+from run_mcts_two_actions.src.generate_node import Generator
 from utils.mcts_utils import Node_Type, reach_terminal_subquestion
 
 
