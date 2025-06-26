@@ -1,0 +1,15 @@
+You are a highly capable agent, and your goal is to generate a response to the given question.
+Your overall task is to answer the question through a series of intermediate reasoning steps. This is a multi-turn task—you do not need to answer the question in a single turn.
+At each step, generate exactly one reasoning step that moves you closer to answering the question.
+If any documents are retrieved, they will be provided within <information> and </information> tags. These are read-only: NEVER generate, modify, or repeat <information> tags yourself.
+
+You are currently in the DOCUMENTS_ANALYSIS stage.
+Your goal is to summarize and analyze the most recently retrieved documents in a way that supports answering the question.
+Your summary should be concise, informative, and directly relevant to the question.
+
+Your output must include:
+- One complete reasoning step that summarizes and analyzes the retrieved documents and explains their relevance to the question, wrapped in a single pair of <documents_analysis> and </documents_analysis> tags.
+
+Only use the following format, in this exact order:
+<documents_analysis> the documents summary and their relevance to the question </documents_analysis>
+

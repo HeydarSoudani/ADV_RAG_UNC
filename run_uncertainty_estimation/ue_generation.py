@@ -17,6 +17,8 @@ from run_rag_methods.src.rag_methods import *
 from run_uncertainty_estimation.consistency_methods import *
 from run_rag_methods.src.correctness import em_score, subem_score, f1_score
 from run_uncertainty_estimation.src.uncertainty_estimator import UncertaintyEstimator
+from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
+from run_uncertainty_estimation.ue_methods import *
 
 def ue_generation(args):
     # === MultiGPU setup ========================
@@ -243,7 +245,14 @@ def get_auroc(correctness, confidence):
     return auroc
 
 def evaluation_correlation(args):
-    correctness_list, uncertainty_obj = [], {}
+    
+    # accelerator = Accelerator()
+    # device = accelerator.device
+    # secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, torch_dtype=torch.bfloat16).to(device)
+    # secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
+    # se_model = SemanticEquivalenceGenerator(args, device, secondary_model, secondary_tokenizer)
+    
+    correctness_list, uncertainty_obj = [], {'mv': []}
     with open(args.consistency_results_file, 'r') as infile:
         for line in infile:
             data = json.loads(line)
@@ -256,6 +265,20 @@ def evaluation_correlation(args):
                     uncertainty_obj[ue_metric].append(ue_value['confidence'])
                 else:
                     uncertainty_obj[ue_metric] = [ue_value['confidence']]
+          
+            # ---
+            # question = data['query']
+            # generated_texts = data['final_answer_list'][5:10]
+            # len_generated_texts = len(generated_texts)
+            # prediction = data['pred_answer'].strip()
+            
+            # num_consistent = sum(
+            #     se_model.check_answers_equiv(question, prediction, ans)
+            #     for ans in generated_texts
+            # )
+            # conf = num_consistent / len_generated_texts
+            # uncertainty_obj['mv'].append(conf)
+          
           
         for ue_metric, conf_list in uncertainty_obj.items():
             print(f"{ue_metric}: {get_auroc(correctness_list, conf_list)}")
@@ -379,15 +402,15 @@ if __name__ == "__main__":
             args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces.jsonl"
         
     # === Prompt files =============
-    args.query_decomposition_prompt_file = "run_mcts/prompts/query_decomposition_prompt_template.txt"
-    args.semantic_equivalence_prompt_file = "run_mcts/prompts/semantic_equivalence_prompt_template.txt"
+    args.query_decomposition_prompt_file = "run_mcts_two_actions/prompts/query_decomposition_prompt_template.txt"
+    args.semantic_equivalence_prompt_file = "run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
     
     ### === Run Steps =============
     set_seed(args.seed)
     # ue_generation(args)
-    merge_result_files(args)
+    # merge_result_files(args)
     evaluation_correlation(args)
-    correctness_evaluation_mv(args)
+    # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_generation.py
     # accelerate launch --multi_gpu run_uncertainty_estimation/ue_generation.py

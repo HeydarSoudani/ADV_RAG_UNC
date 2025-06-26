@@ -13,7 +13,7 @@ from sklearn.feature_extraction.text import CountVectorizer
 from transformers import DebertaForSequenceClassification, DebertaTokenizer
 from transformers import PreTrainedModel, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from run_mcts.src.templates import ENTAILMENT_PROMPT, DEFAULT_SYSTEM_PROMPT
+from run_mcts_two_actions.src.templates import ENTAILMENT_PROMPT, DEFAULT_SYSTEM_PROMPT
 
 def set_seed(seed):
     torch.manual_seed(seed)

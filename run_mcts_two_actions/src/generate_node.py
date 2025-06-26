@@ -126,6 +126,7 @@ class Generator:
         
         # Prompts
         self.semantic_equivalence_prompt = read_txt(self.args.semantic_equivalence_prompt_file)
+        self.retrieve_documents_prompt = read_txt(self.args.retrieve_documents_prompt_file)
         self.fewshot_examples = examples
           
         # EoS tokens
@@ -585,7 +586,7 @@ class Generator:
     def generate_think_search(self, solution_trace: Dict[int, Dict[str, str]]):
         ### = Do generation
         input_prompt_text = self.get_prompt_text('think_search', solution_trace)
-        initial_output = self.generate_(input_prompt_text, self.search_stopping_criteria, num_return=1)[0]        
+        initial_output = self.generate_(input_prompt_text, self.search_stopping_criteria, num_return=1)[0]
         if self.args.use_counter:
             self.counter.add_generate(initial_output, self.tokenizer)
         

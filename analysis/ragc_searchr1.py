@@ -16,9 +16,9 @@ from sklearn.metrics import roc_auc_score
 from utils.general_utils import set_seed
 from run_rag_methods.src.rag_methods import *
 from run_rag_methods.src.correctness import em_score
-from run_mcts.src.models.semantic_equivalence import SemanticEquivalenceGenerator
+from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
-from run_mcts.src.models.generate_paraphrase import (
+from run_mcts_two_actions.src.models.generate_paraphrase import (
     SearchQueryGenerator, ThinkGenerator,
     get_paraphrased_query, get_paraphrased_think
 )
@@ -325,10 +325,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)

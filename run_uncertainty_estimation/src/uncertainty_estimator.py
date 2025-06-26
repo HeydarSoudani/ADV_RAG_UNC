@@ -6,7 +6,7 @@ from transformers import DebertaForSequenceClassification, DebertaTokenizer
 
 from utils.general_utils import find_token_indices
 from run_uncertainty_estimation.ue_methods import *
-from run_mcts.src.models.semantic_equivalence import SemanticEquivalenceGenerator
+from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 
 
 class UncertaintyEstimator:

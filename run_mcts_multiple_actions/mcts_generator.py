@@ -17,7 +17,7 @@ from run_mcts_multiple_actions.src.MCTS_backbone import MCTS_Searcher
 from run_mcts_multiple_actions.src.MCTS_reasoning import Reasoning_MCTS_Node
 from run_mcts_multiple_actions.src.generate_node import Generator
 from utils.general_utils import set_seed, sample_sorted_qids
-from utils.mcts_utils import Node_Type, stochastic_find_best_solution, print_tree_from_root
+from utils.mcts_multi_actions_utils import Node_Type, stochastic_find_best_solution, print_tree_from_root
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 
 def mcts_generation(args):
@@ -87,7 +87,9 @@ def mcts_generation(args):
         retriever = RerankRetriever(args)
     elif args.retriever_name in ['e5', 'bge', 'reasonir']:
         retriever = DenseRetriever(args)
-        
+    else:
+        raise NotImplementedError("Retriever not implemented!")
+    
     
     # === LLM Generator ==========================
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
@@ -105,8 +107,8 @@ def mcts_generation(args):
     accelerator.wait_for_everyone()
     with accelerator.split_between_processes(filtered_dataset) as test_dataset_shard:
         for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
-            # if i == 3:
-            #     break
+            if i == 1:
+                break
             qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
             print(f"[Rank {accelerator.process_index}] Generating MCTS for query {qid} ...")
             question = question.strip()
@@ -125,18 +127,15 @@ def mcts_generation(args):
             root_node = Reasoning_MCTS_Node(
                 parent=None,
                 depth=0,
-                node_type=Node_Type.USER_QUESTION,
+                node_type=Node_Type.USER_QUERY,
                 verbose=args.verbose,
                 generator=node_generator,
-                question_id=qid,
-                user_question=question,
-                gt_answer=gt_answers,
+                qid=qid,
+                user_query=question,
+                gt_answers=gt_answers,
                 gt_reasoning_steps=[],
-                answer_candidates=[],
                 max_depth_allowed=args.max_depth_allowed,
-                enable_potential_score=args.enable_potential_score,
-                enable_critique=args.enable_critique,
-                enable_doc_generation=args.enable_doc_generation,
+                enable_potential_score=args.enable_potential_score
             )
             
             model_solutions = []
@@ -185,11 +184,11 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
     # Retriever
@@ -218,7 +217,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_2 (mcts_2k_rollout4)')
+    parser.add_argument('--run', type=str, default='run_7 (mcts_multi_actions_500_rollout4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -234,8 +233,8 @@ if __name__ == "__main__":
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
-    parser.add_argument("--num_rollouts", type=int, default=4)
-    parser.add_argument("--max_depth_allowed", type=int, default=6)
+    parser.add_argument("--num_rollouts", type=int, default=2)
+    parser.add_argument("--max_depth_allowed", type=int, default=4)
     parser.add_argument("--num_votes", type=int, default=2)
     parser.add_argument("--mcts_num_last_votes", type=int, default=2)
     parser.add_argument("--enable_potential_score", action="store_true")
@@ -268,8 +267,12 @@ if __name__ == "__main__":
     os.makedirs(args.reasoning_path_generations_dir, exist_ok=True)
     
     # === Prompt files =============
-    args.query_decomposition_prompt_file = "run_mcts/prompts/query_decomposition_prompt_template.txt"
-    args.semantic_equivalence_prompt_file = "run_mcts/prompts/semantic_equivalence_prompt_template.txt"
+    args.semantic_equivalence_prompt_file = "run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
+    args.retrieve_documents_prompt_file = "run_mcts_multiple_actions/prompts/retrieve_documents_prompt_template.txt"
+    args.documents_analysis_prompt_file = "run_mcts_multiple_actions/prompts/documents_analysis_prompt_template.txt"
+    args.documents_rethinking_prompt_file = "run_mcts_multiple_actions/prompts/documents_rethinking_prompt_template.txt"
+    args.answer_generation_prompt_file = "run_mcts_multiple_actions/prompts/answer_generation_prompt_template.txt"
+    args.answer_validation_prompt_file = "run_mcts_multiple_actions/prompts/answer_validation_prompt_template.txt"
     
     # === Define CUDA device =======
     args.device = torch.device("cuda:" + str(args.device) if torch.cuda.is_available() else "cpu")
@@ -282,9 +285,9 @@ if __name__ == "__main__":
         
     ### === Run Steps =============
     set_seed(args.seed)
-    # mcts_generation(args)
-    subsample_generation(args)
+    mcts_generation(args)
+    # subsample_generation(args)
     
     
-    # python run_mcts/mcts_generator.py
-    # accelerate launch --multi_gpu  run_mcts/mcts_generator.py
+    # python run_mcts_multiple_actions/mcts_generator.py
+    # accelerate launch --multi_gpu run_mcts_multiple_actions/mcts_generator.py

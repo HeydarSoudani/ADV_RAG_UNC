@@ -12,12 +12,12 @@ import transformers
 
 from utils.general_utils import get_answer
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
-from run_mcts.src.discriminator_methods.basic_discriminator import BasicDiscriminator
-from run_mcts.src.models.generate_paraphrase import (
+from run_mcts_two_actions.src.discriminator_methods.basic_discriminator import BasicDiscriminator
+from run_mcts_two_actions.src.models.generate_paraphrase import (
     SearchQueryGenerator, ThinkGenerator,
     get_paraphrased_query, get_paraphrased_think
 )
-from run_mcts.src.generate_node import Generator as NodeGenerator
+from run_mcts_two_actions.src.generate_node import Generator as NodeGenerator
 
 class Candidate:
     def __init__(

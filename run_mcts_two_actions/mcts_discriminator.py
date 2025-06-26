@@ -14,7 +14,7 @@ from accelerate.utils import gather_object
 
 from utils.general_utils import set_seed, read_jsonl
 from run_rag_methods.src.correctness import em_score, subem_score, f1_score, em_score_v2
-from run_mcts.src.discriminator_methods import *
+from run_mcts_two_actions.src.discriminator_methods import *
 
 
 def mcts_discrimination(args):

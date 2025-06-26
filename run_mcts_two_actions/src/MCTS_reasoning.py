@@ -39,7 +39,6 @@ class Reasoning_MCTS_Node(MCTS_Node):
         enable_potential_score: bool = None,
         potential_answers: List[str] = None,
         
-        
     ) -> None:
         """params:
         subquestion: the node is proposing a new subquestion
@@ -296,7 +295,6 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         "generated_documents": generated_documents
                     }
                 }
-            
             elif node_type is Node_Type.THINK_SERACH:
                 self.solution_trace[max(self.solution_trace.keys())+1] = {
                     "think_search": {
@@ -398,7 +396,6 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     generated_documents=generated_docs
                 )
             )
-    
     
         def do_action_critique_search():
             print(f"---- Generating critique search for node {self.id}...")

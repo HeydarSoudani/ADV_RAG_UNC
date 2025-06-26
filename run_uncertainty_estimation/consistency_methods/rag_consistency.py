@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 import random
 
 from run_rag_methods.src.rag_methods import *
-from run_mcts.src.models.semantic_equivalence import SemanticEquivalenceGenerator
+from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 
 from run_uncertainty_estimation.consistency_methods.models.trace_augmentor import (
@@ -61,7 +61,8 @@ class RagConsistency:
             
             for (selected_index, repeat, action) in selected_indices_group:
                 
-                #! Step 1: Generating paraphrased search queries 
+                #! Step 1: Generating paraphrased search queries
+                #! Step 1: Applying actions: 
                 original_sq = trace[selected_index].get('search_query', None)
                 # print(original_sq)
                 # print('---')

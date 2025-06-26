@@ -146,7 +146,6 @@ def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None,
         elif node.node_type is Node_Type.CRITIQUE_ANSWER:
             node_details += f"Answer: {node.answer} | Critique: {node.critique.replace("\n", " ")}" + "\n" + space + " " * len(node_info)
 
-    
         to_print += dash + node_details
         my_print(to_print)
 
