@@ -186,7 +186,6 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         gt_answers,
                         gt_reasoning_steps,
                         max_depth_allowed,
-                        node_reward,
                         scores,
                         search_query,
                         retrieved_documents,
@@ -202,6 +201,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         parent,
                         think,
                         answer,
+                        node_reward
                     ]
                 )
             
@@ -246,7 +246,6 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         gt_answers,
                         gt_reasoning_steps,
                         max_depth_allowed,
-                        node_reward,
                         scores,
                         search_query,
                         retrieved_documents,
@@ -261,7 +260,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     attr is not None
                     for attr in [
                         parent,
-                        is_finished
+                        is_finished,
+                        node_reward
                     ]
                 )
         
@@ -345,7 +345,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                 self.solution_trace[max(self.solution_trace.keys())+1] = {
                     "answer_generation": {
                         "think": think,
-                        "answer": answer
+                        "answer": answer,
+                        "node_reward": node_reward
                     }
                 }
             elif node_type is Node_Type.ANSWER_VALIDATION:
@@ -357,7 +358,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
             elif node_type is Node_Type.FINISH:
                 self.solution_trace[max(self.solution_trace.keys())+1] = {
                     "finish": {
-                        "is_finished": is_finished
+                        "is_finished": is_finished,
+                        "node_reward" :node_reward,
                     }
                 }
 
@@ -428,14 +430,15 @@ class Reasoning_MCTS_Node(MCTS_Node):
 
         def do_action_answer_generation(): #A4
             print(f"---- Answer generation for node {self.id}...")
-            think, answer = self.generator.answer_generation(solution_trace=self.solution_trace)
+            think, answer, node_reward = self.generator.answer_generation(solution_trace=self.solution_trace)
             self.children.append(
                 Reasoning_MCTS_Node(
                     parent=self,
                     depth=self.depth + 1,
                     node_type=Node_Type.ANSWER_GENERATION,
                     think=think,
-                    answer=answer
+                    answer=answer,
+                    node_reward=node_reward
                 )
             )
 
@@ -453,13 +456,14 @@ class Reasoning_MCTS_Node(MCTS_Node):
 
         def do_action_finish(): #A6
             print(f"---- Finish for node {self.id}...")
-            is_finished = self.generator.finish(solution_trace=self.solution_trace)
+            is_finished, node_reward = self.generator.finish(solution_trace=self.solution_trace)
             self.children.append(
                 Reasoning_MCTS_Node(
                     parent=self,
                     depth=self.depth + 1,
                     node_type=Node_Type.FINISH,
-                    is_finished=is_finished
+                    is_finished=is_finished,
+                    node_reward=node_reward
                 )
             )
 

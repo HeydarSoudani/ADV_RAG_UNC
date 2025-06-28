@@ -17,20 +17,15 @@ class Node_Type(Enum):
 
 def find_valid_solution_nodes(root_node):
     valid_solution_nodes = []
-
     def recursion(node):
         if node.is_valid_solution_node():
             valid_solution_nodes.append(node)
             return
-
         if not node.children:  #! no children
             return
-
         for child in node.children:
             recursion(child)
-
     recursion(root_node)
-
     return valid_solution_nodes
 
 
@@ -98,13 +93,13 @@ def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None,
         elif node.node_type is Node_Type.RETRIEVE_DOCUMENTS:
             node_details += f"Search: {node.search_query} | Think: {node.think.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.DOCUMENTS_ANALYSIS:
-            node_details += f"Analysis: {node.documents_analysis}" +  "\n" + space + " " * len(node_info)
+            node_details += f"Analysis: {node.documents_analysis.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.DOCUMENTS_RETHINKING:
-            node_details += f"Rethinking: {node.critical_rethinking}" +  "\n" + space + " " * len(node_info)
+            node_details += f"Rethinking: {node.critical_rethinking.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.ANSWER_GENERATION:
             node_details += f"Answer: {node.answer} | Think: {node.think.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.ANSWER_VALIDATION:
-            node_details += f"Validation: {node.answer_validation}" +  "\n" + space + " " * len(node_info)
+            node_details += f"Validation: {node.answer_validation.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.FINISH:
             node_details += f"Finish: {node.is_finished}" +  "\n" + space + " " * len(node_info)
 

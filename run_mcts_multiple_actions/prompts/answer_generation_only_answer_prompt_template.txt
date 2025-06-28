@@ -8,9 +8,7 @@ Your goal is to fully and accurately answer the user's question.
 Provide only SHORT form answers, NOT complete sentence, without any additional text or explanation.
 
 Your output must include:
-- One complete reasoning step that clearly connects the available information and leads logically to the final answer, wrapped in a single pair of <think> and </think> tags.
 - One complete and direct final answer to the user query, wrapped in <answer> and </answer> tags.
 
 Only use the following format, in this exact order:
-<think> one complete reasoning step leading to the final answer </think>
 <answer> final answer </answer>

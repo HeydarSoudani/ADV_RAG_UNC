@@ -5,18 +5,16 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
 import torch
-import shutil
 import argparse
 import datasets
 import transformers
 from tqdm import tqdm, trange
 from accelerate import Accelerator
 
-
+from utils.general_utils import set_seed, sample_sorted_qids
+from run_mcts_multiple_actions.src.generate_node import Generator
 from run_mcts_multiple_actions.src.MCTS_backbone import MCTS_Searcher
 from run_mcts_multiple_actions.src.MCTS_reasoning import Reasoning_MCTS_Node
-from run_mcts_multiple_actions.src.generate_node import Generator
-from utils.general_utils import set_seed, sample_sorted_qids
 from utils.mcts_multi_actions_utils import Node_Type, stochastic_find_best_solution, print_tree_from_root
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 
@@ -98,9 +96,11 @@ def mcts_generation(args):
     
     
     # === Read existing data =====================
-    challenging_samples = ['test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_83']
-    generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
-    filtered_dataset = test_dataset.filter(lambda example: example['id'] not in generated_qids)
+    challenging_samples = ['test_76'] # 'test_5', 'test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_83'
+    filtered_dataset = test_dataset.filter(lambda example: example['id'] in challenging_samples)
+    
+    # generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
+    # filtered_dataset = test_dataset.filter(lambda example: example['id'] not in generated_qids)
     
     
     # === Generation =============================
@@ -171,7 +171,6 @@ def mcts_generation(args):
                     f.write(json.dumps(item) + "\n")
     
 
-
 def subsample_generation(args):
     pass
 
@@ -233,8 +232,8 @@ if __name__ == "__main__":
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
-    parser.add_argument("--num_rollouts", type=int, default=2)
-    parser.add_argument("--max_depth_allowed", type=int, default=4)
+    parser.add_argument("--num_rollouts", type=int, default=4)
+    parser.add_argument("--max_depth_allowed", type=int, default=6)
     parser.add_argument("--num_votes", type=int, default=2)
     parser.add_argument("--mcts_num_last_votes", type=int, default=2)
     parser.add_argument("--enable_potential_score", action="store_true")
@@ -272,6 +271,7 @@ if __name__ == "__main__":
     args.documents_analysis_prompt_file = "run_mcts_multiple_actions/prompts/documents_analysis_prompt_template.txt"
     args.documents_rethinking_prompt_file = "run_mcts_multiple_actions/prompts/documents_rethinking_prompt_template.txt"
     args.answer_generation_prompt_file = "run_mcts_multiple_actions/prompts/answer_generation_prompt_template.txt"
+    args.answer_generation_only_answer_prompt_file = "run_mcts_multiple_actions/prompts/answer_generation_only_answer_prompt_template.txt"
     args.answer_validation_prompt_file = "run_mcts_multiple_actions/prompts/answer_validation_prompt_template.txt"
     
     # === Define CUDA device =======

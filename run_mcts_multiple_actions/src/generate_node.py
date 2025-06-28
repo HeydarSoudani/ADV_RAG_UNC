@@ -30,6 +30,7 @@ class Generator:
         self.documents_analysis_prompt = read_txt(self.args.documents_analysis_prompt_file)
         self.documents_rethinking_prompt = read_txt(self.args.documents_rethinking_prompt_file)
         self.answer_generation_prompt = read_txt(self.args.answer_generation_prompt_file)
+        self.answer_generation_only_answer_prompt = read_txt(args.answer_generation_only_answer_prompt_file)
         self.answer_validation_prompt = read_txt(self.args.answer_validation_prompt_file)
         
         # --- EoS tokens --------------
@@ -47,9 +48,9 @@ class Generator:
         self.answer_validation_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(answer_validation_target_sequences, self.tokenizer)])
     
     # === LLM Generation ==========
-    def generate(self,
+    def generate_sequential(self,
         input_text,
-        stopping_criteria,
+        stopping_criteria=None,
         max_new_tokens=1024,
         num_return:int = 1,
         temperature:float = 0.7,
@@ -83,6 +84,78 @@ class Generator:
         
         return generated_texts
     
+    def generate_batch(self,
+        input_text,
+        stopping_criteria,
+        max_new_tokens = 1024,
+        num_return:int = 5,
+        temperature:float = 1.0,
+        do_sample:bool = True
+    ):
+        
+        eos_token_id = self.generation_model.config.eos_token_id
+        # if type(eos_token_id) == list:
+        #     pad_token_id = eos_token_id[0]
+        # else:
+        #     pad_token_id = eos_token_id
+        
+        
+        if self.tokenizer.chat_template:
+            input_prompt = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": input_text}],
+                add_generation_prompt=True,
+                tokenize=False
+            )
+        
+        inputs = self.tokenizer(input_prompt, return_tensors='pt').to(self.generation_model.device)
+        input_ids = inputs["input_ids"]
+        batch_size = input_ids.shape[0]
+        
+        with torch.no_grad():
+            model_output = self.generation_model.generate(
+                **inputs,
+                return_dict_in_generate=True,
+                output_logits=True,
+                max_new_tokens=max_new_tokens,
+                # stopping_criteria=stopping_criteria,
+                num_return_sequences=num_return,
+                pad_token_id=self.tokenizer.eos_token_id,
+                temperature=temperature,
+                do_sample=do_sample,
+            )
+            # model_output.past_key_values = None
+            # model_output.sequences = model_output.sequences.cpu()
+            
+            # if type(eos_token_id) == list:
+            #     temp = torch.stack([torch.argmax((model_output.sequences[:, len(input_ids[0]):] == eos).to(dtype=torch.int), dim=-1,) for eos in eos_token_id]).T
+            #     for i in range(len(temp)):
+            #         if_eos = False
+            #         for j in range(len(temp[i])):
+            #             if temp[i][j] != 0:
+            #                 if_eos = True
+            #                 break
+            #         if if_eos == False:#if it doesn't contain eos token
+            #             temp[i][-1] = model_output.sequences.shape[1] - len(input_ids[0])  - 1
+            #     indices = [torch.min(temp[i][temp[i] > 0]).item() for i in range(len(temp))]
+            # else:
+            #     indices = torch.argmax((model_output.sequences[:, len(input_ids[0]):] == eos_token_id).to(dtype=torch.int), dim=-1,)
+            # indices[indices == 0] = model_output.sequences.shape[1] - len(input_ids[0])
+            
+            # tokens = [seq[len(input_ids[0]): indices[i] + len(input_ids[0])].tolist() for i, seq in enumerate(model_output.sequences)]
+            # tokens_text = [[self.tokenizer.decode(token) for token in tokens_] for tokens_ in tokens]
+            # generated_texts = self.tokenizer.batch_decode(tokens, skip_special_tokens=True)
+        
+            all_generated = model_output.sequences[:, input_ids.shape[1]:]  # strip prompt
+
+            # Group into batches
+            grouped = all_generated.view(batch_size, num_return, -1)
+            generated_texts = [
+                self.tokenizer.batch_decode(group, skip_special_tokens=True)
+                for group in grouped
+            ][0]
+        
+        return generated_texts
+    
     def _get_most_likely_answer(self, user_query: str, output_list: List[str]):
         assert len(output_list) > 0
 
@@ -103,7 +176,7 @@ class Generator:
                         tmp_prompt += 'For this question, is Possible Answer 1 semantically equivalent to Possible Answer 2? Respond with Yes or No.\n'
                         tmp_prompt += 'Response: '
                         
-                        response = self.generate(
+                        response = self.generate_sequential(
                             tmp_prompt,
                             max_new_tokens=1,
                             num_return=1,
@@ -141,6 +214,8 @@ class Generator:
             prompt_text = self.documents_rethinking_prompt
         elif curr_node == 'answer_generation':
             prompt_text = self.answer_generation_prompt
+        elif curr_node == 'answer_generation_only_answer':
+            prompt_text = self.answer_generation_only_answer_prompt
         elif curr_node == 'answer_validation':
             prompt_text = self.answer_validation_prompt
         else:
@@ -174,43 +249,70 @@ class Generator:
                 prompt_text += f'<answer_validation> {solution_item[node_type]["answer_validation"]} </answer_validation>\n'
         
         return prompt_text
-        
-    
+
     # === Actions =================
     def retrieve_documents(self, solution_trace: Dict[int, Dict[str, str]]):
         input_prompt_text = self.get_prompt_text('retrieve_documents', solution_trace)
-        initial_output = self.generate(input_prompt_text, self.search_stopping_criteria, num_return=1)[0]
+        initial_output = self.generate_sequential(input_prompt_text, self.search_stopping_criteria, num_return=1)[0]
         think, search_query = self.retrieve_documents_postprocessing(solution_trace, input_prompt_text, initial_output)
         retrieved_docs = self.retriever.search(search_query) if search_query != '' else []
         return think, search_query, retrieved_docs
     
     def documents_analysis(self, solution_trace: Dict[int, Dict[str, str]]):
         input_prompt_text = self.get_prompt_text('documents_analysis', solution_trace)
-        initial_output = self.generate(input_prompt_text, self.documents_analysis_stopping_criteria, num_return=1)[0]
+        initial_output = self.generate_sequential(input_prompt_text, self.documents_analysis_stopping_criteria, num_return=1)[0]
         documents_analysis = self.documents_analysis_postprocessing(solution_trace, input_prompt_text, initial_output)
         return documents_analysis
     
     def documents_rethinking(self, solution_trace: Dict[int, Dict[str, str]]):
         input_prompt_text = self.get_prompt_text('documents_rethinking', solution_trace)
-        initial_output = self.generate(input_prompt_text, self.critical_rethinking_stopping_criteria, num_return=1)[0]
+        initial_output = self.generate_sequential(input_prompt_text, self.critical_rethinking_stopping_criteria, num_return=1)[0]
         critical_rethinking = self.documents_rethinking_postprocessing(solution_trace, input_prompt_text, initial_output)
         return critical_rethinking
     
     def answer_generation(self, solution_trace: Dict[int, Dict[str, str]]):
+        user_query = solution_trace[0]['user_query']
         input_prompt_text = self.get_prompt_text('answer_generation', solution_trace)
-        initial_output = self.generate(input_prompt_text, self.answer_stopping_criteria, num_return=1)[0]
-        think, answer = self.answer_generation_postprocessing(solution_trace, input_prompt_text, initial_output)
-        return think, answer
+        initial_output = self.generate_sequential(input_prompt_text, self.answer_stopping_criteria, num_return=1)[0]
+        think, initial_answer = self.answer_generation_postprocessing(solution_trace, input_prompt_text, initial_output)
+        
+        # Node reward:
+        # TODO: implement node reward
+        input_prompt_text_batch = self.get_prompt_text('answer_generation_only_answer', solution_trace)
+        input_prompt_text_ = input_prompt_text_batch + f"<think> {think} </think>\n"
+        batch_output = self.generate_batch(input_prompt_text, self.answer_stopping_criteria, num_return=10)
+        print(batch_output)
+        batch_output_ = [get_answer(output_text) for output_text in batch_output]
+        answer_, node_reward = self._get_most_likely_answer(user_query=user_query, output_list=batch_output_)
+        answer = answer_ if answer_ else initial_answer
+        
+        print(batch_output_)
+        print('-')
+        print(answer)
+        print('--')
+        
+        return think, answer, node_reward
     
     def answer_validation(self, solution_trace: Dict[int, Dict[str, str]]):
         input_prompt_text = self.get_prompt_text('answer_validation', solution_trace)
-        initial_output = self.generate(input_prompt_text, self.answer_validation_stopping_criteria, num_return=1)[0]
+        initial_output = self.generate_sequential(input_prompt_text, self.answer_validation_stopping_criteria, num_return=1)[0]
         answer_validation = self.answer_validation_postprocessing(solution_trace, input_prompt_text, initial_output)
         return answer_validation
     
     def finish(self, solution_trace: Dict[int, Dict[str, str]]):
         is_finished = True
-        return is_finished
+        last_answer_gen = None
+        for step_id in sorted(solution_trace):
+            node_dict = solution_trace[step_id]
+            if "answer_generation" in node_dict:
+                last_answer_gen = (step_id, node_dict["answer_generation"])
+        
+        if last_answer_gen:
+            node_reward = last_answer_gen[1]['node_reward']
+        else:
+            node_reward = 0.0
+        
+        return is_finished, node_reward
     
     
     # ===
@@ -225,7 +327,7 @@ class Generator:
             print(f"Think is not provided for query {qid}!!!")
             for i in range(self.args.retry):
                 print(f"Think, try {i+1} ...")
-                output = self.generate(
+                output = self.generate_sequential(
                     input_prompt_text,
                     self.search_stopping_criteria,
                     temperature=1.0,
@@ -242,7 +344,7 @@ class Generator:
             input_prompt_text_ = input_prompt_text + f'<think> {thinks} </think>\n'
             for i in range(self.args.retry):
                 print(f"Search Query, try {i+1} ...")
-                output = self.generate(
+                output = self.generate_sequential(
                     input_prompt_text_,
                     self.search_stopping_criteria,
                     temperature=1.0,
@@ -265,7 +367,7 @@ class Generator:
             print(f"Documents_analysis is not provided for query {qid}!!!")
             for i in range(self.args.retry):
                 print(f"Documents_analysis {qid}, try {i+1} ...")
-                output = self.generate(
+                output = self.generate_sequential(
                     input_prompt_text,
                     self.documents_analysis_stopping_criteria,
                     temperature=1.0,
@@ -286,7 +388,7 @@ class Generator:
             print(f"critical_rethinking is not provided for query {qid}!!!")
             for i in range(self.args.retry):
                 print(f"critical_rethinking {qid}, try {i+1} ...")
-                output = self.generate(
+                output = self.generate_sequential(
                     input_prompt_text,
                     self.critical_rethinking_stopping_criteria,
                     temperature=1.0,
@@ -310,7 +412,7 @@ class Generator:
             print(f"Think is not provided for query {qid}")
             for i in range(self.args.retry):
                 print(f"Think, try {i+1} ...")
-                output = self.generate(
+                output = self.generate_sequential(
                     input_prompt_text,
                     self.answer_stopping_criteria,
                     temperature=1.0,
@@ -328,7 +430,7 @@ class Generator:
             input_prompt_text_ = input_prompt_text + f'<think> {thinks} </think>\n'
             for i in range(self.args.retry):
                 print(f"The most-likely answer, try {i+1} ...")
-                output = self.generate(
+                output = self.generate_sequential(
                     input_prompt_text_,
                     self.answer_stopping_criteria,
                     temperature=1.0
@@ -350,7 +452,7 @@ class Generator:
             print(f"answer_validation is not provided for query {qid}!!!")
             for i in range(self.args.retry):
                 print(f"answer_validation {qid}, try {i+1} ...")
-                output = self.generate(
+                output = self.generate_sequential(
                     input_prompt_text,
                     self.answer_validation_stopping_criteria,
                     temperature=1.0,

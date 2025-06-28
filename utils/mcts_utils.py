@@ -254,7 +254,6 @@ def mask_solution_trace(
 
     return masked_solution_traces
 
-
 def rag_mask_solution_trace(
     solution_trace_str: str, num_return: int, left_boundary: float, right_boundary: float
 ) -> list[str]:

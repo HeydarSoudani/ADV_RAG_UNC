@@ -110,7 +110,7 @@ def get_answer(text):
     if matches:
         return matches[-1]
     else:
-        return None
+        return ''
 
 def get_document(text):
     pattern = re.compile(r"<document>(.*?)</document>", re.DOTALL)
