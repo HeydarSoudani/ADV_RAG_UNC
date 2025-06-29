@@ -492,23 +492,25 @@ class Reasoning_MCTS_Node(MCTS_Node):
             do_action_answer_generation()
             do_action_retrieve_documents()
             if self.enable_doc_related_actions:
-                do_action_documents_analysis()
                 do_action_documents_rethinking()
+                # do_action_documents_analysis()
+                
         
         elif self.node_type is Node_Type.DOCUMENTS_ANALYSIS:
             do_action_answer_generation()
-            do_action_retrieve_documents()
             do_action_documents_rethinking()
+            do_action_retrieve_documents()
         
         elif self.node_type is Node_Type.DOCUMENTS_RETHINKING:
             do_action_answer_generation()
             do_action_retrieve_documents()
-            do_action_documents_analysis()
+            # do_action_documents_analysis()
         
         elif self.node_type is Node_Type.ANSWER_GENERATION:
-            do_action_finish()
-            if self.enable_answer_related_actions:
-                do_action_answer_validation()
+            raise ValueError("ANSWER_GENERATION node cannot create children!!")  
+            # do_action_finish()
+            # if self.enable_answer_related_actions:
+            #     do_action_answer_validation()
             
         elif self.node_type is Node_Type.ANSWER_VALIDATION:
             do_action_finish()
@@ -522,11 +524,13 @@ class Reasoning_MCTS_Node(MCTS_Node):
 
     def is_valid_leaf_node(self):
         #! a valid solution can only be in FINISH
-        return self.node_type is Node_Type.FINISH
+        # return self.node_type is Node_Type.FINISH
+        return self.node_type is Node_Type.ANSWER_GENERATION
 
     def is_valid_solution_node(self):
         #! a valid solution can only be in FINISH
-        return self.node_type is Node_Type.FINISH
+        # return self.node_type is Node_Type.FINISH
+        return self.node_type is Node_Type.ANSWER_GENERATION
 
     def set_potential_score(self, score: float):
         self.potential_score = score

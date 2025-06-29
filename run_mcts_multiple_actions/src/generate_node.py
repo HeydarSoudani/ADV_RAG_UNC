@@ -212,7 +212,7 @@ class Generator:
             prompt_text = self.answer_validation_prompt
         else:
             raise NotImplementedError("Node type not implemented!")
-        prompt_text += f"Question: {user_query.strip()}\n"
+        prompt_text += f"Question: {user_query.strip()}\n\n\n"
         
         # Path so far
         for item_idx in solution_trace:
@@ -265,6 +265,12 @@ class Generator:
     def documents_rethinking(self, solution_trace: Dict[int, Dict[str, str]]):
         input_prompt_text = self.get_prompt_text('documents_rethinking', solution_trace)
         initial_output = self.generate_sequential(input_prompt_text, self.search_stopping_criteria, num_return=1)[0]
+        
+        # print(input_prompt_text)
+        # print('-')
+        # print(initial_output)
+        # print('--')
+        
         critical_rethinking, search_query = self.documents_rethinking_postprocessing(solution_trace, input_prompt_text, initial_output)
         retrieved_docs = self.retriever.search(search_query) if search_query != '' else []
         return critical_rethinking, search_query, retrieved_docs

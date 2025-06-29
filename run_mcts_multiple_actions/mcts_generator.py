@@ -96,7 +96,7 @@ def mcts_generation(args):
     
     
     # === Read existing data =====================
-    challenging_samples = ['test_76'] # 'test_5', 'test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_83'
+    challenging_samples = ['test_47'] # 'test_5', 'test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_76', 'test_83'
     filtered_dataset = test_dataset.filter(lambda example: example['id'] in challenging_samples)
     
     # generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
@@ -207,7 +207,7 @@ if __name__ == "__main__":
         "intfloat/e5-base-v2",  # For E5
         "reasonir/ReasonIR-8B", # For ReasonIR
     ])
-    parser.add_argument('--retrieval_topk', type=int, default=1)
+    parser.add_argument('--retrieval_topk', type=int, default=3)
     parser.add_argument('--faiss_gpu', action='store_false', help='Use GPU for computation')
     parser.add_argument('--retrieval_pooling_method', type=str, default="mean")
     parser.add_argument('--retrieval_query_max_length', type=int, default=256)
@@ -228,14 +228,14 @@ if __name__ == "__main__":
         'majority_voting', 'reasoning_consistency', 'llm_selector', 'rag_consistency'
     ])
     parser.add_argument("--enable_doc_related_actions", action="store_false", help="")
-    parser.add_argument("--enable_answer_related_actions", action="store_false", help="")
+    parser.add_argument("--enable_answer_related_actions", action="store_true", help="")
     parser.add_argument("--verbose", action="store_true", help="extra login")
     parser.add_argument("--mcts_discount_factor", type=float, default=1.0)
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
-    parser.add_argument("--num_rollouts", type=int, default=2)
-    parser.add_argument("--max_depth_allowed", type=int, default=4)
+    parser.add_argument("--num_rollouts", type=int, default=4)
+    parser.add_argument("--max_depth_allowed", type=int, default=6)
     parser.add_argument("--num_votes", type=int, default=2)
     parser.add_argument("--mcts_num_last_votes", type=int, default=2)
     parser.add_argument("--enable_potential_score", action="store_true")

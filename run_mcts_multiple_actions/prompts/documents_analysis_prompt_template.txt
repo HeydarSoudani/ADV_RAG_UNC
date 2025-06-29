@@ -6,6 +6,7 @@ If any documents are retrieved, they will be provided within <information> and <
 You are currently in the DOCUMENTS_ANALYSIS stage.
 Your goal is to summarize and analyze the most recently retrieved documents in a way that supports answering the search query, and propose a refined and targeted search query to confirm or expand on the current information.
 Your summary should be concise, informative, and directly relevant to the search query.
+The search query should be precise and focused.
 
 Your output must include:
 - One complete reasoning step that summarizes and analyzes the retrieved documents and explains their relevance to the question, wrapped in a single pair of <documents_analysis> and </documents_analysis> tags.

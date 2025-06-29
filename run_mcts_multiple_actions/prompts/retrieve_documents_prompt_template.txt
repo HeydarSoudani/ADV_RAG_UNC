@@ -4,7 +4,9 @@ At each step, generate exactly one reasoning step that moves you closer to answe
 If any documents are retrieved, they will be provided within <information> and </information> tags. These are read-only: NEVER generate, modify, or repeat <information> tags yourself.
 
 You are currently in the RETRIEVE_DOCUMENTS stage.
-Your goal is to identify what specific information is missing and needed, and generate a search query to retrieve that information.
+Your goal is to identify what specific information is missing and required to move closer to the answer, and generate a search query to retrieve that information.
+You must not generate the final answer, and you must not rely on your internal knowledge to fill in missing information.
+The search query should be precise and focused.
 
 Your output must include:
 - One complete reasoning step that explains what is missing and why it's needed, wrapped in a single pair of <think> and </think> tags.
