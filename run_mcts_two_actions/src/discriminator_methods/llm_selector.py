@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import torch
 
-from run_mcts.src.discriminator_methods.basic_discriminator import BasicDiscriminator, Candidate
+from run_mcts_two_actions.src.discriminator_methods.basic_discriminator import BasicDiscriminator, Candidate
 from utils.general_utils import get_think, get_answer
 
 

@@ -96,19 +96,19 @@ def mcts_generation(args):
     
     
     # === Read existing data =====================
-    challenging_samples = ['test_47'] # 'test_5', 'test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_76', 'test_83'
-    filtered_dataset = test_dataset.filter(lambda example: example['id'] in challenging_samples)
+    # challenging_samples = ['test_76'] # 'test_5', 'test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_76', 'test_83'
+    # filtered_dataset = test_dataset.filter(lambda example: example['id'] in challenging_samples)
     
-    # generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
-    # filtered_dataset = test_dataset.filter(lambda example: example['id'] not in generated_qids)
+    generated_qids = [name for name in os.listdir(args.generation_trees_results_dir) if os.path.isdir(os.path.join(args.generation_trees_results_dir, name))]
+    filtered_dataset = test_dataset.filter(lambda example: example['id'] not in generated_qids)
     
     
     # === Generation =============================
     accelerator.wait_for_everyone()
     with accelerator.split_between_processes(filtered_dataset) as test_dataset_shard:
         for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
-            if i == 1:
-                break
+            # if i == 10:
+            #     break
             qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
             print(f"[Rank {accelerator.process_index}] Generating MCTS for query {qid} ...")
             question = question.strip()
@@ -144,6 +144,7 @@ def mcts_generation(args):
             model_all_solutions = []
             model_rollout_nodes = []
             for i in (pbar := trange(args.num_rollouts, disable=True, position=0)):
+                print(f"-- Rollout {i}:")
                 rollout_node = mcts_searcher.do_rollout(root_node, i)
                 model_rollout_nodes.append(rollout_node)
 

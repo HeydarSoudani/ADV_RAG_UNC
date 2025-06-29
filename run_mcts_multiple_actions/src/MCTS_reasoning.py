@@ -493,12 +493,12 @@ class Reasoning_MCTS_Node(MCTS_Node):
             do_action_retrieve_documents()
             if self.enable_doc_related_actions:
                 do_action_documents_rethinking()
-                # do_action_documents_analysis()
+                do_action_documents_analysis()
                 
         
         elif self.node_type is Node_Type.DOCUMENTS_ANALYSIS:
             do_action_answer_generation()
-            do_action_documents_rethinking()
+            # do_action_documents_rethinking()
             do_action_retrieve_documents()
         
         elif self.node_type is Node_Type.DOCUMENTS_RETHINKING:

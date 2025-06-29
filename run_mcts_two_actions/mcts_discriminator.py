@@ -81,13 +81,13 @@ def mcts_discrimination(args):
         discriminate_results_file_ranked = f"{args.output_dir}/discrimination_results_{args.discriminator_method}_rank{accelerator.process_index}.jsonl"
         with open(discriminate_results_file_ranked, 'w', encoding='utf-8') as res_f:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                if i == 10:
-                    break
+                # if i == 10:
+                #     break
                 # === Generating answer candidates
                 final_solutions_file = f"{args.generation_trees_results_dir}/{qid}/final_solutions.jsonl"
                 all_traces = read_jsonl(final_solutions_file)
                 gt_answers = all_traces[0]["trace"]["0"]["ground_truth"]
-                question = all_traces[0]["trace"]["0"]["user_question"]
+                question = all_traces[0]["trace"]["0"]["user_query"]
                 question = question.strip()
                 if question[-1] != '?':
                     question += '?'
@@ -140,8 +140,8 @@ def mcts_evaluation(args):
             pred_answer = data['pred_answer']
             candidates = [k for k, v in data['candidates'].items()]
             
-            em_socre = em_score(pred_answer, gt_answers)
-            # em_socre = em_score_v2(candidates, gt_answers)
+            # em_socre = em_score(pred_answer, gt_answers)
+            em_socre = em_score_v2(candidates, gt_answers)
             # em_socre = subem_score(pred_answer, gt_answers)
             em_evaluation.append(em_socre)
             
@@ -191,13 +191,13 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_4 (mcts_500_rollout4)')
+    parser.add_argument('--run', type=str, default='run_7 (mcts_multi_actions_500_rollout4)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
     
     # MCTS ---
-    parser.add_argument('--discriminator_method', type=str, default='rag_consistency', choices=[
+    parser.add_argument('--discriminator_method', type=str, default='majority_voting', choices=[
         'majority_voting', 'reasoning_consistency', 'llm_selector', 'rag_consistency'
     ])
     parser.add_argument("--enable_critique", action="store_true", help="")
@@ -240,15 +240,15 @@ if __name__ == "__main__":
     os.makedirs(args.reasoning_path_generations_dir, exist_ok=True)
     
     # === Prompt files =============
-    args.query_decomposition_prompt_file = "run_mcts/prompts/query_decomposition_prompt_template.txt"
-    args.semantic_equivalence_prompt_file = "run_mcts/prompts/semantic_equivalence_prompt_template.txt"
+    args.query_decomposition_prompt_file = "run_mcts_two_actions/prompts/query_decomposition_prompt_template.txt"
+    args.semantic_equivalence_prompt_file = "run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
     
     ### === Run Steps ==============
     set_seed(args.seed)
     
-    mcts_discrimination(args)
+    # mcts_discrimination(args)
     # merge_result_files(args)
-    # mcts_evaluation(args)
+    mcts_evaluation(args)
     
-    # python run_mcts/mcts_discriminator.py
-    # accelerate launch --multi_gpu run_mcts/mcts_discriminator.py
+    # python run_mcts_two_actions/mcts_discriminator.py
+    # accelerate launch --multi_gpu run_mcts_two_actions/mcts_discriminator.py

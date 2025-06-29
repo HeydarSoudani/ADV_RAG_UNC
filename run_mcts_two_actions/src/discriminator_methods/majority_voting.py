@@ -9,7 +9,7 @@ import transformers
 from typing import Dict
 from copy import deepcopy
 
-from run_mcts.src.discriminator_methods.basic_discriminator import BasicDiscriminator, Candidate
+from run_mcts_two_actions.src.discriminator_methods.basic_discriminator import BasicDiscriminator, Candidate
 from run_rag_methods.src.rag_methods import passages2string
 from run_rag_methods.src.generators import StopOnSequence
 

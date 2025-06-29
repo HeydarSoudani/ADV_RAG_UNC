@@ -8,7 +8,7 @@ import torch
 import transformers
 from collections import defaultdict
 
-from run_mcts.src.models.semantic_equivalence import SemanticEquivalenceGenerator
+from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 from run_rag_methods.src.correctness import normalize_answer
 
 
