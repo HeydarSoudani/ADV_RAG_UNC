@@ -93,9 +93,9 @@ def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None,
         elif node.node_type is Node_Type.RETRIEVE_DOCUMENTS:
             node_details += f"Search: {node.search_query} | Think: {node.think.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.DOCUMENTS_ANALYSIS:
-            node_details += f"Analysis: {node.documents_analysis.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
+            node_details += f"Search: {node.search_query} | Analysis: {node.documents_analysis.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.DOCUMENTS_RETHINKING:
-            node_details += f"Rethinking: {node.critical_rethinking.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
+            node_details += f"Search: {node.search_query} | Rethinking: {node.critical_rethinking.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.ANSWER_GENERATION:
             node_details += f"Answer: {node.answer} | Think: {node.think.replace("\n", " ")}" +  "\n" + space + " " * len(node_info)
         elif node.node_type is Node_Type.ANSWER_VALIDATION:

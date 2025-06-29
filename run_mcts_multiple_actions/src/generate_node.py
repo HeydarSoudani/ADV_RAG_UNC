@@ -91,15 +91,7 @@ class Generator:
         num_return:int = 5,
         temperature:float = 1.0,
         do_sample:bool = True
-    ):
-        
-        eos_token_id = self.generation_model.config.eos_token_id
-        # if type(eos_token_id) == list:
-        #     pad_token_id = eos_token_id[0]
-        # else:
-        #     pad_token_id = eos_token_id
-        
-        
+    ):    
         if self.tokenizer.chat_template:
             input_prompt = self.tokenizer.apply_chat_template(
                 [{"role": "user", "content": input_text}],
@@ -232,14 +224,19 @@ class Generator:
                 prompt_text += f"<think> {solution_item[node_type]['think']} </think>\n"
                 prompt_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
                 docs = solution_item[node_type]['docs']
-                if len(docs) > 0:
-                    prompt_text += f"<information> {passages2string(docs)}</information>\n"
+                prompt_text += f"<information> {passages2string(docs)}</information>\n" if len(docs) > 0 else ''
         
             elif node_type == "documents_analysis":
                 prompt_text += f"<documents_analysis> {solution_item[node_type]['documents_analysis']} </documents_analysis>\n"
+                prompt_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
+                docs = solution_item[node_type]['docs']
+                prompt_text += f"<information> {passages2string(docs)}</information>\n" if len(docs) > 0 else ''
                 
             elif node_type == "documents_rethinking":
                 prompt_text += f"<critical_rethinking> {solution_item[node_type]['critical_rethinking']} </critical_rethinking>\n"
+                prompt_text += f"<search> {solution_item[node_type]['search_query']} </search>\n"
+                docs = solution_item[node_type]['docs']
+                prompt_text += f"<information> {passages2string(docs)}</information>\n" if len(docs) > 0 else ''
                 
             elif node_type == "answer_generation":
                 prompt_text += f"<think> {solution_item[node_type]['think']} </think>\n"
@@ -260,15 +257,17 @@ class Generator:
     
     def documents_analysis(self, solution_trace: Dict[int, Dict[str, str]]):
         input_prompt_text = self.get_prompt_text('documents_analysis', solution_trace)
-        initial_output = self.generate_sequential(input_prompt_text, self.documents_analysis_stopping_criteria, num_return=1)[0]
-        documents_analysis = self.documents_analysis_postprocessing(solution_trace, input_prompt_text, initial_output)
-        return documents_analysis
+        initial_output = self.generate_sequential(input_prompt_text, self.search_stopping_criteria, num_return=1)[0]
+        documents_analysis, search_query = self.documents_analysis_postprocessing(solution_trace, input_prompt_text, initial_output)
+        retrieved_docs = self.retriever.search(search_query) if search_query != '' else []
+        return documents_analysis, search_query, retrieved_docs
     
     def documents_rethinking(self, solution_trace: Dict[int, Dict[str, str]]):
         input_prompt_text = self.get_prompt_text('documents_rethinking', solution_trace)
-        initial_output = self.generate_sequential(input_prompt_text, self.critical_rethinking_stopping_criteria, num_return=1)[0]
-        critical_rethinking = self.documents_rethinking_postprocessing(solution_trace, input_prompt_text, initial_output)
-        return critical_rethinking
+        initial_output = self.generate_sequential(input_prompt_text, self.search_stopping_criteria, num_return=1)[0]
+        critical_rethinking, search_query = self.documents_rethinking_postprocessing(solution_trace, input_prompt_text, initial_output)
+        retrieved_docs = self.retriever.search(search_query) if search_query != '' else []
+        return critical_rethinking, search_query, retrieved_docs
     
     def answer_generation(self, solution_trace: Dict[int, Dict[str, str]]):
         user_query = solution_trace[0]['user_query']
@@ -276,20 +275,13 @@ class Generator:
         initial_output = self.generate_sequential(input_prompt_text, self.answer_stopping_criteria, num_return=1)[0]
         think, initial_answer = self.answer_generation_postprocessing(solution_trace, input_prompt_text, initial_output)
         
-        # Node reward:
-        # TODO: implement node reward
+        # Node reward
         input_prompt_text_batch = self.get_prompt_text('answer_generation_only_answer', solution_trace)
         input_prompt_text_ = input_prompt_text_batch + f"<think> {think} </think>\n"
-        batch_output = self.generate_batch(input_prompt_text, self.answer_stopping_criteria, num_return=10)
-        print(batch_output)
+        batch_output = self.generate_batch(input_prompt_text_, self.answer_stopping_criteria, num_return=5)
         batch_output_ = [get_answer(output_text) for output_text in batch_output]
         answer_, node_reward = self._get_most_likely_answer(user_query=user_query, output_list=batch_output_)
         answer = answer_ if answer_ else initial_answer
-        
-        print(batch_output_)
-        print('-')
-        print(answer)
-        print('--')
         
         return think, answer, node_reward
     
@@ -322,7 +314,7 @@ class Generator:
         thinks = ', '.join(([t.strip() for t in re.findall(think_pattern, output, re.DOTALL)]))
         search_query = get_query(output) 
         
-        ### = Check if regeneration is needed
+        # --- Check if regeneration is needed
         if thinks == '':
             print(f"Think is not provided for query {qid}!!!")
             for i in range(self.args.retry):
@@ -338,9 +330,10 @@ class Generator:
                     break
             else:
                 print(f"Failed to generate 'think' after all retries for query {qid}")
-                   
+                
+        # --- Check if search query regeneration is needed
         if search_query == None:
-            print(f"Search Query is not provided for query {qid}")
+            print(f"Retrieve_documents (SQ) is not provided for query {qid}")
             input_prompt_text_ = input_prompt_text + f'<think> {thinks} </think>\n'
             for i in range(self.args.retry):
                 print(f"Search Query, try {i+1} ...")
@@ -354,7 +347,7 @@ class Generator:
                 if search_query != None:
                     break
             else:
-                print(f"Failed to generate 'search query' after all retries for query {qid}")
+                print(f"Failed to generate 'retrieve_documents (SQ) after all retries for query {qid}")
         search_query = '' if search_query == None else search_query
 
         return thinks, search_query
@@ -363,6 +356,9 @@ class Generator:
         qid = solution_trace[0]['qid']
         documents_analysis_pattern = r'<documents_analysis>(.*?)</documents_analysis>'
         documents_analysis_ = ', '.join(([t.strip() for t in re.findall(documents_analysis_pattern, output, re.DOTALL)]))
+        search_query = get_query(output)
+        
+        # --- Check if regeneration is needed
         if documents_analysis_ == '':
             print(f"Documents_analysis is not provided for query {qid}!!!")
             for i in range(self.args.retry):
@@ -378,12 +374,34 @@ class Generator:
             else:
                 print(f"Failed to generate 'documents_analysis' after all retries for query {qid}")
         
-        return documents_analysis_
+        # --- Check if search query regeneration is needed
+        if search_query == None:
+            print(f"Documents analysis (SQ) is not provided for query {qid}")
+            input_prompt_text_ = input_prompt_text + f'<documents_analysis> {documents_analysis_} </documents_analysis>\n'
+            for i in range(self.args.retry):
+                print(f"Search Query, try {i+1} ...")
+                output = self.generate_sequential(
+                    input_prompt_text_,
+                    self.search_stopping_criteria,
+                    temperature=1.0,
+                )[0]
+                
+                search_query = get_query(output)
+                if search_query != None:
+                    break
+            else:
+                print(f"Failed to generate 'documents analysis (SQ)' after all retries for query {qid}")
+        search_query = '' if search_query == None else search_query
+        
+        return documents_analysis_, search_query
     
     def documents_rethinking_postprocessing(self, solution_trace, input_prompt_text, output):
         qid = solution_trace[0]['qid']
         critical_rethinking_pattern = r'<critical_rethinking>(.*?)</critical_rethinking>'
         critical_rethinking_ = ', '.join(([t.strip() for t in re.findall(critical_rethinking_pattern, output, re.DOTALL)]))
+        search_query = get_query(output)
+        
+        # --- Check if regeneration is needed
         if critical_rethinking_ == '':
             print(f"critical_rethinking is not provided for query {qid}!!!")
             for i in range(self.args.retry):
@@ -399,7 +417,26 @@ class Generator:
             else:
                 print(f"Failed to generate 'critical_rethinking' after all retries for query {qid}")
         
-        return critical_rethinking_.strip()
+        # --- Check if search query regeneration is needed
+        if search_query == None:
+            print(f"Documents analysis (SQ) is not provided for query {qid}")
+            input_prompt_text_ = input_prompt_text + f'<critical_rethinking> {critical_rethinking_} </critical_rethinking>\n'
+            for i in range(self.args.retry):
+                print(f"Search Query, try {i+1} ...")
+                output = self.generate_sequential(
+                    input_prompt_text_,
+                    self.search_stopping_criteria,
+                    temperature=1.0,
+                )[0]
+                
+                search_query = get_query(output)
+                if search_query != None:
+                    break
+            else:
+                print(f"Failed to generate 'critical_rethinking (SQ)' after all retries for query {qid}")
+        search_query = '' if search_query == None else search_query
+        
+        return critical_rethinking_.strip(), search_query
     
     def answer_generation_postprocessing(self, solution_trace, input_prompt_text, output):
         qid = solution_trace[0]['qid']

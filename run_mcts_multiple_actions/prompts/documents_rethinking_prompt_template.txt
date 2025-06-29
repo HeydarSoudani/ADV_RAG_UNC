@@ -4,11 +4,14 @@ At each step, generate exactly one reasoning step that moves you closer to answe
 If any documents are retrieved, they will be provided within <information> and </information> tags. These are read-only: NEVER generate, modify, or repeat <information> tags yourself.
 
 You are currently in the CRITICAL_RETHINKING stage.
-Your goal is to critically evaluate whether the information and prior analysis can reliably lead to the correct answer.
-Specifically, assess the relevance and usefulness of the retrieved documents in relation to the question.
+Your goal is to critically assess the last search query and its corresponding retrieved information, then generate a new search query to support your critical thought.
+Specifically, you must assume that the last search query failed to retrieve helpful, supportive, and useful information. You are therefore tasked with generating a new search query that is more likely to retrieve informative documents.
 
 Your output must include:
-- One complete reasoning step that critically reflects on the relevance and helpfulness of the retrieved documents, wrapped in a single pair of <critical_rethinking> and </critical_rethinking> tags.
+- One complete reasoning step that critically assesses the last search query, wrapped in a single pair of <critical_rethinking> and </critical_rethinking> tags.
+- One new, precise, and focused search query,, wrapped in <search> and </search> tags.
 
 Only use the following format, in this exact order:
-<critical_rethinking> one complete reasoning step that critically reflects on the relevance and helpfulness of the retrieved documents </critical_rethinking>
+<critical_rethinking> one complete reasoning step that critically evaluates the last search query and the corresponding retrieved documents </critical_rethinking>
+<search> new focused search query </search>
+

@@ -26,13 +26,17 @@ class Reasoning_MCTS_Node(MCTS_Node):
 
         # --- Actions -----------------------
         think: str = None,
+        documents_analysis: str = None,
+        critical_rethinking: str = None,
         search_query: str = None,
         retrieved_documents: List[str] = None,
         answer: str = None,
         is_finished:bool = None,
-        documents_analysis: str = None,
-        critical_rethinking: str = None,
         answer_validation: str = None,
+        
+        # --- Enabling ---------------------
+        enable_doc_related_actions: bool = False,
+        enable_answer_related_actions: bool = False,
         
         # --- For node selection (not in sanity checks yet) ---
         enable_potential_score: bool = None,
@@ -129,8 +133,6 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         node_reward,
                         scores,
                         answer,
-                        search_query,
-                        retrieved_documents,
                         is_finished,
                         think,
                         critical_rethinking,
@@ -141,7 +143,9 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     attr is not None
                     for attr in [
                         parent,
-                        documents_analysis
+                        documents_analysis,
+                        search_query,
+                        retrieved_documents,
                     ]
                 )
                 
@@ -159,8 +163,6 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         node_reward,
                         scores,
                         answer,
-                        search_query,
-                        retrieved_documents,
                         is_finished,
                         documents_analysis,
                         think,
@@ -172,6 +174,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
                     for attr in [
                         parent,
                         critical_rethinking,
+                        search_query,
+                        retrieved_documents,
                     ]
                 )
             
@@ -295,6 +299,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
             self.generator = generator
             self.max_depth_allowed = max_depth_allowed
             self.enable_potential_score = enable_potential_score
+            self.enable_doc_related_actions = enable_doc_related_actions
+            self.enable_answer_related_actions = enable_answer_related_actions
         else:  # inherit from parent
             self.verbose = parent.verbose
             self.qid = parent.qid
@@ -304,6 +310,8 @@ class Reasoning_MCTS_Node(MCTS_Node):
             self.generator = parent.generator
             self.max_depth_allowed = parent.max_depth_allowed
             self.enable_potential_score = parent.enable_potential_score
+            self.enable_doc_related_actions = parent.enable_doc_related_actions
+            self.enable_answer_related_actions = parent.enable_answer_related_actions
 
         #! record solution trace from root to the current node. key: subquestion id
         if parent is None:  # root
@@ -332,13 +340,17 @@ class Reasoning_MCTS_Node(MCTS_Node):
             elif node_type is Node_Type.DOCUMENTS_ANALYSIS:
                 self.solution_trace[max(self.solution_trace.keys())+1] = {
                     "documents_analysis": {
-                        "documents_analysis": documents_analysis
+                        "documents_analysis": documents_analysis,
+                        "search_query": search_query,
+                        "docs": retrieved_documents
                     }
                 }
             elif node_type is Node_Type.DOCUMENTS_RETHINKING:
                 self.solution_trace[max(self.solution_trace.keys())+1] = {
                     "documents_rethinking": {
-                        "critical_rethinking": critical_rethinking
+                        "critical_rethinking": critical_rethinking,
+                        "search_query": search_query,
+                        "docs": retrieved_documents
                     }
                 }
             elif node_type is Node_Type.ANSWER_GENERATION:
@@ -406,25 +418,29 @@ class Reasoning_MCTS_Node(MCTS_Node):
             
         def do_action_documents_analysis(): #A2
             print(f"---- Documents analysis for node {self.id}...")
-            documents_analysis = self.generator.documents_analysis(solution_trace=self.solution_trace)
+            documents_analysis, search_query, retrieved_docs = self.generator.documents_analysis(solution_trace=self.solution_trace)
             self.children.append(
                 Reasoning_MCTS_Node(
                     parent=self,
                     depth=self.depth + 1,
                     node_type=Node_Type.DOCUMENTS_ANALYSIS,
-                    documents_analysis=documents_analysis
+                    documents_analysis=documents_analysis,
+                    search_query=search_query,
+                    retrieved_documents=retrieved_docs
                 )
             )
 
         def do_action_documents_rethinking(): #A3
             print(f"---- Documents rethinking for node {self.id}...")
-            critical_rethinking = self.generator.documents_rethinking(solution_trace=self.solution_trace)
+            critical_rethinking, search_query, retrieved_docs = self.generator.documents_rethinking(solution_trace=self.solution_trace)
             self.children.append(
                 Reasoning_MCTS_Node(
                     parent=self,
                     depth=self.depth + 1,
                     node_type=Node_Type.DOCUMENTS_RETHINKING,
-                    critical_rethinking=critical_rethinking
+                    critical_rethinking=critical_rethinking,
+                    search_query=search_query,
+                    retrieved_documents=retrieved_docs
                 )
             )
 
@@ -469,31 +485,34 @@ class Reasoning_MCTS_Node(MCTS_Node):
 
         #! create children
         if self.node_type is Node_Type.USER_QUERY:
-            do_action_retrieve_documents()
             do_action_answer_generation()
+            do_action_retrieve_documents()
         
         elif self.node_type is Node_Type.RETRIEVE_DOCUMENTS:
-            do_action_documents_analysis()
-            do_action_documents_rethinking()
             do_action_answer_generation()
+            do_action_retrieve_documents()
+            if self.enable_doc_related_actions:
+                do_action_documents_analysis()
+                do_action_documents_rethinking()
         
         elif self.node_type is Node_Type.DOCUMENTS_ANALYSIS:
-            do_action_documents_rethinking()
-            do_action_retrieve_documents()
             do_action_answer_generation()
+            do_action_retrieve_documents()
+            do_action_documents_rethinking()
         
         elif self.node_type is Node_Type.DOCUMENTS_RETHINKING:
-            do_action_retrieve_documents()
             do_action_answer_generation()
+            do_action_retrieve_documents()
+            do_action_documents_analysis()
         
         elif self.node_type is Node_Type.ANSWER_GENERATION:
-            do_action_answer_validation()
             do_action_finish()
-            do_action_retrieve_documents()
+            if self.enable_answer_related_actions:
+                do_action_answer_validation()
             
         elif self.node_type is Node_Type.ANSWER_VALIDATION:
-            do_action_retrieve_documents()
             do_action_finish()
+            do_action_retrieve_documents()
 
         elif self.node_type is Node_Type.FINISH:
             raise ValueError("FINISH node cannot create children!!")  

@@ -4,12 +4,14 @@ At each step, generate exactly one reasoning step that moves you closer to answe
 If any documents are retrieved, they will be provided within <information> and </information> tags. These are read-only: NEVER generate, modify, or repeat <information> tags yourself.
 
 You are currently in the DOCUMENTS_ANALYSIS stage.
-Your goal is to summarize and analyze the most recently retrieved documents in a way that supports answering the question.
-Your summary should be concise, informative, and directly relevant to the question.
+Your goal is to summarize and analyze the most recently retrieved documents in a way that supports answering the search query, and propose a refined and targeted search query to confirm or expand on the current information.
+Your summary should be concise, informative, and directly relevant to the search query.
 
 Your output must include:
 - One complete reasoning step that summarizes and analyzes the retrieved documents and explains their relevance to the question, wrapped in a single pair of <documents_analysis> and </documents_analysis> tags.
+- One new precise and focused search query, wrapped in <search> and </search> tags.
 
 Only use the following format, in this exact order:
-<documents_analysis> the documents summary and their relevance to the question </documents_analysis>
+<documents_analysis> summary and analysis of the documents, explaining their relevance </documents_analysis>
+<search> new focused search query </search>
 

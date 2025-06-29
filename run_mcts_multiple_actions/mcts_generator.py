@@ -135,7 +135,9 @@ def mcts_generation(args):
                 gt_answers=gt_answers,
                 gt_reasoning_steps=[],
                 max_depth_allowed=args.max_depth_allowed,
-                enable_potential_score=args.enable_potential_score
+                enable_potential_score=args.enable_potential_score,
+                enable_doc_related_actions = args.enable_doc_related_actions,
+                enable_answer_related_actions = args.enable_answer_related_actions
             )
             
             model_solutions = []
@@ -205,7 +207,7 @@ if __name__ == "__main__":
         "intfloat/e5-base-v2",  # For E5
         "reasonir/ReasonIR-8B", # For ReasonIR
     ])
-    parser.add_argument('--retrieval_topk', type=int, default=3)
+    parser.add_argument('--retrieval_topk', type=int, default=1)
     parser.add_argument('--faiss_gpu', action='store_false', help='Use GPU for computation')
     parser.add_argument('--retrieval_pooling_method', type=str, default="mean")
     parser.add_argument('--retrieval_query_max_length', type=int, default=256)
@@ -225,15 +227,15 @@ if __name__ == "__main__":
     parser.add_argument('--discriminator_method', type=str, default='rag_consistency', choices=[
         'majority_voting', 'reasoning_consistency', 'llm_selector', 'rag_consistency'
     ])
-    parser.add_argument("--enable_critique", action="store_true", help="")
-    parser.add_argument("--enable_doc_generation", action="store_true", help="")
+    parser.add_argument("--enable_doc_related_actions", action="store_false", help="")
+    parser.add_argument("--enable_answer_related_actions", action="store_false", help="")
     parser.add_argument("--verbose", action="store_true", help="extra login")
     parser.add_argument("--mcts_discount_factor", type=float, default=1.0)
     parser.add_argument("--mcts_exploration_weight", type=float, default=2.0)
     parser.add_argument("--mcts_weight_scheduler", choices=["exp", "lin", "const"], default="const")
     parser.add_argument("--save_tree", action="store_true")
-    parser.add_argument("--num_rollouts", type=int, default=4)
-    parser.add_argument("--max_depth_allowed", type=int, default=6)
+    parser.add_argument("--num_rollouts", type=int, default=2)
+    parser.add_argument("--max_depth_allowed", type=int, default=4)
     parser.add_argument("--num_votes", type=int, default=2)
     parser.add_argument("--mcts_num_last_votes", type=int, default=2)
     parser.add_argument("--enable_potential_score", action="store_true")
