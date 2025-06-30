@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import glob
 import json
 import torch
+import random
 import argparse
 import transformers
 from tqdm import tqdm
@@ -143,8 +144,8 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 1:
-                #     break
+                if i == 1:
+                    break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
@@ -246,11 +247,11 @@ def get_auroc(correctness, confidence):
 
 def evaluation_correlation(args):
     
-    # accelerator = Accelerator()
-    # device = accelerator.device
-    # secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, torch_dtype=torch.bfloat16).to(device)
-    # secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
-    # se_model = SemanticEquivalenceGenerator(args, device, secondary_model, secondary_tokenizer)
+    accelerator = Accelerator()
+    device = accelerator.device
+    secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, torch_dtype=torch.bfloat16).to(device)
+    secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
+    se_model = SemanticEquivalenceGenerator(args, device, secondary_model, secondary_tokenizer)
     
     correctness_list, uncertainty_obj = [], {'mv': []}
     with open(args.consistency_results_file, 'r') as infile:
@@ -259,25 +260,23 @@ def evaluation_correlation(args):
             correctness = data['em']
             correctness_list.append(correctness)
             
-            ue_scores = data['ue_scores']
-            for ue_metric, ue_value in ue_scores.items():
-                if ue_metric in uncertainty_obj.keys():
-                    uncertainty_obj[ue_metric].append(ue_value['confidence'])
-                else:
-                    uncertainty_obj[ue_metric] = [ue_value['confidence']]
+            # ue_scores = data['ue_scores']
+            # for ue_metric, ue_value in ue_scores.items():
+            #     if ue_metric in uncertainty_obj.keys():
+            #         uncertainty_obj[ue_metric].append(ue_value['confidence'])
+            #     else:
+            #         uncertainty_obj[ue_metric] = [ue_value['confidence']]
           
             # ---
-            # question = data['query']
-            # generated_texts = data['final_answer_list'][5:10]
-            # len_generated_texts = len(generated_texts)
-            # prediction = data['pred_answer'].strip()
+            question = data['query']
+            # generated_texts = data['final_answer_list'][0:5]
+            generated_texts = random.sample(data['final_answer_list'], 5)
+            len_generated_texts = len(generated_texts)
+            prediction = data['pred_answer'].strip()
             
-            # num_consistent = sum(
-            #     se_model.check_answers_equiv(question, prediction, ans)
-            #     for ans in generated_texts
-            # )
-            # conf = num_consistent / len_generated_texts
-            # uncertainty_obj['mv'].append(conf)
+            num_consistent = sum( se_model.check_answers_equiv(question, prediction, ans) for ans in generated_texts)
+            conf = num_consistent / len_generated_texts
+            uncertainty_obj['mv'].append(conf)
           
           
         for ue_metric, conf_list in uncertainty_obj.items():
@@ -407,9 +406,9 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    # ue_generation(args)
+    ue_generation(args)
     # merge_result_files(args)
-    evaluation_correlation(args)
+    # evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_generation.py

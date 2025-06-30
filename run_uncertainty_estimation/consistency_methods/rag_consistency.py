@@ -2,13 +2,14 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import random
+from collections import Counter
 
 from run_rag_methods.src.rag_methods import *
 from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 
 from run_uncertainty_estimation.consistency_methods.models.trace_augmentor import (
-    SearchQueryParaphraser, ThinkParaphraser, RetrievalPerturber,
+    SearchQueryParaphraser, ThinkParaphraser, RetrievalPerturber, CriticalThinkGenerator,
     get_paraphrased_query, get_paraphrased_think
 )
 # from run_mcts.src.models.generate_paraphrase import (
@@ -43,8 +44,8 @@ class RagConsistency:
         self.se_model = SemanticEquivalenceGenerator(args, device, self.rag_model.generator.generator, self.rag_model.generator.tokenizer)
         self.search_query_paraphraser = SearchQueryParaphraser(args, self.secondary_model, self.secondary_tokenizer)
         self.think_paraphraser = ThinkParaphraser(args, self.secondary_model, self.secondary_tokenizer)
-        self.retrieval_perturber = RetrievalPerturber(args, self.retriever)    
-    
+        self.retrieval_perturber = RetrievalPerturber(args, self.retriever)
+        self.critical_think_generator = CriticalThinkGenerator(args, self.secondary_model, self.secondary_tokenizer)
     
     def get_masked_traces(self, qid, question, trace):
         masked_traces, answer_output_list = [], []
@@ -52,53 +53,66 @@ class RagConsistency:
         
         if has_search:
             think_search_indices = range(0, len(trace)-1)
-            # V1: random choice
+            actions = ['query_paraphrasing', 'adding_critical_thought'] # 'doc_shuffling'
+            # --- V1: random choice
             # selected_indices = random.choices(think_search_indices, k=self.args.n_generations)
-            # selected_indices_group = [(x, selected_indices.count(x)) for x in sorted(set(selected_indices))]
-            # V2: fix number form each depth
-            action = 'doc_reodering'
-            selected_indices_group = [(x, 2, action) for x in sorted(set(think_search_indices))]
+            # selected_indices_group = [(x, selected_indices.count(x), action) for x in sorted(set(selected_indices))]
+            
+            # --- V2: fix number form each depth
+            # selected_indices_group = [(x, 2, action) for x in sorted(set(think_search_indices))]
+            
+            random_pairs = [(random.choice(think_search_indices), random.choice(actions)) for _ in range(self.args.n_generations)]
+            pair_counts = Counter(random_pairs)
+            selected_indices_group = [(index, repeat, action) for (index, action), repeat in pair_counts.items()]
+            print(selected_indices_group)
+            print('----')
+            
+            # TODO: actions combinition
             
             for (selected_index, repeat, action) in selected_indices_group:
-                
-                #! Step 1: Generating paraphrased search queries
-                #! Step 1: Applying actions: 
+                original_think = trace[selected_index].get('think', '')
                 original_sq = trace[selected_index].get('search_query', None)
-                # print(original_sq)
-                # print('---')
+                original_docs = trace[selected_index].get('docs', [])
                 
-                paraphrased_queries = self.search_query_paraphraser.inference(qid, original_sq, repeat=repeat) if original_sq else []
-                retrieved_docs_list = [self.retrieval_perturber.inference(paraphrased_query) for paraphrased_query in paraphrased_queries]
-                # print(paraphrased_queries)
-                # print('---')
-                    
-                
+                #! Step 1: Applying actions
+                if action == 'query_paraphrasing':
+                    paraphrased_queries = self.search_query_paraphraser.inference(qid, original_sq, repeat=repeat) if original_sq else []
+                    # retrieved_docs_list = [self.retrieval_perturber.inference(paraphrased_query) for paraphrased_query in paraphrased_queries]
+                    retrieved_docs_list = [self.retriever.search(paraphrased_query) if paraphrased_query else [] for paraphrased_query in paraphrased_queries]
+                elif action == 'adding_critical_thought':
+                    critical_thinks, critical_search_queries = self.critical_think_generator.inference(qid, original_sq, repeat=repeat) if original_sq else []
+                    retrieved_docs_list = [self.retriever.search(critical_query) if critical_query else [] for critical_query in critical_search_queries]
+
                 #! Step 2: Generating new masked traces
                 for i in range(repeat):
-                # for paraphrased_query in paraphrased_queries:
-                    paraphrased_query = paraphrased_queries[i]
-                    paraphrased_query = paraphrased_query.strip()
-                    retrieved_docs = retrieved_docs_list[i]
                     new_trace = []
                     
-                    # Before break point: Keep steps excluding the selected one
+                    # - A) Before the break point: Keep steps excluding the selected one
                     new_trace = trace[:selected_index]
                     
-                    # On break point
-                    # retrieved_docs = self.retriever.search(paraphrased_query) if paraphrased_query else []
-                    new_trace.append({
-                        "think": trace[selected_index].get('think', ''),
-                        "search_query": paraphrased_query,
-                        "docs": retrieved_docs,
-                    })
-                    
+                    # - B) On the break point
+                    if action == 'query_paraphrasing':
+                        paraphrased_query = paraphrased_queries[i].strip()
+                        retrieved_docs = retrieved_docs_list[i]
+                        new_trace.append({
+                            "think": original_think,
+                            "search_query": paraphrased_query,
+                            "docs": retrieved_docs,
+                        })
+                    elif action == 'adding_critical_thought':
+                        critical_think = critical_thinks[i].strip()
+                        critical_query = critical_search_queries[i].strip()
+                        critical_docs = retrieved_docs_list[i]
+                        new_trace.append({"think": original_think, "search_query": original_sq, "docs": original_docs})
+                        new_trace.append({"think": critical_think, "search_query": critical_query, "docs": critical_docs})
+                        
                     # After break point: ask searchR1 to generate
                     pred_answer, rest_of_trace = self.rag_model.inference_with_partial_trace(question, new_trace)
-                    new_trace.extend(rest_of_trace)
                     
+                    new_trace.extend(rest_of_trace)
                     masked_traces.append(new_trace)
                     answer_output_list.append(pred_answer.strip() if pred_answer else '')
-                
+
         else:
             #! Step 1: Generating paraphrased thinks
             original_think = trace[0].get('think', '')
