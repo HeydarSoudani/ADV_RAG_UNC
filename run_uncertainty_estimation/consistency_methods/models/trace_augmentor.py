@@ -33,6 +33,11 @@ class SearchQueryParaphraser:
                     "Leading local businesses or sectors in Willow Vale, NSW",
                     "Top industries driving the economy in Willow Vale, New South Wales",
                     "Which industry is most prominent around Willow Vale, NSW?",
+                    "What people mostly work in at Willow Vale New South Wales",
+                    "Primary occupation in the Willow Vale NSW locality",
+                    "Major employment sector in Willow Vale, New South Wales",
+                    "Key local industry in Willow Vale, New South Wales",
+                    "Dominant industry around Willow Vale, New South Wales"
                 ] 
             },
             {
@@ -43,6 +48,11 @@ class SearchQueryParaphraser:
                     "Minnesota Vikings team origin year",
                     "when did the Minnesota Vikings start",
                     "year the Minnesota Vikings football team was created",
+                    "Minnesota Vikings team inception date",
+                    "origin year of the Minnesota Vikings",
+                    "when was the Minnesota Vikings football team formed",
+                    "date the Minnesota Vikings were founded",
+                    "Minnesota Vikings creation date"
                 ] 
             }
         ]

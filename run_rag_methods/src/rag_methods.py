@@ -835,8 +835,8 @@ class DRAGIN_RAG(BasicRAG):
         return pred_answer, path
 
 class SelfAsk_RAG(BasicRAG):
-    def __init__(self, args, device):
-        super().__init__(args, device)
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        super().__init__(generation_model, generation_tokenizer, device, args)
         self.single_hop = False
         self.system_prompt = SELF_ASK_PROMPT_MULTI_HOP
         self.FOLLOW_UP_PATTERN = r"Follow up:.*\n"
@@ -892,14 +892,6 @@ class SelfAsk_RAG(BasicRAG):
             output, output_text = self.generator.generate(messages, self.generator.selfask_stopping_criteria)
             intermediate_ans = self.extract_intermediate(output_text)
             path.append({'search_query': search_query, 'docs': cur_search_docs, 'think': intermediate_ans})
-            
-            # # print(self.system_prompt)
-            # print(user_input_prompt)
-            # print('-')
-            # print(output_text)
-            # # print('-')
-            # # print(intermediate_ans)
-            # print('-----')
                 
             if ("So the final answer is:" in output_text):
                 text += output_text
@@ -927,7 +919,6 @@ class SelfAsk_RAG(BasicRAG):
                 {"role": "user", "content": user_input_prompt}
             ]
         
-        
         # Regenerate the last sentence if it is needed
         if "So the final answer is:" not in text:
             text += "So the final answer is: "
@@ -948,6 +939,7 @@ class SelfAsk_RAG(BasicRAG):
         
         else:
             pred_answer = self.extract_final_answer(text)
+            path.append({'think': f'So the final answer is: {pred_answer}'})
 
         return pred_answer, path
 

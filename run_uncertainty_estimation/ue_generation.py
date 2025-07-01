@@ -59,6 +59,9 @@ def ue_generation(args):
                     rag_generations[data['qid']] = data
     sorted_query_ids = sorted(query_ids, key=lambda x: int(x.split('_')[1]))
     
+    # sorted_query_ids = ['test_77'] # 'test_5', 'test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_76', 'test_83'
+    # filtered_dataset = test_dataset.filter(lambda example: example['id'] in challenging_samples)
+    
     # === Read existing (generated) samples ======
     generated_qids = []
     if os.path.exists(args.consistency_results_file):
@@ -144,18 +147,22 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                if i == 1:
-                    break
+                # if i == 1:
+                #     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
-                # 1) Generate output list
+                ### --- 1) Generate output list
                 # TODO: if exists ... (for the case of adding new UE method)
+                # For SearchR1
                 masked_traces, masked_traces_text, final_answer_list = consistency_model.get_masked_traces(qid, user_query, trace)
                 context = passages2string(get_unique_docs(masked_traces))
                 
+                # For Self-Ask
                 
-                # 2) Calculate UE scores
+                
+                
+                ### --- 2) Calculate UE scores
                 ue_scores = uncertainty_estimator_model.estimate(
                     user_query,
                     prediction,
@@ -165,7 +172,7 @@ def ue_generation(args):
                 )
                 # print(ue_scores)
                 
-                # 3) Print in output files 
+                ### --- 3) Print in output files 
                 cons_item = {
                     "qid": qid,
                     "query": user_query,
@@ -247,44 +254,42 @@ def get_auroc(correctness, confidence):
 
 def evaluation_correlation(args):
     
-    accelerator = Accelerator()
-    device = accelerator.device
-    secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, torch_dtype=torch.bfloat16).to(device)
-    secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
-    se_model = SemanticEquivalenceGenerator(args, device, secondary_model, secondary_tokenizer)
+    # accelerator = Accelerator()
+    # device = accelerator.device
+    # secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, torch_dtype=torch.bfloat16).to(device)
+    # secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
+    # se_model = SemanticEquivalenceGenerator(args, device, secondary_model, secondary_tokenizer)
+    # ---
+    # question = data['query']
+    # # generated_texts = data['final_answer_list'][0:5]
+    # generated_texts = random.sample(data['final_answer_list'], 5)
+    # len_generated_texts = len(generated_texts)
+    # prediction = data['pred_answer'].strip()
+    # num_consistent = sum( se_model.check_answers_equiv(question, prediction, ans) for ans in generated_texts)
+    # conf = num_consistent / len_generated_texts
+    # uncertainty_obj['mv'].append(conf)
     
-    correctness_list, uncertainty_obj = [], {'mv': []}
+    correctness_list, uncertainty_obj = [], {}
     with open(args.consistency_results_file, 'r') as infile:
         for line in infile:
             data = json.loads(line)
             correctness = data['em']
             correctness_list.append(correctness)
             
-            # ue_scores = data['ue_scores']
-            # for ue_metric, ue_value in ue_scores.items():
-            #     if ue_metric in uncertainty_obj.keys():
-            #         uncertainty_obj[ue_metric].append(ue_value['confidence'])
-            #     else:
-            #         uncertainty_obj[ue_metric] = [ue_value['confidence']]
-          
-            # ---
-            question = data['query']
-            # generated_texts = data['final_answer_list'][0:5]
-            generated_texts = random.sample(data['final_answer_list'], 5)
-            len_generated_texts = len(generated_texts)
-            prediction = data['pred_answer'].strip()
-            
-            num_consistent = sum( se_model.check_answers_equiv(question, prediction, ans) for ans in generated_texts)
-            conf = num_consistent / len_generated_texts
-            uncertainty_obj['mv'].append(conf)
-          
-          
+            ue_scores = data['ue_scores']
+            for ue_metric, ue_value in ue_scores.items():
+                if ue_metric in uncertainty_obj.keys():
+                    uncertainty_obj[ue_metric].append(ue_value['confidence'])
+                else:
+                    uncertainty_obj[ue_metric] = [ue_value['confidence']]
+
         for ue_metric, conf_list in uncertainty_obj.items():
             print(f"{ue_metric}: {get_auroc(correctness_list, conf_list)}")
 
 def correctness_evaluation_mv(args):
     em_mv_full_evaluation, em_mv_sub_evaluation = [], []
     em_org_full_evaluation, em_org_sub_evaluation = [], []
+    conf_list = []
     with open(args.consistency_results_file, 'r') as infile:
         for line in infile:
             data = json.loads(line)
@@ -298,6 +303,9 @@ def correctness_evaluation_mv(args):
                 correctness_em, correctness_em_sub = 0, 0
             em_mv_full_evaluation.append(correctness_em)
             em_mv_sub_evaluation.append(correctness_em_sub)
+            
+            conf_mc = data['ue_scores']['majority_voting']['most_confident_answer'][1]
+            conf_list.append(conf_mc)
             
             
             pred_answer_org = data['pred_answer']
@@ -314,6 +322,8 @@ def correctness_evaluation_mv(args):
     print(f"\nEvaluation Result (MC) {args.consistency_method}:")
     print(f"EM (full): {np.mean(em_mv_full_evaluation)*100}")
     print(f"EM (sub): {np.mean(em_mv_sub_evaluation)*100}")
+    print(f"AUROC: {get_auroc(em_mv_full_evaluation, conf_list)}")
+    
     
     print(f"\nEvaluation Result (Org):")
     print(f"EM (full): {np.mean(em_org_full_evaluation)*100}")
@@ -328,7 +338,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
@@ -406,9 +416,9 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    ue_generation(args)
-    # merge_result_files(args)
-    # evaluation_correlation(args)
+    # ue_generation(args)
+    merge_result_files(args)
+    evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_generation.py

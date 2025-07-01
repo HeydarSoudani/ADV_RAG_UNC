@@ -48,6 +48,15 @@ class RagConsistency:
         self.critical_think_generator = CriticalThinkGenerator(args, self.secondary_model, self.secondary_tokenizer)
     
     def get_masked_traces(self, qid, question, trace):
+        if self.args.rag_method == 'self_ask':
+            self.get_masked_traces_selfask(self, qid, question, trace)
+        elif self.args.rag_method == 'search_r1':  
+            self.get_masked_traces_searchr1(self, qid, question, trace)
+    
+    def get_masked_traces_selfask(self, qid, question, trace):
+        pass 
+    
+    def get_masked_traces_searchr1(self, qid, question, trace):
         masked_traces, answer_output_list = [], []
         has_search = len(trace) > 1
         
@@ -57,7 +66,6 @@ class RagConsistency:
             # --- V1: random choice
             # selected_indices = random.choices(think_search_indices, k=self.args.n_generations)
             # selected_indices_group = [(x, selected_indices.count(x), action) for x in sorted(set(selected_indices))]
-            
             # --- V2: fix number form each depth
             # selected_indices_group = [(x, 2, action) for x in sorted(set(think_search_indices))]
             
@@ -65,7 +73,6 @@ class RagConsistency:
             pair_counts = Counter(random_pairs)
             selected_indices_group = [(index, repeat, action) for (index, action), repeat in pair_counts.items()]
             print(selected_indices_group)
-            print('----')
             
             # TODO: actions combinition
             
@@ -94,11 +101,8 @@ class RagConsistency:
                     if action == 'query_paraphrasing':
                         paraphrased_query = paraphrased_queries[i].strip()
                         retrieved_docs = retrieved_docs_list[i]
-                        new_trace.append({
-                            "think": original_think,
-                            "search_query": paraphrased_query,
-                            "docs": retrieved_docs,
-                        })
+                        new_trace.append({"think": original_think, "search_query": paraphrased_query, "docs": retrieved_docs})
+                    
                     elif action == 'adding_critical_thought':
                         critical_think = critical_thinks[i].strip()
                         critical_query = critical_search_queries[i].strip()
