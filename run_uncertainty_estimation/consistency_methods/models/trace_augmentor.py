@@ -1,6 +1,6 @@
 import re
 import torch
-from utils.general_utils import passages2string
+from utils.general_utils import passages2string, get_think, get_query
 
 def get_paraphrased_query(text):
     pattern = re.compile(r"<paraphrased_query>(.*?)</paraphrased_query>", re.DOTALL)
@@ -268,7 +268,6 @@ class CriticalThinkGenerator:
         matches = pattern.findall(text)
         return matches if matches else None
 
-    
     def get_instruction(self, original_search_query, n=5):
         input_text = ''
         input_text += "You are a highly capable critical rethinker agent.\n"
@@ -381,3 +380,233 @@ class CriticalThinkGenerator:
         assert len(thinks) == repeat and len(queries) == repeat, f"Expected {repeat} items, got {len(thinks)} thinks and {len(queries)} queries"
         
         return thinks, queries
+
+class AnswerValidator:
+    def __init__(self, args, generator, tokenizer) -> None:
+        self.args = args
+        self.generator = generator
+        self.tokenizer = tokenizer
+        self.examples = []
+    
+    def get_unique_docs(self, docs_lst:list):
+        return list({doc['id']: doc for doc in docs_lst}.values()) 
+    
+    def get_information_summary(self, text):
+        pattern = re.compile(r"<summary>(.*?)</summary>", re.DOTALL)
+        matches = pattern.findall(text)
+        if matches:
+            return matches[0]
+        else:
+            return ''
+    
+    def get_think(self, text):
+        pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+        matches = pattern.findall(text)
+        if matches:
+            return matches[-1]
+        else:
+            return ''
+
+    def get_query(self, text):
+        pattern = re.compile(r"<search>(.*?)</search>", re.DOTALL)
+        matches = pattern.findall(text)
+        if matches:
+            return matches[-1]
+        else:
+            return ''
+    
+    def generate_batch(self,
+        input_text,
+        num_return:int = 5,
+        max_new_tokens = 1024,
+        temperature:float = 1.0,
+        do_sample:bool = True
+    ):    
+        if self.tokenizer.chat_template:
+            input_prompt = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": input_text}],
+                add_generation_prompt=True,
+                tokenize=False
+            )
+        
+        inputs = self.tokenizer(input_prompt, return_tensors='pt').to(self.generator.device)
+        input_ids = inputs["input_ids"]
+        batch_size = input_ids.shape[0]
+        
+        with torch.no_grad():
+            model_output = self.generator.generate(
+                **inputs,
+                return_dict_in_generate=True,
+                output_logits=True,
+                max_new_tokens=max_new_tokens,
+                num_return_sequences=num_return,
+                pad_token_id=self.tokenizer.eos_token_id,
+                temperature=temperature,
+                do_sample=do_sample,
+            )
+            all_generated = model_output.sequences[:, input_ids.shape[1]:]  # strip prompt
+
+            # Group into batches
+            grouped = all_generated.view(batch_size, num_return, -1)
+            generated_texts = [
+                self.tokenizer.batch_decode(group, skip_special_tokens=True)
+                for group in grouped
+            ][0]
+        
+        return generated_texts
+    
+    def generate_sequential(self,
+        input_text,
+        max_new_tokens=1024,
+        num_return:int = 1,
+        temperature:float = 0.7,
+        do_sample:bool = True,
+        stopping_criteria = None
+    ):
+        if self.tokenizer.chat_template:
+            input_prompt = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": input_text}],
+                add_generation_prompt=True,
+                tokenize=False
+            )
+        
+        input_ids = self.tokenizer.encode(input_prompt, return_tensors='pt').to(self.generator.device)
+        attention_mask = torch.ones_like(input_ids)
+        
+        generated_texts = []
+        for i in range(num_return):
+            with torch.no_grad():
+                outputs = self.generator.generate(
+                    input_ids,
+                    attention_mask=attention_mask,
+                    max_new_tokens=max_new_tokens,
+                    stopping_criteria=stopping_criteria,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    temperature=temperature,
+                    do_sample=do_sample,
+                )
+                generated_tokens = outputs[0][input_ids.shape[1]:]
+                output_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                generated_texts.append(output_text)
+        
+        return generated_texts
+    
+    def get_summarization_instruction(self, question, docs_text):
+        input_text = ''
+        input_text += "You are a highly capable summarization agent.\n"
+        input_text += "Your task is to generate a detailed summary based on the provided information and the user's query.\n"
+        input_text += "Your output must include:\n"
+        input_text += "- One complete and detailed summary, wrapped in a single pair of <summary> and </summary> tags.\n"
+        input_text += "Your output must follow this exact format and order:\n"
+        input_text += "<summary> one complete summary of the information considering the user query </summary>\n\n"
+        
+        input_text +=f"<information> {docs_text} </information>\n"
+        input_text += f"<user_query> {question.strip()} </user_query>\n"
+        
+        return input_text
+
+    def get_validation_instruction(self, question, prediction, info_summary):
+        input_text = ''
+        input_text += "You are a highly capable response validation agent.\n"
+        input_text += "Given a user query and a summary of the retrieved documents used during the reasoning process, your task is to verify whether the generated response satisfies two evaluation criteria.\n"
+        input_text += "The two criteria are: 1) Is the response grounded in the provided information? 2) Does the response correctly and fully answer the user query?\n"
+        input_text += "You must provide a single, coherent reasoning step that examines both criteria and suggests how the response could be improved.\n"
+        input_text += "After your reasoning, you must return a precise search query that can help retrieve better information to improve the answer.\n"
+        input_text += "The document summary will be enclosed in <information> and </information> tags. This content is read-only: NEVER generate, modify, or repeat the <information> tags.\n"
+        input_text += "The predicted answer will be enclosed in <prediction> and </prediction> tags. This content is also read-only: NEVER generate, modify, or repeat the <prediction> tags.\n"
+        input_text += "The search query must be focused, informative, and aimed at enhancing the predicted answer.\n"
+
+        input_text += "Your output must include:\n"
+        input_text += "- One complete reasoning step that: (a) references the predicted answer, (b) evaluates it using the two criteria, and (c) proposes specific improvements. Wrap this reasoning inside a single pair of <think> and </think> tags.\n"
+        input_text += "- One search query that would help improve the answer. Wrap it inside <search> and </search> tags.\n\n"
+
+        input_text += "Only use the following format, in this exact order:\n"
+        input_text += "<think> one complete reasoning step that assesses the answer </think>\n"
+        input_text += "<search> a creative and focused search query </search>\n"
+
+        input_text += f"Question: {question}\n"
+        input_text += f"<information> {info_summary} </information>\n"
+        input_text += f"<prediction> {prediction} </prediction>\n"
+        
+        return input_text
+
+    def summarization_inference(self, qid, question, trace, repeat=5):
+        summarizations = []
+        all_docs = [doc for step in trace[:-1] for doc in step['docs']]
+        unq_docs = self.get_unique_docs(all_docs)
+        docs_text = passages2string(unq_docs)
+        
+        input_prompt = self.get_summarization_instruction(question, docs_text)
+        output_texts = self.generate_batch(input_prompt, num_return=repeat, temperature=self.args.consistency_temperature)
+        summarizations = [self.get_information_summary(output_text) for output_text in output_texts]
+        assert len(summarizations) == repeat, f"For query {qid}, expected {repeat} items, got {len(summarizations)} summarizations!!!"
+        
+        # print(summarizations)
+        # print('---')
+        
+        return summarizations
+        
+    def validation_inference(self, qid, question, prediction, summarization_list, repeat=5):
+        thinks, queries = [], []
+        for info_summary in summarization_list:
+            input_prompt = self.get_validation_instruction(question, prediction, info_summary)
+            output_text = self.generate_sequential(input_prompt, num_return=1, temperature=self.args.consistency_temperature)[0]
+            thinks.append(self.get_think(output_text))
+            queries.append(self.get_query(output_text))
+        
+        # print(thinks)
+        # print('-')
+        # print(queries)
+        # print('---')
+        
+        assert len(thinks) == repeat and len(queries) == repeat, f"Expected {repeat} items, got {len(thinks)} thinks and {len(queries)} queries"
+        return thinks, queries
+
+
+
+
+
+
+
+# class AnalysisThinkGenerator:
+#     def __init__(self, args, generator, tokenizer) -> None:
+#         self.args = args
+#         self.generator = generator
+#         self.tokenizer = tokenizer
+    
+#         self.examples = [
+#             {
+#                 "original": "popular industry in the neighborhood of Willow Vale, New South Wales",
+#                 "think": "",
+#                 "query": ""
+#             },
+#             {
+#                 "original": "when was the Minnesota Vikings founded",
+#                 "think": "",
+#                 "query": ""
+#             }
+#         ]
+        
+    
+#     def get_instruction(self, original_search_query, n=5):
+#         input_text = ''
+#         input_text += "You are a highly capable query paraphraser agent.\n"
+#         input_text += "Given an original search query, generate one semantically diverse and effective paraphrased search query that capture the same intent but use different wording or structure.\n"
+#         input_text += "The paraphrased query should be suitable for improving search engine results by covering various phrasings a user might employ.\n"
+#         input_text += "You are also tasked with providing one reasoning step explaining why the new query is effective.\n"
+#         input_text += "The search query must be precise and focused.\n"
+#         input_text += "Do not add extra information that is not present in the original query.\n\n"
+        
+#         input_text += "Your output must follow this exact format and order:\n"
+#         input_text += "<think> One complete reasoning step explaining why the new query works better </think>\n"
+#         input_text += "<search> One creative, focused, and new search query </search>\n\n"
+        
+#         input_text += "Here are some examples:\n"
+#         for example in self.examples:
+#             input_text += f"<original_query> {example['original']} </original_query>\n"
+#             input_text += f"<think> {example['think']} </think>\n"
+#             input_text += f"<search> {example['search_query']} </search>\n\n"
+        
+#         input_text += f"<original_query> {original_search_query.strip()} </original_query>\n"
+        
+#         return input_text

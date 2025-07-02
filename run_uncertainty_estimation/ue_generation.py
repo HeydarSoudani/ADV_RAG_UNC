@@ -59,8 +59,7 @@ def ue_generation(args):
                     rag_generations[data['qid']] = data
     sorted_query_ids = sorted(query_ids, key=lambda x: int(x.split('_')[1]))
     
-    # sorted_query_ids = ['test_77'] # 'test_5', 'test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_76', 'test_83'
-    # filtered_dataset = test_dataset.filter(lambda example: example['id'] in challenging_samples)
+    # sorted_query_ids = ['test_73'] # 'test_5', 'test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_76', 'test_83'
     
     # === Read existing (generated) samples ======
     generated_qids = []
@@ -80,7 +79,9 @@ def ue_generation(args):
     secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
     
     # -
-    if args.rag_method == "fix_sentence_retrieval":
+    if args.rag_method == 'direct_inference':
+        rag_model = DirectInference(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == "fix_sentence_retrieval":
         rag_model = FixSentenceRAG(args, device)
     elif args.rag_method == "fix_length_retrieval":
         rag_model = FixLengthRAG(args, device)
@@ -155,11 +156,11 @@ def ue_generation(args):
                 ### --- 1) Generate output list
                 # TODO: if exists ... (for the case of adding new UE method)
                 # For SearchR1
-                masked_traces, masked_traces_text, final_answer_list = consistency_model.get_masked_traces(qid, user_query, trace)
+                masked_traces, masked_traces_text, final_answer_list = consistency_model.get_masked_traces(qid, user_query, prediction, trace)
                 context = passages2string(get_unique_docs(masked_traces))
                 
                 # For Self-Ask
-                
+                # TODO: ...
                 
                 
                 ### --- 2) Calculate UE scores
@@ -334,14 +335,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+    parser.add_argument('--dataset', type=str, default='2wikimultihopqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -371,6 +373,7 @@ if __name__ == "__main__":
     
     # RAG methods (input)
     parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
+        'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_sentence_retrieval', 'fix_length_retrieval', 'ircot', 'flare', 'dragin',
         'react', 'self_ask', 'search_o1', 'search_r1',
         'RASPberry'
@@ -396,7 +399,10 @@ if __name__ == "__main__":
     
     # === Files ====================
     model_ = args.model_name_or_path.split('/')[-1]
-    args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"
+    if args.rag_method in ['direct_inference', 'cot_inference']:
+        args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}"
+    else:
+        args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"
     os.makedirs(args.output_dir, exist_ok=True)
     
     if args.rag_method in ['flare', 'dragin']:

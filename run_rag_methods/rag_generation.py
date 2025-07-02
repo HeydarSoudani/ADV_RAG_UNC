@@ -102,7 +102,7 @@ def rag_generation(args):
     generation_tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
     
     if args.rag_method == 'direct_inference':
-        rag_model = DirectInference(args, device)
+        rag_model = DirectInference(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'cot_inference':
         rag_model = CoTInference(args, device)
     elif args.rag_method == "cot_single_retrieval":
@@ -267,8 +267,8 @@ def subsample_generation(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     # parser.add_argument('--model_name_or_path', type=str, default="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo")
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
@@ -303,7 +303,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
+    parser.add_argument('--rag_method', type=str, default='direct_inference', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot',
         'flare', 'dragin',
@@ -348,10 +348,10 @@ if __name__ == "__main__":
     ### === Run Steps ============================
     set_seed(args.seed)
     # rag_generation(args)
-    merge_result_files(args)
+    # merge_result_files(args)
     # get_num_retrieval(args)
     # evaluate(args)
-    # subsample_generation(args)
+    subsample_generation(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py

@@ -104,6 +104,47 @@ class LLMGenerator:
         
         return output_, output_text
     
+    # 
+    def generate_batch(self,
+        messages,
+        num_return:int = 5,
+        max_new_tokens = 1024,
+        temperature:float = 1.0,
+        do_sample:bool = True
+    ):    
+        if self.tokenizer.chat_template:
+            input_prompt = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=False
+            )
+        
+        inputs = self.tokenizer(input_prompt, return_tensors='pt').to(self.generator.device)
+        input_ids = inputs["input_ids"]
+        batch_size = input_ids.shape[0]
+        
+        with torch.no_grad():
+            model_output = self.generator.generate(
+                **inputs,
+                return_dict_in_generate=True,
+                output_logits=True,
+                max_new_tokens=max_new_tokens,
+                num_return_sequences=num_return,
+                pad_token_id=self.tokenizer.eos_token_id,
+                temperature=temperature,
+                do_sample=do_sample,
+            )
+            all_generated = model_output.sequences[:, input_ids.shape[1]:]  # strip prompt
+
+            # Group into batches
+            grouped = all_generated.view(batch_size, num_return, -1)
+            generated_texts = [
+                self.tokenizer.batch_decode(group, skip_special_tokens=True)
+                for group in grouped
+            ][0]
+        
+        return generated_texts
+    
     def generate_with_scores(self,
         messages,
         stopping_criteria=None,
