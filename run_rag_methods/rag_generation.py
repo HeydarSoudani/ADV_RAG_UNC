@@ -104,7 +104,7 @@ def rag_generation(args):
     if args.rag_method == 'direct_inference':
         rag_model = DirectInference(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'cot_inference':
-        rag_model = CoTInference(args, device)
+        rag_model = CoTInference(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == "cot_single_retrieval":
         rag_model = CoTSingleRAG(args, device)
     elif args.rag_method == "fix_sentence_retrieval":
@@ -139,7 +139,7 @@ def rag_generation(args):
             inference_results_file_ranked = f"{args.output_dir}/inference_results_rank{accelerator.process_index}.jsonl"
         with open(inference_results_file_ranked, 'w') as res_f:
             for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 30:
+                # if i == 10:
                 #     break
                 qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
                 question = question.strip()
@@ -231,7 +231,7 @@ def subsample_generation(args):
                     qids.append(match.group(1))
         return qids
 
-    sample_size = 500
+    sample_size = 125
     src_file = args.inference_results_file
     
     # Subsampling qids
@@ -303,7 +303,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='direct_inference', choices=[
+    parser.add_argument('--rag_method', type=str, default='cot_inference', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot',
         'flare', 'dragin',

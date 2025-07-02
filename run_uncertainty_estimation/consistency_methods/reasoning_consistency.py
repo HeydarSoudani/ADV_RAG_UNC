@@ -9,7 +9,7 @@ class ReasoningConsistency:
         self.args = args
         self.rag_model = rag_model
     
-    def get_masked_traces(self, qid, question, trace):
+    def get_masked_traces(self, qid, question, prediction, trace):
         
         if self.args.n_generations == 1:
             interval = 0
@@ -18,9 +18,8 @@ class ReasoningConsistency:
             assert self.args.mask_right_boundary >= self.args.mask_left_boundary, f"right_boundary: {self.args.mask_right_boundary} < left_boundary: {self.args.mask_left_boundary}"
             interval = (self.args.mask_right_boundary - self.args.mask_left_boundary) / (self.args.n_generations - 1)
         
-        # Create partial think
+        #! 1) Create partial think
         last_think = trace[-1].get('think', '')
-        
         if last_think:
             words_in_last_think = last_think.split(" ")
             mask_len = len(words_in_last_think)
@@ -41,7 +40,7 @@ class ReasoningConsistency:
             new_trace[-1]['think'] = masked_last_think
             masked_traces_.append(new_trace)
         
-        # Generate rest
+        #! 2) Generate rest
         answer_output_list, masked_traces = [], []
         for partial_trace in masked_traces_: 
             last_think_first_part = partial_trace[-1].get('think', '')

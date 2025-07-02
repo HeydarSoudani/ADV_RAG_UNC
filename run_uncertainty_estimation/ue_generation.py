@@ -81,6 +81,8 @@ def ue_generation(args):
     # -
     if args.rag_method == 'direct_inference':
         rag_model = DirectInference(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'cot_inference':
+        rag_model = CoTInference(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == "fix_sentence_retrieval":
         rag_model = FixSentenceRAG(args, device)
     elif args.rag_method == "fix_length_retrieval":
@@ -92,7 +94,7 @@ def ue_generation(args):
     elif args.rag_method == 'dragin':
         rag_model = DRAGIN_RAG(args, device)
     elif args.rag_method == 'self_ask':
-        rag_model = SelfAsk_RAG(args, device)
+        rag_model = SelfAsk_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'react':
         rag_model = ReAct_RAG(args, device)
     elif args.rag_method == 'search_o1':
@@ -148,21 +150,16 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 1:
+                # if i == 5:
                 #     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
                 ### --- 1) Generate output list
                 # TODO: if exists ... (for the case of adding new UE method)
-                # For SearchR1
                 masked_traces, masked_traces_text, final_answer_list = consistency_model.get_masked_traces(qid, user_query, prediction, trace)
                 context = passages2string(get_unique_docs(masked_traces))
-                
-                # For Self-Ask
-                # TODO: ...
-                
-                
+            
                 ### --- 2) Calculate UE scores
                 ue_scores = uncertainty_estimator_model.estimate(
                     user_query,
@@ -171,7 +168,6 @@ def ue_generation(args):
                     input_prompt_texts = masked_traces_text,
                     generated_output_texts = final_answer_list
                 )
-                # print(ue_scores)
                 
                 ### --- 3) Print in output files 
                 cons_item = {
@@ -334,16 +330,16 @@ def correctness_evaluation_mv(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
-    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='2wikimultihopqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -372,7 +368,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
+    parser.add_argument('--rag_method', type=str, default='cot_inference', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_sentence_retrieval', 'fix_length_retrieval', 'ircot', 'flare', 'dragin',
         'react', 'self_ask', 'search_o1', 'search_r1',
@@ -380,7 +376,7 @@ if __name__ == "__main__":
     ])
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='reasoning_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
@@ -422,9 +418,9 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    # ue_generation(args)
-    merge_result_files(args)
-    evaluation_correlation(args)
+    ue_generation(args)
+    # merge_result_files(args)
+    # evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_generation.py

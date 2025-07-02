@@ -9,7 +9,12 @@
 
 
 SYSTEM_PROMPT_DIRECT = 'You are a helpful assistant. Provide only SHORT form answers, NOT complete sentence, without any additional text or explanation.'
-SYSTEM_PROMPT_COT = 'You serve as an intelligent assistant, skilled at guiding users through complex, multi-step reasoning to answer challenging questions. This task is illustrated through demonstrations, each consisting of a question followed by a complete reasoning process. Your task is to generate the full chain of reasoning steps all at once. If you reach what you believe to be the final step, start with "So the answer is:".'
+SYSTEM_PROMPT_COT = """You serve as an intelligent assistant, skilled at guiding users through complex, multi-step reasoning to answer challenging questions. 
+This task is illustrated through demonstrations, each consisting of a question followed by a complete reasoning process.
+Your task is to generate the full chain of reasoning steps all at once. 
+If you reach what you believe to be the final step, start with "So the answer is:".
+After "So the answer is:", please provide the final answer in short form only — not a full sentence — and do not include any extra text or explanation.
+"""
 SYSTEM_PROMPT_IRCOT = 'You serve as an intelligent assistant, adept at facilitating users through complex, multi-hop reasoning across multiple documents. This task is illustrated through demonstrations, each consisting of a document set paired with a relevant question and its multi-hop reasoning thoughts. Your task is to generate one thought for current step, DON\'T generate the whole thoughts at once! If you reach what you believe to be the final step, start with "So the answer is:".'
 SYSTEM_PROMPT_DRAGIN = "You are a helpful assistant. Strictly follow the format of the provided examples. DO NOT repeat the question. DO NOT add explanations, introductory phrases, or extra text. ONLY generate the final answer in the exact format shown in the examples."
 

@@ -266,7 +266,7 @@ class CriticalThinkGenerator:
     def extract_tag_content(self, text, tag):
         pattern = re.compile(fr"<{tag}>(.*?)</{tag}>", re.DOTALL)
         matches = pattern.findall(text)
-        return matches if matches else None
+        return matches[0] if matches else None
 
     def get_instruction(self, original_search_query, n=5):
         input_text = ''
@@ -372,8 +372,8 @@ class CriticalThinkGenerator:
         output_texts = self.generate_batch(input_prompt, num_return=repeat, temperature=1.0)
         thinks, queries = [], []
         for output_text in output_texts:
-            critical_thinking = self.extract_tag_content(output_text, "critical_rethinking")[0]
-            critical_query = self.extract_tag_content(output_text, "search")[0]
+            critical_thinking = self.extract_tag_content(output_text, "critical_rethinking")
+            critical_query = self.extract_tag_content(output_text, "search")
             if critical_thinking and critical_query:
                 thinks.append(critical_thinking)
                 queries.append(critical_query)

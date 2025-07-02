@@ -187,7 +187,10 @@ class DirectInference(BasicRAG):
 
     # --
     def get_input_prompt_self_consistency(self, question, trace):
-        prompt_text = self.user_prompt_wo_context.format(examples=self.direct_examples_text, question=question)
+        prompt_text = self.user_prompt_wo_context.format(
+            examples=self.direct_examples_text,
+            question=question
+        )
         return prompt_text
         
     def partial_inference_self_consistency(self, question, trace):
@@ -201,13 +204,22 @@ class DirectInference(BasicRAG):
             num_return=self.args.n_generations,
             temperature=self.args.consistency_temperature
         )
-        
         return answer_list
 
 class CoTInference(BasicRAG):
-    def __init__(self, args, device):
-        super().__init__(args, device)
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        super().__init__(generation_model, generation_tokenizer, device, args)
         self.system_prompt = SYSTEM_PROMPT_COT
+        self.answer_template = '{answer}'
+    
+    def get_think_and_answer(self, text):
+        match = re.search(r'\s*So the answer is:\s*(.*)', text, re.IGNORECASE)
+        if match:
+            answer = match.group(1).strip()
+            thinking = text[:match.start()].strip()
+            return thinking, answer
+        else:
+            return text.strip(), None
     
     def inference(self, question):
         path = []
@@ -219,18 +231,60 @@ class CoTInference(BasicRAG):
             )}
         ]
         _, output_text = self.generator.generate(messages)
-        path.append({'search_query': question, 'docs': [], 'think': output_text})
+        think, pred_answer = self.get_think_and_answer(output_text)
+        path.append({'think': think, 'answer': pred_answer})
         
         # Regenerate the last sentence if it is needed
         if "So the answer is:" not in output_text:
             output_text = self.regenerate(self.system_prompt, question, [], path, with_context=False)
-            path.append({'think': f'So the answer is: {output_text}'})
             pred_answer = get_answer(output_text) if get_answer(output_text) else output_text
-        else:
-            pred_answer = get_answer(output_text)
+            path[-1]['answer'] = pred_answer
         
         return pred_answer, path
   
+    # --
+    def get_input_prompt_self_consistency(self, question, trace):
+        prompt_text = self.user_prompt_wo_context.format(
+            examples=self.cot_examples_text,
+            question=question
+        )
+        prompt_text += f"{trace[-1].get('think', '')}" + " So the answer is:"
+        return prompt_text
+        
+    def partial_inference_self_consistency(self, question, trace):
+        prompt_text = self.get_input_prompt_self_consistency(question, trace)
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": prompt_text}
+        ] 
+        answer_list = self.generator.generate_batch(
+            messages,
+            num_return=self.args.n_generations,
+            temperature=self.args.consistency_temperature
+        )
+        return answer_list
+    
+    def get_input_prompt_reasoning_consistency(self, question, trace):
+        prompt_text = self.user_prompt_wo_context.format(
+            examples=self.cot_examples_text,
+            question=question
+        )
+        # prompt_text += f"{ trace[-1]['think']}"
+        return prompt_text 
+        
+    def partial_inference_reasoning_consistency(self, input_prompt_text):
+        messages = [{"role": "user", "content": input_prompt_text}]
+        _, output_text = self.generator.generate(messages, temperature=self.args.consistency_temperature)
+        think, pred_answer = self.get_think_and_answer(output_text)
+        
+        if "So the answer is:" not in output_text:
+            input_prompt_text_ = input_prompt_text + f" {think} So the answer is:"
+            messages = [{"role": "user", "content": input_prompt_text_}]
+            _, output_text = self.generator.generate(messages, temperature=self.args.consistency_temperature)
+            pred_answer = get_answer(output_text) if get_answer(output_text) else output_text
+            
+        return think, pred_answer
+
 class CoTSingleRAG(BasicRAG):
     def __init__(self, args, device):
         super().__init__(args, device)
@@ -1439,7 +1493,6 @@ If you find no further external knowledge needed, you can directly provide the a
             prompt_text += f"<search> {step['search_query']} </search>\n"
             prompt_text += f"<information> {passages2string(step['docs'])} </information>\n\n"
         # prompt_text += f"<think> {trace[-1]['think']} "
-        
         return prompt_text 
         
     def partial_inference_reasoning_consistency(self, input_prompt_text):
@@ -1449,16 +1502,11 @@ If you find no further external knowledge needed, you can directly provide the a
             self.generator.searchr1_answer_stopping_criteria,
             temperature=self.args.consistency_temperature
         )
-        
         answer_ = self.get_answer(output_text)
         answer = answer_.strip() if answer_ else ''
         think_ = self.get_think(output_text)
         think = think_.strip() if think_ else ''
         return think, answer
-        
-        # partial_think_ = self.get_partial_think(output_text)
-        # partial_think = partial_think_.strip() if partial_think_ else ''
-        # return partial_think, answer
         
     def partial_inference_rag_consistency(self, question, generated_trace):
         input_prompt = self.prompt.format(question=question)
