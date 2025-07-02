@@ -30,7 +30,6 @@ class ReasoningConsistency:
                 prefix_part_num_words = math.ceil(mask_len * prefix_part_ratio) + 1
                 prefix_part_str = " ".join(words_in_last_think[:prefix_part_num_words])
                 masked_last_thinks.append(prefix_part_str)
-            
         else:
             masked_last_thinks = [' ']*self.args.n_generations
         
@@ -47,15 +46,14 @@ class ReasoningConsistency:
             input_prompt_text = self.rag_model.get_input_prompt_reasoning_consistency(question, partial_trace)
             last_think_second_part, final_ans = self.rag_model.partial_inference_reasoning_consistency(input_prompt_text)
             
-            new_trace = trace
+            new_trace = copy.deepcopy(trace)
             new_trace[-1]['think'] = f"{last_think_first_part.strip()} {last_think_second_part.strip()}".strip()
             new_trace[-1]['answer'] = final_ans
             masked_traces.append(new_trace)
             answer_output_list.append(final_ans)
         
-        
         masked_traces_text = [
-            self.rag_model.get_input_prompt_self_consistency(question, masked_trace)
+            self.rag_model.get_input_prompt_self_consistency(question, masked_trace) + f"{masked_trace[-1]['think']}"
             for masked_trace in masked_traces
         ]
         

@@ -914,6 +914,7 @@ class SelfAsk_RAG(BasicRAG):
         self.single_hop = False
         self.system_prompt = SELF_ASK_PROMPT_MULTI_HOP
         self.FOLLOW_UP_PATTERN = r"Follow up:.*\n"
+        self.answer_template = '{answer}'
     
     def documents2string(self, retrieval_result):
         format_reference = ""
@@ -932,7 +933,7 @@ class SelfAsk_RAG(BasicRAG):
         return ""
         
     def extract_intermediate(self, text: str) -> str:
-        match = re.search(r'(.*?)(?:\nFollow up:|\nSo the final answer is:)', text, re.DOTALL)
+        match = re.search(r'(.*?)(?:Follow up:|So the final answer is:)', text, re.DOTALL)
         if match:
             return match.group(1).strip()
         return ""
@@ -948,7 +949,8 @@ class SelfAsk_RAG(BasicRAG):
         return pred
 
     def inference(self, question):
-        # follow_ups = "No." if self.single_hop else "Yes."
+        path, text = [], ""
+        
         # Initial retrieval
         search_query = question
         cur_search_docs = self.retriever.search(search_query)
@@ -960,30 +962,31 @@ class SelfAsk_RAG(BasicRAG):
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": user_input_prompt}
         ]
+        path.append({'think': '', 'search_query': search_query, 'docs': cur_search_docs})
 
-        path, text = [], ""
         for idx in range(self.args.max_iter):
             output, output_text = self.generator.generate(messages, self.generator.selfask_stopping_criteria)
-            intermediate_ans = self.extract_intermediate(output_text)
-            path.append({'search_query': search_query, 'docs': cur_search_docs, 'think': intermediate_ans})
-                
+            
             if ("So the final answer is:" in output_text):
                 text += output_text
                 break
-            
-            if intermediate_ans:
-                text += f"{intermediate_ans}\n"
-        
             if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.args.max_iter):
                 break # Don't perform another retrieval or prompt construction
         
+            intermediate_ans = self.extract_intermediate(output_text)
             search_query = self.extract_follow_up(output_text)
-            if search_query:
-                cur_search_docs = self.retriever.search(search_query)
-                text += f"Follow up: {search_query}\nIntermediate answer: "
-            
+            cur_search_docs = self.retriever.search(search_query) if search_query else []
             tmp_docs = [doc for step in path for doc in step['docs']] + cur_search_docs
             unq_tmp_doc = self.get_unique_docs(tmp_docs)
+            
+            path.append({
+                'think': intermediate_ans,
+                'search_query': search_query,
+                'docs': cur_search_docs
+            })
+            
+            text += f"{intermediate_ans}\nFollow up: {search_query}\nIntermediate answer: "
+            
             user_input_prompt = self.user_prompt_self_ask.format(
                 documents = self.documents2string(unq_tmp_doc),
                 question=question
@@ -994,8 +997,8 @@ class SelfAsk_RAG(BasicRAG):
             ]
         
         # Regenerate the last sentence if it is needed
-        if "So the final answer is:" not in text:
-            text += "So the final answer is: "
+        if "So the final answer is:" not in output_text:
+            text += f"{output_text}. So the final answer is: "
             
             tmp_docs = [doc for step in path for doc in step['docs']]
             unq_tmp_doc = self.get_unique_docs(tmp_docs)
@@ -1008,16 +1011,78 @@ class SelfAsk_RAG(BasicRAG):
                 {"role": "user", "content": user_input_prompt}
             ]
             _, output_text = self.generator.generate(messages)
-            pred_answer = self.extract_final_answer(output_text) if self.extract_final_answer(output_text) else output_text       
-            path.append({'think': f'So the final answer is: {output_text}'})
-        
+            pred_answer = self.extract_final_answer(output_text) if self.extract_final_answer(output_text) else output_text
+            path.append({'think': output_text, 'answer': pred_answer})
+            
         else:
-            pred_answer = self.extract_final_answer(text)
-            path.append({'think': f'So the final answer is: {pred_answer}'})
+            intermediate_ans = self.extract_intermediate(output_text)
+            pred_answer = self.extract_final_answer(output_text)
+            path.append({'think': intermediate_ans, 'answer': pred_answer})
 
         return pred_answer, path
 
-    def inference_with_partial_trace(self, question, generated_trace):
+    # --
+    def get_input_prompt_self_consistency(self, question, trace):
+        all_docs = [doc for step in trace[:-1] for doc in step['docs']]
+        unq_docs = self.get_unique_docs(all_docs)
+        prompt_text = self.user_prompt_self_ask.format(
+            documents = self.documents2string(unq_docs),
+            question = question
+        )
+        prompt_text += f"Follow up: {trace[1].get('search_query', '')}\n"
+        for step in trace[2:-1]:
+            prompt_text += f"Intermediate answer: {step.get('think', '')}\n"
+            prompt_text += f"Follow up: {step.get('search_query', '')}\n"
+        prompt_text += f"Intermediate answer: {trace[-1].get('think', '')}\n"
+        prompt_text += f"So the final answer is: "
+        
+        return prompt_text
+
+    def partial_inference_self_consistency(self, question, trace):
+        prompt_text = self.get_input_prompt_self_consistency(question, trace)
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": prompt_text}
+        ]
+        answer_list = self.generator.generate_batch(
+            messages,
+            num_return=self.args.n_generations,
+            temperature=self.args.consistency_temperature
+        )
+        return answer_list
+    
+    def get_input_prompt_reasoning_consistency(self, question, trace):
+        all_docs = [doc for step in trace[:-1] for doc in step['docs']]
+        unq_docs = self.get_unique_docs(all_docs)
+        prompt_text = self.user_prompt_self_ask.format(
+            documents = self.documents2string(unq_docs),
+            question = question
+        )
+        prompt_text += f"Follow up: {trace[1].get('search_query', '')}\n"
+        for step in trace[2:-1]:
+            prompt_text += f"Intermediate answer: {step.get('think', '')}\n"
+            prompt_text += f"Follow up: {step.get('search_query', '')}\n"
+        prompt_text += f"Intermediate answer: "
+        return prompt_text
+    
+    def partial_inference_reasoning_consistency(self, input_prompt_text):
+        messages = [{"role": "user", "content": input_prompt_text}]
+        _, output_text = self.generator.generate(messages, temperature=self.args.consistency_temperature)
+        intermediate_ans = self.extract_intermediate(output_text) if self.extract_intermediate(output_text) else output_text
+        pred_answer = self.extract_final_answer(output_text) if self.extract_final_answer(output_text) else output_text
+
+        if "So the final answer is:" not in output_text:
+            prompt_text = input_prompt_text + f"{output_text}. So the final answer is: "
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": prompt_text}
+            ]
+            _, output_text = self.generator.generate(messages)
+            pred_answer = self.extract_final_answer(output_text) if self.extract_final_answer(output_text) else output_text
+        
+        return intermediate_ans, pred_answer
+
+    def partial_inference_rag_consistency(self, question, generated_trace):
         pass
 
 class ReAct_RAG(BasicRAG):
@@ -1428,10 +1493,7 @@ If you find no further external knowledge needed, you can directly provide the a
         path, cnt = [], 0
         while True:
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
-            
-            # print(self.generator.tokenizer.decode(output_, skip_special_tokens=True))
-            # # print(output_text)
-            # print('----')
+    
             if output_[-1].item() in self.generator.curr_eos:
                 break
         
@@ -1552,8 +1614,18 @@ If you find no further external knowledge needed, you can directly provide the a
         return pred_answer, path
     
         
-        
-       
+
+
+
+
+
+
+# intermediate_ans = self.extract_intermediate(output_text)
+# path.append({'search_query': search_query, 'docs': cur_search_docs, 'think': intermediate_ans})
+# if intermediate_ans:
+#     text += f"{intermediate_ans}\n"        
+    
+   
 # followup_query = output_text.split("Intermediate answer:")[0]
 # text += followup_query
 # stop_condition = "Follow up:"

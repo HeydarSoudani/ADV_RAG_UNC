@@ -139,7 +139,7 @@ def ue_generation(args):
         cons_f = open(consistency_results_file_ranked, 'w', encoding='utf-8')
 
         trace_f = None
-        write_traces = args.consistency_method == 'rag_consistency'
+        write_traces = args.consistency_method != 'self_consistency'
         if write_traces:
             masked_traces_results_file_ranked = (
                 f"{args.output_dir}/{args.consistency_method}_masked_traces_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl"
@@ -150,7 +150,7 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 5:
+                # if i == 10:
                 #     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
@@ -223,7 +223,7 @@ def merge_result_files(args):
             os.remove(shard_file)
             print(f"Deleted shard file: {shard_file}")
          
-    write_traces = args.consistency_method == 'rag_consistency'   
+    write_traces = args.consistency_method != 'self_consistency'   
     if write_traces:
         masked_traces_results_file_ranked = (
             f"{args.output_dir}/{args.consistency_method}_masked_traces_results_th{args.hallucination_threshold}_rank*.jsonl"
@@ -368,7 +368,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='cot_inference', choices=[
+    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_sentence_retrieval', 'fix_length_retrieval', 'ircot', 'flare', 'dragin',
         'react', 'self_ask', 'search_o1', 'search_r1',
@@ -404,12 +404,12 @@ if __name__ == "__main__":
     if args.rag_method in ['flare', 'dragin']:
         args.inference_results_file = f"{args.output_dir}/inference_results_th{args.hallucination_threshold}.jsonl"
         args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}.jsonl"
-        if args.consistency_method == "rag_consistency":
+        if args.consistency_method != "self_consistency":
             args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces_th{args.hallucination_threshold}.jsonl"
     else:
         args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
         args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results.jsonl"
-        if args.consistency_method == "rag_consistency":
+        if args.consistency_method != "self_consistency":
             args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces.jsonl"
         
     # === Prompt files =============
@@ -418,9 +418,9 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    ue_generation(args)
-    # merge_result_files(args)
-    # evaluation_correlation(args)
+    # ue_generation(args)
+    merge_result_files(args)
+    evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_generation.py
