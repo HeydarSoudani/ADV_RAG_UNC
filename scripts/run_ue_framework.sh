@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus=4
+#SBATCH --gpus=3
 #SBATCH --cpus-per-task=4
-#SBATCH --partition=gpu_h100
-#SBATCH --time=0:40:00
-#SBATCH --mem=80GB
+#SBATCH --partition=gpu_a100
+#SBATCH --time=2:00:00
+#SBATCH --mem=60GB
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -16,7 +16,7 @@ module load Python/3.12.3-GCCcore-13.3.0
 model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 # model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
 secondary_model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="bamboogle"
+dataset="popqa"
 subsec="test"
 fraction_of_data_to_use=1.0
 retriever_name="rerank_l6"

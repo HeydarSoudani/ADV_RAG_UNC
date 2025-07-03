@@ -1071,19 +1071,27 @@ class SelfAsk_RAG(BasicRAG):
     
     def partial_inference_reasoning_consistency(self, input_prompt_text):
         messages = [{"role": "user", "content": input_prompt_text}]
-        _, output_text = self.generator.generate(messages, temperature=self.args.consistency_temperature)
-        intermediate_ans = self.extract_intermediate(output_text) if self.extract_intermediate(output_text) else output_text
-        pred_answer = self.extract_final_answer(output_text) if self.extract_final_answer(output_text) else output_text
+        _, output_text = self.generator.generate(
+            messages,
+            self.generator.selfask_stopping_criteria, 
+            temperature=self.args.consistency_temperature
+        )
 
         if "So the final answer is:" not in output_text:
-            prompt_text = input_prompt_text + f"{output_text}. So the final answer is: "
+            intermediate_ans = output_text
+            
+            prompt_text = input_prompt_text + f"{intermediate_ans}\nSo the final answer is: "
             messages = [
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": prompt_text}
             ]
             _, output_text = self.generator.generate(messages)
             pred_answer = self.extract_final_answer(output_text) if self.extract_final_answer(output_text) else output_text
-        
+        else:
+            intermediate_ans = self.extract_intermediate(output_text)
+            pred_answer = self.extract_final_answer(output_text)
+            
+        # print(intermediate_ans)
         return intermediate_ans, pred_answer
 
     def partial_inference_rag_consistency(self, question, generated_trace):
@@ -1172,7 +1180,6 @@ class SelfAsk_RAG(BasicRAG):
         # print('----')
         
         return pred_answer, path
-        
 
 class ReAct_RAG(BasicRAG):
     # Ref: https://github.com/ysymyth/ReAct/blob/master/hotpotqa.ipynb
