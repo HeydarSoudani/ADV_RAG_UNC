@@ -206,7 +206,6 @@ def ue_generation(args):
                 trace_f.close()
 
 def merge_result_files(args):
-    
     consistency_results_file_ranked = (
         f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}_rank*.jsonl"
         if args.rag_method in ['flare', 'dragin'] 
@@ -374,9 +373,10 @@ if __name__ == "__main__":
         'react', 'self_ask', 'search_o1', 'search_r1',
         'RASPberry'
     ])
+    parser.add_argument('--max_iter', type=int, default=5)
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='reasoning_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)

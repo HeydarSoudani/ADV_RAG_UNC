@@ -23,7 +23,7 @@ retriever_name="rerank_l6"
 index_path="data/search_r1_files/bm25"
 retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
 rag_method="self_ask"
-consistency_method="reasoning_consistency"
+consistency_method="rag_consistency"
 run="run_4 (rag_methods_500)"
 n_generations=10
 

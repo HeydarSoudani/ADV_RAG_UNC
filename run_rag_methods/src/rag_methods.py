@@ -3,6 +3,7 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import re
+import copy
 import spacy
 import torch
 import requests
@@ -985,12 +986,15 @@ class SelfAsk_RAG(BasicRAG):
                 'docs': cur_search_docs
             })
             
-            text += f"{intermediate_ans}\nFollow up: {search_query}\nIntermediate answer: "
+            if idx == 0:
+                text += f"Follow up: {search_query}\nIntermediate answer: "
+            else:
+                text += f"{intermediate_ans}\nFollow up: {search_query}\nIntermediate answer: "
             
             user_input_prompt = self.user_prompt_self_ask.format(
                 documents = self.documents2string(unq_tmp_doc),
                 question=question
-            ) + f"\n{text}"
+            ) + text
             messages = [
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": user_input_prompt}
@@ -998,14 +1002,14 @@ class SelfAsk_RAG(BasicRAG):
         
         # Regenerate the last sentence if it is needed
         if "So the final answer is:" not in output_text:
-            text += f"{output_text}. So the final answer is: "
+            text += f"{output_text}.\nSo the final answer is: "
             
             tmp_docs = [doc for step in path for doc in step['docs']]
             unq_tmp_doc = self.get_unique_docs(tmp_docs)
             user_input_prompt = self.user_prompt_self_ask.format(
                 documents = self.documents2string(unq_tmp_doc),
                 question=question
-            ) + f"\n{text}"
+            ) + text
             messages = [
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": user_input_prompt}
@@ -1083,7 +1087,92 @@ class SelfAsk_RAG(BasicRAG):
         return intermediate_ans, pred_answer
 
     def partial_inference_rag_consistency(self, question, generated_trace):
-        pass
+        
+        # -- Generated path so far ---
+        all_docs = [doc for step in generated_trace for doc in step['docs']]
+        unq_docs = self.get_unique_docs(all_docs)
+        
+        text = f"Follow up: {generated_trace[1].get('search_query', '')}\n"
+        for step in generated_trace[2:]:
+            text += f"Intermediate answer: {step.get('think', '')}\n"
+            text += f"Follow up: {step.get('search_query', '')}\n"
+        text += f"Intermediate answer: "
+        
+        
+        user_input_prompt = self.user_prompt_self_ask.format(
+            documents = self.documents2string(unq_docs),
+            question = question
+        ) + text
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": user_input_prompt}
+        ]
+        
+        # print(user_input_prompt)
+        # print('-')
+        
+        # -- Generate the rest -------
+        path = []
+        for idx in range(self.args.max_iter):
+            output, output_text = self.generator.generate(messages, self.generator.selfask_stopping_criteria)
+            
+            if ("So the final answer is:" in output_text):
+                text += output_text
+                break
+            if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.args.max_iter):
+                break # Don't perform another retrieval or prompt construction
+        
+            intermediate_ans = self.extract_intermediate(output_text)
+            search_query = self.extract_follow_up(output_text)
+            cur_search_docs = self.retriever.search(search_query) if search_query else []
+            tmp_docs = [doc for step in path for doc in step['docs']] + all_docs + cur_search_docs
+            unq_tmp_doc = self.get_unique_docs(tmp_docs)
+            
+            path.append({
+                'think': intermediate_ans,
+                'search_query': search_query,
+                'docs': cur_search_docs
+            })
+            
+            text += f"{intermediate_ans}\nFollow up: {search_query}\nIntermediate answer: "
+            user_input_prompt = self.user_prompt_self_ask.format(
+                documents = self.documents2string(unq_tmp_doc),
+                question=question
+            ) + text
+            # print(user_input_prompt)
+            # print('-')
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": user_input_prompt}
+            ]
+        
+        if "So the final answer is:" not in output_text:
+            text += f"{output_text}\nSo the final answer is: "
+            tmp_docs = [doc for step in path for doc in step['docs']] + all_docs
+            unq_tmp_doc = self.get_unique_docs(tmp_docs)
+            user_input_prompt = self.user_prompt_self_ask.format(
+                documents = self.documents2string(unq_tmp_doc),
+                question=question
+            ) + text
+            # print(user_input_prompt)
+            # print('-')
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": user_input_prompt}
+            ]
+            _, output_text = self.generator.generate(messages)
+            pred_answer = self.extract_final_answer(output_text) if self.extract_final_answer(output_text) else output_text
+            path.append({'think': output_text, 'answer': pred_answer})
+        
+        else:
+            intermediate_ans = self.extract_intermediate(output_text)
+            pred_answer = self.extract_final_answer(output_text)
+            path.append({'think': intermediate_ans, 'answer': pred_answer})
+        
+        # print('----')
+        
+        return pred_answer, path
+        
 
 class ReAct_RAG(BasicRAG):
     # Ref: https://github.com/ysymyth/ReAct/blob/master/hotpotqa.ipynb
@@ -1586,10 +1675,7 @@ If you find no further external knowledge needed, you can directly provide the a
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
             if output_[-1].item() in self.generator.curr_eos:
                 break
-        
-            # print(output_text)
-            # print('--')
-        
+
             tmp_query = self.get_query(output_text)
             if tmp_query:
                 search_docs = self.retriever.search(tmp_query)

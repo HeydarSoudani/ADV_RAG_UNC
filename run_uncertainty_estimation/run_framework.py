@@ -54,6 +54,7 @@ if __name__ == "__main__":
         'react', 'self_ask', 'search_o1', 'search_r1',
         'RASPberry'
     ])
+    parser.add_argument('--max_iter', type=int, default=5)
     
     # Consistency Generation Methods (answer list) ---
     parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[

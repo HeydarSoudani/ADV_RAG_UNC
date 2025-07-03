@@ -49,8 +49,8 @@ class RagConsistency:
         self.answer_validator = AnswerValidator(args, self.secondary_model, self.secondary_tokenizer)
     
     def get_masked_traces(self, qid, question, prediction, trace):
-        actions = ['query_paraphrasing', 'adding_critical_thought', 'answer_validation'] #  'answer_validation', 'doc_shuffling'
-        # actions = ['answer_validation']
+        # actions = ['query_paraphrasing', 'adding_critical_thought', 'answer_validation'] #  'answer_validation', 'doc_shuffling'
+        actions = ['answer_validation']
         
         masked_traces, answer_output_list = [], []
         if self.args.rag_method == 'search_r1':
