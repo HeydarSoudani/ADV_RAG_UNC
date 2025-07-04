@@ -1589,10 +1589,26 @@ class SearchO1_RAG(BasicRAG):
 
         return pred_answer, path
 
+    # --
+    def get_input_prompt_self_consistency(self, question, trace):
+        pass
+    
+    def partial_inference_self_consistency(self, question, trace):
+        pass
+    
+    def get_input_prompt_reasoning_consistency(self, question, trace):
+        pass
+
+    def partial_inference_reasoning_consistency(self, input_prompt_text):
+        pass
+
+    def partial_inference_rag_consistency(self, question, generated_trace):
+        pass
+
 class SearchR1_RAG(BasicRAG):
     def __init__(self, generation_model, generation_tokenizer, device, args):
         super().__init__(generation_model, generation_tokenizer, device, args)
-        self.curr_search_template = '\n\n{output_text}<information>{search_results}</information>\n\n'
+        self.curr_step_template = '\n\n{output_text}<information>{search_results}</information>\n\n'
         self.answer_template = '<answer>{answer}</answer>'
         self.prompt = """Answer the given question. \
 You must conduct reasoning inside <think> and </think> first every time you get new information. \
@@ -1649,7 +1665,7 @@ If you find no further external knowledge needed, you can directly provide the a
         input_prompt = self.prompt.format(question=question)
         messages = [{"role": "user", "content": input_prompt}]
         
-        path, cnt = [], 0
+        path = []
         while True:
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
     
@@ -1668,10 +1684,9 @@ If you find no further external knowledge needed, you can directly provide the a
                 'search_query': tmp_query,
                 'docs': search_docs
             })
-            search_text = self.curr_search_template.format(output_text=output_text, search_results=search_results)
+            search_text = self.curr_step_template.format(output_text=output_text, search_results=search_results)
             input_prompt += search_text
             messages = [{"role": "user", "content": input_prompt}]
-            cnt += 1
 
         one_step_think = self.get_think(output_text)
         pred_answer = self.get_answer(output_text)
@@ -1732,7 +1747,7 @@ If you find no further external knowledge needed, you can directly provide the a
     def partial_inference_rag_consistency(self, question, generated_trace):
         input_prompt = self.prompt.format(question=question)
         generated_trace_text = ''.join(
-            self.curr_search_template.format(
+            self.curr_step_template.format(
                 output_text=f"<think> {step['think']} </think>\n<search> {step['search_query']} </search>\n",
                 search_results=passages2string(step['docs'])
             ) for step in generated_trace
@@ -1740,7 +1755,7 @@ If you find no further external knowledge needed, you can directly provide the a
         input_prompt += generated_trace_text
         messages = [{"role": "user", "content": input_prompt}]
         
-        path, cnt = [], 0
+        path = []
         while True:
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
             if output_[-1].item() in self.generator.curr_eos:
@@ -1758,10 +1773,9 @@ If you find no further external knowledge needed, you can directly provide the a
                 'search_query': tmp_query,
                 'docs': search_docs
             })
-            search_text = self.curr_search_template.format(output_text=output_text, search_results=search_results)
+            search_text = self.curr_step_template.format(output_text=output_text, search_results=search_results)
             input_prompt += search_text
             messages = [{"role": "user", "content": input_prompt}]
-            cnt += 1
 
         one_step_think = self.get_think(output_text)
         pred_answer = self.get_answer(output_text)
@@ -1769,11 +1783,201 @@ If you find no further external knowledge needed, you can directly provide the a
             
         return pred_answer, path
     
+class ReSearch_RAG(BasicRAG):
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        super().__init__(generation_model, generation_tokenizer, device, args)
+        self.curr_step_template = '\n{output_text}<result>{search_results}</result>\n'
+        self.answer_template = '<answer> \boxed{answer} </answer>'
+       
+        # Prompt Template For Base Model
+        self.re_search_template = """A conversation between User and Assistant. \
+The user asks a question, and the assistant solves it. \
+The assistant first thinks about the reasoning process in the mind and then provides the user with the answer. \
+During thinking, the assistant can invoke the wikipedia search tool to search for fact information about specific topics if needed. \
+The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags respectively, \
+and the search query and result are enclosed within <search> </search> and <result> </result> tags respectively. \
+For example, <think> This is the reasoning process. </think> <search> search query here </search> <result> search result here </result> \
+<think> This is the reasoning process. </think> <answer> The final answer is \\[ \\boxed{{answer here}} \\] </answer>. \
+In the last part of the answer, the final exact answer is enclosed within \\boxed{{}} with latex format. \
+User: {prompt}. Assistant:"""
+
+        # System Prompt Template For Instruction-Tuned Model
+        self.re_search_template_sys = """You are a helpful assistant that can solve the given question step by step with the help of the wikipedia search tool. \
+Given a question, you need to first think about the reasoning process in the mind and then provide the answer. \
+During thinking, you can invoke the wikipedia search tool to search for fact information about specific topics if needed. \
+The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags respectively, \
+and the search query and result are enclosed within <search> </search> and <result> </result> tags respectively. \
+For example, <think> This is the reasoning process. </think> <search> search query here </search> <result> search result here </result> \
+<think> This is the reasoning process. </think> <answer> The final answer is \\[ \\boxed{answer here} \\] </answer>. \
+In the last part of the answer, the final exact answer is enclosed within \\boxed{} with latex format."""
+      
+    def get_think(self, text):
+        pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+        matches = pattern.findall(text)
+        return " ".join(m.strip() for m in matches) if matches else None
+       
+    def get_query(self, text):
+        pattern = re.compile(r"<search>\s*search query:\s*(.*?)\s*</search>", re.DOTALL)
+        matches = pattern.findall(text)
+        if matches:
+            # return matches[-1]
+            return matches[0]
+        else:
+            return None
+       
+    def get_boxed_answer(self, text: str) -> str:
+        match = re.search(r"\\boxed\{(.*?)\}", text)
+        return match.group(1).strip() if match else None   
+    
+    def inference(self, question):
+        input_prompt = question
+        messages = [
+            {'role': 'system', 'content': self.re_search_template_sys},
+            {'role': 'user', 'content': input_prompt}
+        ]
         
+        path = []
+        while True:
+            output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
 
+            if output_[-1].item() in self.generator.curr_eos:
+                break
 
+            tmp_query = self.get_query(output_text)
+            if tmp_query:
+                search_docs = self.retriever.search(tmp_query)
+                search_results = passages2string(search_docs)
+            else:
+                search_docs, search_results = [], ''
+                
+            path.append({
+                'think': self.get_think(output_text),
+                'search_query': tmp_query,
+                'docs': search_docs
+            })
+            search_text = self.curr_step_template.format(output_text=output_text, search_results=search_results)
+            input_prompt += search_text
+            messages = [
+                {'role': 'system', 'content': self.re_search_template_sys},
+                {'role': 'user', 'content': input_prompt}
+            ]
+        
+        
+        one_step_think = self.get_think(output_text)
+        pred_answer = self.get_boxed_answer(output_text)
+        path.append({'think': one_step_think, 'answer': pred_answer})
+            
+        return pred_answer, path
 
+    # --
+    def get_input_prompt_self_consistency(self, question, trace):
+        prompt_text = f"{question}\n"
+        for step in trace[:-1]:
+            prompt_text += f"<think> {step['think']} </think>\n"
+            prompt_text += f"<search> search query: {step['search_query']} </search>\n"
+            prompt_text += f"<result> {passages2string(step['docs'])} </result>\n\n"
+        prompt_text += f"<think> {trace[-1]['think']} </think>\n"
+        prompt_text += f"<answer> "
+        
+        return prompt_text
+    
+    def partial_inference_self_consistency(self, question, trace):
+        input_prompt = self.get_input_prompt_self_consistency(question, trace)
+        messages = [
+            {'role': 'system', 'content': self.re_search_template_sys},
+            {'role': 'user', 'content': input_prompt}
+        ]
+        answer_list = self.generator.generate_batch(
+            messages,
+            num_return=self.args.n_generations,
+            temperature=self.args.consistency_temperature
+        )
+        answer_list_ = [self.get_boxed_answer(answer) for answer in answer_list]
+        
+        # answer_list_ = []
+        # for i in range(self.args.n_generations):
+        #     output_, output_text = self.generator.generate(
+        #         messages,
+        #         self.generator.searchr1_answer_stopping_criteria,
+        #         temperature=self.args.consistency_temperature
+        #     )
+        #     answer_ = self.get_boxed_answer(output_text)
+        #     answer = answer_.strip() if answer_ else ''
+        #     answer_list_.append(answer)
+        
+        return answer_list_
+    
+    def get_input_prompt_reasoning_consistency(self, question, trace):
+        prompt_text = f"{question}\n"
+        for step in trace[:-1]:
+            prompt_text += f"<think> {step['think']} </think>\n"
+            prompt_text += f"<search> search query: {step['search_query']} </search>\n"
+            prompt_text += f"<result> {passages2string(step['docs'])} </result>\n\n"
 
+        return prompt_text
+
+    def partial_inference_reasoning_consistency(self, input_prompt_text):
+        messages = [
+            {'role': 'system', 'content': self.re_search_template_sys},
+            {'role': 'user', 'content': input_prompt_text}
+        ]
+        _, output_text = self.generator.generate(
+            messages,
+            temperature=self.args.consistency_temperature
+        )
+        
+        think_ = self.get_think(output_text)
+        think = think_.strip() if think_ else ''
+        answer_ = self.get_boxed_answer(output_text)
+        answer = answer_.strip() if answer_ else ''
+
+        return think, answer
+
+    def partial_inference_rag_consistency(self, question, generated_trace):
+        
+        input_prompt = question
+        input_prompt += ''.join(
+            self.curr_step_template.format(
+                output_text=f"<think> {step['think']} </think>\n<search> search query: {step['search_query']} </search>\n",
+                search_results=passages2string(step['docs'])
+            ) for step in generated_trace
+        )
+        messages = [
+            {'role': 'system', 'content': self.re_search_template_sys},
+            {'role': 'user', 'content': input_prompt}
+        ]
+        
+        path = []
+        while True:
+            output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
+            if output_[-1].item() in self.generator.curr_eos:
+                break
+
+            tmp_query = self.get_query(output_text)
+            if tmp_query:
+                search_docs = self.retriever.search(tmp_query)
+                search_results = passages2string(search_docs)
+            else:
+                search_docs, search_results = [], ''
+                
+            path.append({
+                'think': self.get_think(output_text),
+                'search_query': tmp_query,
+                'docs': search_docs
+            })
+            search_text = self.curr_step_template.format(output_text=output_text, search_results=search_results)
+            input_prompt += search_text
+            messages = [
+                {'role': 'system', 'content': self.re_search_template_sys},
+                {'role': 'user', 'content': input_prompt}
+            ]
+        
+        one_step_think = self.get_think(output_text)
+        pred_answer = self.get_boxed_answer(output_text)
+        path.append({'think': one_step_think, 'answer': pred_answer})
+    
+        
+        return pred_answer, path
 
 
 

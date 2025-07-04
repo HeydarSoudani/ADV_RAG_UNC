@@ -101,6 +101,8 @@ def ue_generation(args):
         rag_model = SearchO1_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'search_r1':
         rag_model = SearchR1_RAG(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'research':
+        rag_model = ReSearch_RAG(generation_model, generation_tokenizer, device, args)
     else:
         raise NotImplementedError
     
@@ -330,15 +332,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default="agentrl/ReSearch-Qwen-7B-Instruct")
+    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_token', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -367,10 +370,11 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
+    parser.add_argument('--rag_method', type=str, default='research', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_sentence_retrieval', 'fix_length_retrieval', 'ircot', 'flare', 'dragin',
-        'react', 'self_ask', 'search_o1', 'search_r1',
+        'react', 'self_ask', 'search_o1',
+        'search_r1', 'research'
         'RASPberry'
     ])
     parser.add_argument('--max_iter', type=int, default=5)
@@ -418,9 +422,9 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    # ue_generation(args)
-    merge_result_files(args)
-    evaluation_correlation(args)
+    ue_generation(args)
+    # merge_result_files(args)
+    # evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_generation.py

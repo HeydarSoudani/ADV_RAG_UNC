@@ -51,7 +51,8 @@ if __name__ == "__main__":
     # RAG methods (input)
     parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
         'fix_sentence_retrieval', 'fix_length_retrieval', 'ircot', 'flare', 'dragin',
-        'react', 'self_ask', 'search_o1', 'search_r1',
+        'react', 'self_ask', 'search_o1',
+        'search_r1', 'research',
         'RASPberry'
     ])
     parser.add_argument('--max_iter', type=int, default=5)
