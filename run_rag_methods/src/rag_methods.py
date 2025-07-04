@@ -20,7 +20,7 @@ from run_rag_methods.src.templetes import (
     SELF_ASK_PROMPT_SINGLE_HOP, SELF_ASK_PROMPT_MULTI_HOP,
     REACT_INSTRUCTION,
     get_singleqa_search_o1_instruction, get_multiqa_search_o1_instruction,
-    get_task_instruction_openqa
+    get_task_instruction_openqa, get_webpage_to_reasonchain_instruction
 )
 from utils.general_utils import passages2string
 
@@ -1376,7 +1376,6 @@ class ReAct_RAG(BasicRAG):
 
     def retriever_search(self, search_query):
         search_docs = self.retriever.search(search_query)
-        
         self.page = ""
         for doc in search_docs:
             content = doc['contents']
@@ -1502,30 +1501,94 @@ class ReAct_RAG(BasicRAG):
         return pred_answer, path
 
 class SearchO1_RAG(BasicRAG):
-    def __init__(self, args, device):
-        super().__init__(args, device)
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        super().__init__(generation_model, generation_tokenizer, device, args)
         
         # Define special tokens
         self.BEGIN_SEARCH_QUERY = "<|begin_search_query|>"
         self.END_SEARCH_QUERY = "<|end_search_query|>"
         self.BEGIN_SEARCH_RESULT = "<|begin_search_result|>"
         self.END_SEARCH_RESULT = "<|end_search_result|>"
-
-        self.MAX_SEARCH_LIMIT = 5
-        if args.dataset in ['hotpotqa', 'musique', '2wikimultihopqa', 'bamboogle']:
-            self.MAX_SEARCH_LIMIT = 10
-            self.MAX_TURN = 15
-
+        self.MAX_SEARCH_LIMIT = 10
+        self.with_reason_in_documents = True
+        
+        # 
         if args.dataset in ['nq', 'triviaqa']:
             self.instruction = get_singleqa_search_o1_instruction(self.MAX_SEARCH_LIMIT)
         elif args.dataset in ['hotpotqa', 'musique', '2wikimultihopqa', 'bamboogle']:
             self.instruction = get_multiqa_search_o1_instruction(self.MAX_SEARCH_LIMIT)
 
-    def inference(self, question):
-        user_prompt = get_task_instruction_openqa(question)
-        prompt = [{"role": "user", "content": self.instruction + user_prompt}]
-        # TODO
+        # 
+        self.current_step_template = '{think}\n<|begin_search_query|>{search_query}<|end_search_query|>\n<|begin_search_result|>{search_result}<|end_search_result|>\n'
+
+    def get_reasoning_think(self, text: str) -> str:
+        pattern = re.compile(rf"(.*?){re.escape(self.BEGIN_SEARCH_QUERY)}", re.DOTALL)
+        matches = pattern.findall(text)
+        return matches[0] if matches else None
+
+    def get_search_query(self, text: str) -> str:
+        pattern = re.compile(rf"{re.escape(self.BEGIN_SEARCH_QUERY)}(.*?){re.escape(self.END_SEARCH_QUERY)}", re.DOTALL)
+        matches = pattern.findall(text)
+        return matches[0] if matches else None
     
+    def get_search_results(self, text: str) -> str:
+        match = re.search(r"\*\*Final Information\*\*\s*(.*)", text, re.DOTALL)
+        return match.group(1).replace("\n", " ").strip() if match else None
+    
+    def get_boxed_answer(self, text: str) -> str:
+        match = re.search(r"\\boxed\{(.*?)\}", text)
+        return match.group(1).strip() if match else None
+
+    def inference(self, question):
+        input_prompt = self.instruction + get_task_instruction_openqa(question)
+        messages = [{"role": "user", "content": input_prompt}]
+        
+        path = []
+        for idx in range(self.MAX_SEARCH_LIMIT):
+            # -- One step generation
+            output, output_text = self.generator.generate(messages, self.generator.searcho1_stopping_criteria)
+            
+            if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.MAX_SEARCH_LIMIT):
+                break # Don't perform another retrieval or prompt construction
+            
+            # -- Extract info
+            tmp_think = self.get_reasoning_think(output_text).replace("\n", ' ').replace("\n\n", ' ')
+            tmp_query = self.get_search_query(output_text)
+            if tmp_query:
+                search_docs = self.retriever.search(tmp_query)
+                docs_text = passages2string(search_docs)
+            else:
+                search_docs, docs_text = [], ''
+
+            # -- Save in the path
+            path.append({'think': tmp_think, 'search_query': tmp_query, 'docs': search_docs})
+            
+            # -- Reason-in-docs
+            if self.with_reason_in_documents:
+                prev_reasoning = ' '.join([step['think'] for step in path])
+                rid_input_prompt = get_webpage_to_reasonchain_instruction(prev_reasoning, tmp_query, docs_text)
+                rid_messages = [{"role": "user", "content": rid_input_prompt}]
+                _, rid_output_text = self.generator.generate(rid_messages)
+                rid_output_text_ = self.get_search_results(rid_output_text)
+                path[-1]['reason_in_docs'] = rid_output_text_
+                search_result_txt = rid_output_text_
+            else:
+                search_result_txt = docs_text
+            
+            # -- Create new input prompt
+            current_step_text = self.current_step_template.format(
+                think=tmp_think,
+                search_query=tmp_query,
+                search_result=search_result_txt
+            )
+            input_prompt += current_step_text
+            messages = [{"role": "user", "content": input_prompt}]
+
+        pred_answer = self.get_boxed_answer(output_text)
+        path.append({'think': output_text, 'answer': pred_answer})
+
+        return pred_answer, path
+
 class SearchR1_RAG(BasicRAG):
     def __init__(self, generation_model, generation_tokenizer, device, args):
         super().__init__(generation_model, generation_tokenizer, device, args)
@@ -1713,6 +1776,21 @@ If you find no further external knowledge needed, you can directly provide the a
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # intermediate_ans = self.extract_intermediate(output_text)
 # path.append({'search_query': search_query, 'docs': cur_search_docs, 'think': intermediate_ans})
 # if intermediate_ans:
@@ -1749,11 +1827,6 @@ If you find no further external knowledge needed, you can directly provide the a
 #     pred_answer = get_answer(text)
 
 # return pred_answer, path
-
-
-
-
-
 
 
 class FLARE_RAG_V2(BasicRAG):

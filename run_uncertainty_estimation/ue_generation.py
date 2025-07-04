@@ -98,7 +98,7 @@ def ue_generation(args):
     elif args.rag_method == 'react':
         rag_model = ReAct_RAG(args, device)
     elif args.rag_method == 'search_o1':
-        rag_model = SearchO1_RAG(args, device)
+        rag_model = SearchO1_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'search_r1':
         rag_model = SearchR1_RAG(generation_model, generation_tokenizer, device, args)
     else:

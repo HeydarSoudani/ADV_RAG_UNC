@@ -53,7 +53,7 @@ class LLMGenerator:
         self.curr_eos = [151645, 151643] # for Qwen2.5 series models
     
         
-        # For IRCoT
+        # IRCoT
         ircot_target_sequences = [".", " .", ".\n", " .\n", ".\n\n", " .\n\n", "\n", " \n", "\n\n", " \n\n"]
         self.ircot_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(ircot_target_sequences, self.tokenizer)])
         
@@ -65,13 +65,18 @@ class LLMGenerator:
         selfask_sequences = ["Context:", "#", "Intermediate answer:" , "Intermediate answer: ", "\nIntermediate answer:"]
         self.selfask_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(selfask_sequences, self.tokenizer)])
         
-        # For searchR1
+        # SearchR1
         searchr1_sequences = ["</search>", " </search>", "</search>\n", " </search>\n", "</search>\n\n", " </search>\n\n"]
         searchr1_answer_sequences = ["</answer>", " </answer>", "</answer>\n", " </answer>\n", "</answer>\n\n", " </answer>\n\n"]
         self.searchr1_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(searchr1_sequences, self.tokenizer)])
         self.searchr1_answer_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(searchr1_answer_sequences, self.tokenizer)])
         
-        # for 'react', 'self_ask', 'search_o1'
+        # SearchO1
+        searcho1_sequences = ["<|end_search_query|>", " <|end_search_query|>", "<|end_search_query|>\n", " <|end_search_query|>\n", "<|end_search_query|>\n\n", " <|end_search_query|>\n\n"]
+        searcho1_res_sequences = ["<|end_search_result|>", " <|end_search_result|>", "<|end_search_result|>\n", " <|end_search_result|>\n", "<|end_search_result|>\n\n", " <|end_search_result|>\n\n"]
+        self.searcho1_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(searcho1_sequences, self.tokenizer)])
+        
+        # for 'react'
     
     def generate(self,
         messages,

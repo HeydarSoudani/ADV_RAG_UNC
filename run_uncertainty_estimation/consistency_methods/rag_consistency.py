@@ -51,7 +51,7 @@ class RagConsistency:
     
     def get_masked_traces(self, qid, question, prediction, trace):
         # actions = ['query_paraphrasing', 'adding_critical_thought', 'answer_validation'] #  'answer_validation', 'doc_shuffling'
-        actions = ['query_paraphrasing']
+        actions = ['answer_validation']
         
         masked_traces, answer_output_list = [], []
         if self.args.rag_method == 'search_r1':
@@ -61,16 +61,11 @@ class RagConsistency:
             has_search = len(trace) > 2
             think_search_indices = range(1, len(trace)-1)
         
-        if has_search:
-            # --- V1: random choice
-            # selected_indices = random.choices(think_search_indices, k=self.args.n_generations)
-            # selected_indices_group = [(x, selected_indices.count(x), action) for x in sorted(set(selected_indices))]
-            # --- V2: fix number form each depth
-            # selected_indices_group = [(x, 2, action) for x in sorted(set(think_search_indices))]
-            
+        if has_search:            
             random_pairs = [(random.choice(think_search_indices), random.choice(actions)) for _ in range(self.args.n_generations)]
             pair_counts = Counter(random_pairs)
             selected_indices_group = [(index, repeat, action) for (index, action), repeat in pair_counts.items()]
+            # print(selected_indices_group)
             
             for (selected_index, repeat, action) in selected_indices_group:
                 original_think = trace[selected_index].get('think', '')
