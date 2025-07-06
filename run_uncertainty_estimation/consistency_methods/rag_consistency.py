@@ -71,6 +71,7 @@ class RagConsistency:
                 original_think = trace[selected_index].get('think', '')
                 original_sq = trace[selected_index].get('search_query', None)
                 original_docs = trace[selected_index].get('docs', [])
+                original_rid = trace[selected_index].get('reason_in_docs', None)
                 
                 if original_sq:
                     #! Step 1: Applying actions
@@ -97,15 +98,24 @@ class RagConsistency:
                             new_trace = copy.deepcopy(trace[:selected_index])
                             paraphrased_query = paraphrased_queries[i].strip()
                             retrieved_docs = retrieved_docs_list[i]
+                            
                             new_trace.append({"think": original_think, "search_query": paraphrased_query, "docs": retrieved_docs})
-                        
+                            if self.args.rag_method == "search_o1" and self.rag_model.with_reason_in_documents:
+                                retrieved_docs_text = passages2string(retrieved_docs)
+                                rid_output_text = self.rag_model.reason_in_documents(new_trace, paraphrased_query, retrieved_docs_text)
+                                new_trace[-1]['reason_in_docs'] = rid_output_text
+                            
                         elif action == 'adding_critical_thought':
-                            new_trace = copy.deepcopy(trace[:selected_index])
+                            new_trace = copy.deepcopy(trace[:selected_index+1])
                             critical_think = critical_thinks[i].strip()
                             critical_query = critical_search_queries[i].strip()
-                            critical_docs = retrieved_docs_list[i]
-                            new_trace.append({"think": original_think, "search_query": original_sq, "docs": original_docs})
-                            new_trace.append({"think": critical_think, "search_query": critical_query, "docs": critical_docs})
+                            critical_docs = retrieved_docs_list[i]    
+                            
+                            new_trace.append({"think": critical_think, "search_query": critical_query, "docs": critical_docs})                        
+                            if self.args.rag_method == "search_o1" and self.rag_model.with_reason_in_documents:
+                                critical_docs_text = passages2string(critical_docs)
+                                rid_output_text = self.rag_model.reason_in_documents(new_trace, critical_query, critical_docs_text)
+                                new_trace[-1]['reason_in_docs'] = rid_output_text
                         
                         elif action == 'answer_validation':
                             new_trace = []
@@ -113,8 +123,16 @@ class RagConsistency:
                             validation_think = validation_thinks[i].strip()
                             search_query = search_queries[i].strip()
                             docs = retrieved_docs_list[i]
+                            
                             new_trace.append({"think": '', "search_query": '', "docs": [{'id':'000', 'contents': f"\n{summarization}"}]})
+                            if self.args.rag_method == "search_o1" and self.rag_model.with_reason_in_documents:
+                                new_trace[-1]['reason_in_docs'] = summarization
+                            
                             new_trace.append({"think": validation_think, "search_query": search_query, "docs": docs})
+                            if self.args.rag_method == "search_o1" and self.rag_model.with_reason_in_documents:
+                                docs_text = passages2string(docs)
+                                rid_output_text = self.rag_model.reason_in_documents(new_trace, search_query, docs_text)
+                                new_trace[-1]['reason_in_docs'] = rid_output_text
                         
                         # After break point: ask searchR1 to generate
                         pred_answer, rest_of_trace = self.rag_model.partial_inference_rag_consistency(question, new_trace)
@@ -186,6 +204,10 @@ class RagConsistency:
 
 
 
+
+
+
+
 # history = [
 #     (key, item[key])
 #     for item in trace[:selected_index]
@@ -196,4 +218,8 @@ class RagConsistency:
 # ) 
 # paraphrased_queries = self.query_rewriter.inference(qid, original_sq, history, repeat=repeat)
 
+# if self.args.rag_method == "search_o1" and self.rag_model.with_reason_in_documents:
+#     new_trace.append({"think": original_think, "search_query": original_sq, "docs": original_docs, "reason_in_docs": original_rid})
+# else:
+#     new_trace.append({"think": original_think, "search_query": original_sq, "docs": original_docs})
 

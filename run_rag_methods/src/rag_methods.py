@@ -1519,7 +1519,8 @@ class SearchO1_RAG(BasicRAG):
             self.instruction = get_multiqa_search_o1_instruction(self.MAX_SEARCH_LIMIT)
 
         # 
-        self.current_step_template = '{think}\n<|begin_search_query|>{search_query}<|end_search_query|>\n<|begin_search_result|>{search_result}<|end_search_result|>\n'
+        self.answer_template = '\\boxed{answer}'
+        self.current_step_template = '\n{think}\n<|begin_search_query|>{search_query}<|end_search_query|>\n<|begin_search_result|>{search_result}<|end_search_result|>\n'
 
     def get_reasoning_think(self, text: str) -> str:
         pattern = re.compile(rf"(.*?){re.escape(self.BEGIN_SEARCH_QUERY)}", re.DOTALL)
@@ -1535,12 +1536,122 @@ class SearchO1_RAG(BasicRAG):
         match = re.search(r"\*\*Final Information\*\*\s*(.*)", text, re.DOTALL)
         return match.group(1).replace("\n", " ").strip() if match else None
     
+    def get_last_think(self, text: str) -> str:
+        match = re.search(r"^(.*?)\\boxed\{.*?\}", text, re.DOTALL)
+        return match.group(1).strip() if match else None
+
     def get_boxed_answer(self, text: str) -> str:
         match = re.search(r"\\boxed\{(.*?)\}", text)
         return match.group(1).strip() if match else None
 
+    def reason_in_documents(self, path, search_query, docs_text):
+        prev_reasoning = ' '.join([step['think'] for step in path])
+        rid_input_prompt = get_webpage_to_reasonchain_instruction(prev_reasoning, search_query, docs_text)
+        rid_messages = [{"role": "user", "content": rid_input_prompt}]
+        _, rid_output_text = self.generator.generate(rid_messages)
+        rid_output_text_ = self.get_search_results(rid_output_text)
+        return rid_output_text_
+
     def inference(self, question):
         input_prompt = self.instruction + get_task_instruction_openqa(question)
+        messages = [{"role": "user", "content": input_prompt}]
+        
+        path = []
+        for idx in range(self.MAX_SEARCH_LIMIT):
+            # -- One step generation
+            output, output_text = self.generator.generate(messages, self.generator.searcho1_stopping_criteria)
+            
+            if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.MAX_SEARCH_LIMIT):
+                break # Don't perform another retrieval or prompt construction
+            
+            # -- Extract info
+            tmp_think = self.get_reasoning_think(output_text).replace("\n", ' ').replace("\n\n", ' ')
+            tmp_query = self.get_search_query(output_text)
+            if tmp_query:
+                search_docs = self.retriever.search(tmp_query)
+                docs_text = passages2string(search_docs)
+            else:
+                search_docs, docs_text = [], ''
+
+            # -- Save in the path
+            path.append({'think': tmp_think, 'search_query': tmp_query, 'docs': search_docs})
+            
+            # -- Reason-in-docs
+            if self.with_reason_in_documents:
+                rid_output_text = self.reason_in_documents(path, tmp_query, docs_text)
+                path[-1]['reason_in_docs'] = rid_output_text
+                search_result_txt = rid_output_text
+            else:
+                search_result_txt = docs_text
+            
+            # -- Create new input prompt
+            current_step_text = self.current_step_template.format(
+                think=tmp_think,
+                search_query=tmp_query,
+                search_result=search_result_txt
+            )
+            input_prompt += current_step_text
+            messages = [{"role": "user", "content": input_prompt}]
+
+        last_think = self.get_last_think(output_text) if self.get_last_think(output_text) else output_text
+        pred_answer = self.get_boxed_answer(output_text)
+        path.append({'think': last_think, 'answer': pred_answer})
+
+        return pred_answer, path
+
+    # --
+    def get_input_prompt_self_consistency(self, question, trace):
+        input_prompt = self.instruction + get_task_instruction_openqa(question)
+        for step in trace[:-1]:
+            input_prompt += self.current_step_template.format(
+                think=step['think'],
+                search_query=step['search_query'],
+                search_result=step['reason_in_docs']
+            )
+        input_prompt += trace[-1]['think']
+        return input_prompt
+    
+    def partial_inference_self_consistency(self, question, trace):
+        input_prompt = self.get_input_prompt_self_consistency(question, trace)
+        messages = [{"role": "user", "content": input_prompt}]
+        answer_list = self.generator.generate_batch(
+            messages,
+            num_return=self.args.n_generations,
+            temperature=self.args.consistency_temperature
+        )
+        answer_list_ = [self.get_boxed_answer(answer) for answer in answer_list]
+        return answer_list_
+    
+    def get_input_prompt_reasoning_consistency(self, question, trace):
+        input_prompt = self.instruction + get_task_instruction_openqa(question)
+        for step in trace[:-1]:
+            input_prompt += self.current_step_template.format(
+                think=step['think'],
+                search_query=step['search_query'],
+                search_result=step['reason_in_docs']
+            )
+        return input_prompt
+
+    def partial_inference_reasoning_consistency(self, input_prompt_text):
+        messages = [{"role": "user", "content": input_prompt_text}]
+        _, output_text = self.generator.generate(
+            messages,
+            self.generator.searcho1_stopping_criteria
+        )
+        last_think = self.get_last_think(output_text) if self.get_last_think(output_text) else output_text
+        pred_answer = self.get_boxed_answer(output_text)
+        
+        return last_think, pred_answer
+
+    def partial_inference_rag_consistency(self, question, generated_trace):
+        
+        input_prompt = self.instruction + get_task_instruction_openqa(question)
+        for step in generated_trace[:-1]:
+            input_prompt += self.current_step_template.format(
+                think=step['think'],
+                search_query=step['search_query'],
+                search_result=step['reason_in_docs']
+            )
         messages = [{"role": "user", "content": input_prompt}]
         
         path = []
@@ -1584,26 +1695,11 @@ class SearchO1_RAG(BasicRAG):
             input_prompt += current_step_text
             messages = [{"role": "user", "content": input_prompt}]
 
+        last_think = self.get_last_think(output_text) if self.get_last_think(output_text) else output_text
         pred_answer = self.get_boxed_answer(output_text)
-        path.append({'think': output_text, 'answer': pred_answer})
-
+        path.append({'think': last_think, 'answer': pred_answer})
+        
         return pred_answer, path
-
-    # --
-    def get_input_prompt_self_consistency(self, question, trace):
-        pass
-    
-    def partial_inference_self_consistency(self, question, trace):
-        pass
-    
-    def get_input_prompt_reasoning_consistency(self, question, trace):
-        pass
-
-    def partial_inference_reasoning_consistency(self, input_prompt_text):
-        pass
-
-    def partial_inference_rag_consistency(self, question, generated_trace):
-        pass
 
 class SearchR1_RAG(BasicRAG):
     def __init__(self, generation_model, generation_tokenizer, device, args):
@@ -1861,7 +1957,6 @@ In the last part of the answer, the final exact answer is enclosed within \\boxe
                 {'role': 'system', 'content': self.re_search_template_sys},
                 {'role': 'user', 'content': input_prompt}
             ]
-        
         
         one_step_think = self.get_think(output_text)
         pred_answer = self.get_boxed_answer(output_text)
