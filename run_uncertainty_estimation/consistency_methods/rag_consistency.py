@@ -51,7 +51,7 @@ class RagConsistency:
     
     def get_masked_traces(self, qid, question, prediction, trace):
         # actions = ['query_paraphrasing', 'adding_critical_thought', 'answer_validation'] #  'answer_validation', 'doc_shuffling'
-        actions = ['query_paraphrasing']
+        actions = ['answer_validation']
         
         masked_traces, answer_output_list = [], []    
         if self.args.rag_method == 'self_ask':
@@ -70,14 +70,11 @@ class RagConsistency:
             for (selected_index, repeat, action) in selected_indices_group:
                 original_think = trace[selected_index].get('think', '')
                 original_sq = trace[selected_index].get('search_query', None)
-                original_docs = trace[selected_index].get('docs', [])
-                original_rid = trace[selected_index].get('reason_in_docs', None)
                 
                 if original_sq:
                     #! Step 1: Applying actions
                     if action == 'query_paraphrasing':
                         paraphrased_queries = self.search_query_paraphraser.inference(qid, original_sq, repeat=repeat) if original_sq else []
-                        # retrieved_docs_list = [self.retrieval_perturber.inference(paraphrased_query) for paraphrased_query in paraphrased_queries]
                         retrieved_docs_list = [self.retriever.search(paraphrased_query) if paraphrased_query else [] for paraphrased_query in paraphrased_queries]
                     elif action == 'adding_critical_thought':
                         critical_thinks, critical_search_queries = self.critical_think_generator.inference(qid, original_sq, repeat=repeat) if original_sq else []
@@ -92,7 +89,6 @@ class RagConsistency:
                         new_trace = []
                         
                         # - A) Before the break point: Keep steps excluding the selected one
-                        # ...
                         # - B) On the break point
                         if action == 'query_paraphrasing':
                             new_trace = copy.deepcopy(trace[:selected_index])
@@ -207,7 +203,7 @@ class RagConsistency:
 
 
 
-
+# retrieved_docs_list = [self.retrieval_perturber.inference(paraphrased_query) for paraphrased_query in paraphrased_queries]
 # history = [
 #     (key, item[key])
 #     for item in trace[:selected_index]

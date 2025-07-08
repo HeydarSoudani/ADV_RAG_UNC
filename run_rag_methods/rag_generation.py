@@ -120,7 +120,7 @@ def rag_generation(args):
     elif args.rag_method == 'self_ask':
         rag_model = SelfAsk_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'react':
-        rag_model = ReAct_RAG(args, device)
+        rag_model = ReAct_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'search_o1':
         rag_model = SearchO1_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'search_r1':
@@ -141,7 +141,7 @@ def rag_generation(args):
             inference_results_file_ranked = f"{args.output_dir}/inference_results_rank{accelerator.process_index}.jsonl"
         with open(inference_results_file_ranked, 'w') as res_f:
             for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 10:
+                # if i == 30:
                 #     break
                 qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
                 question = question.strip()
@@ -306,7 +306,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='search_o1', choices=[
+    parser.add_argument('--rag_method', type=str, default='react', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot',
         'flare', 'dragin',
@@ -323,7 +323,7 @@ if __name__ == "__main__":
     parser.add_argument('--hallucination_threshold', type=float, default=0.08)                                # for FLARE & DRAGIN
     parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
     parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
-    parser.add_argument('--max_iter', type=int, default=5)
+    parser.add_argument('--max_iter', type=int, default=10)
     
     # Others
     parser.add_argument('--device', type=int, default=0)
@@ -351,11 +351,11 @@ if __name__ == "__main__":
 
     ### === Run Steps ============================
     set_seed(args.seed)
-    # rag_generation(args)
+    rag_generation(args)
     # merge_result_files(args)
     # get_num_retrieval(args)
     # evaluate(args)
-    subsample_generation(args)
+    # subsample_generation(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py

@@ -26,16 +26,6 @@ from utils.general_utils import passages2string
 
 nlp = spacy.load("en_core_web_sm")
 
-# def passages2string(retrieval_result):
-#     format_reference = ''
-#     for idx, doc_item in enumerate(retrieval_result):
-#         content = doc_item['contents']
-#         title = content.split("\n")[0]
-#         text = "\n".join(content.split("\n")[1:])
-#         # format_reference += f"Wikipedia Title: {title}\n{text}\n\n"
-#         format_reference += f"Doc {idx+1} (Title: {title}) {text}\n"
-#     return format_reference
-
 # Adaptive RAG style
 def get_answer(text):
     parts = text.split("the answer is: ", 1)  # Split at the first occurrence
@@ -1183,9 +1173,13 @@ class SelfAsk_RAG(BasicRAG):
 
 class ReAct_RAG(BasicRAG):
     # Ref: https://github.com/ysymyth/ReAct/blob/master/hotpotqa.ipynb
-    def __init__(self, args, device):
-        super().__init__(args, device)
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        super().__init__(generation_model, generation_tokenizer, device, args)
         self.instruction = REACT_INSTRUCTION
+        self.answer_template = '{answer}'
+        self.pattern_action = r"^(\w+)\[(.+?)\]$"
+        self.current_step_template = 'Thought {iter_num}: {think}\nAction {iter_num}: {action_text}\nObservation {iter_num}: {observation}\n'
+        
         
         self.examples = {
             "webthink_simple6": [
@@ -1346,8 +1340,15 @@ class ReAct_RAG(BasicRAG):
 
     @staticmethod
     def clean_action(text):
-        cleaned_text = re.sub(r'Observation \d+:\s*', '', text)
-        return cleaned_text
+        pattern = r'Observation \d+:\s*'
+        match = re.search(pattern, text)
+        return text[:match.start()].strip() if match else text.strip()
+
+    @staticmethod
+    def extract_action_text(text):
+        pattern = r"\w+\[[^\]]*?\]"
+        match = re.search(pattern, text)
+        return match.group(0) if match else None
 
     # For search action
     def wikipedia_search(self, entity):
@@ -1405,17 +1406,22 @@ class ReAct_RAG(BasicRAG):
         parts = [p for p in parts if keyword.lower() in p.lower()]
         return parts
 
-    def get_observation(self, action):
-        done = False
-        answer = None
-        action = action.strip().lower()
-        if action.startswith("search[") and action.endswith("]"):
-            entity = action[len("search["):-1]
-            # obs = self.wikipedia_search(entity) # Search in wikipedia
-            obs = passages2string(self.retriever_search(entity)) # Search with retriever
+    def get_observation(self, action_text):
+        done, docs, obs = False, None, None
+
+        match = re.match(self.pattern_action, action_text)
+        if match:
+            action_type = match.group(1).lower()
+            action_entity = match.group(2)
+            print(f"Action Type: {action_type}, Action Entity: {action_entity}")
+        else:
+            print("Action text does not match the expected template.")
         
-        elif action.startswith("lookup[") and action.endswith("]"):
-            keyword = action[len("lookup["):-1]
+        if action_type == 'search':
+            docs = self.retriever_search(action_entity)
+            obs = passages2string(docs)
+        elif action_type =='lookup':
+            keyword = action_entity
             if self.lookup_keyword != keyword:  # reset lookup
                 self.lookup_keyword = keyword
                 self.lookup_list = self.construct_lookup_list(keyword)
@@ -1425,18 +1431,15 @@ class ReAct_RAG(BasicRAG):
             else:
                 obs = f"(Result {self.lookup_cnt + 1} / {len(self.lookup_list)}) " + self.lookup_list[self.lookup_cnt]
                 self.lookup_cnt += 1
-
-        elif action.startswith("finish[") and action.endswith("]"):
-            answer = action[len("finish["):-1]
-            obs = f"Episode finished\n"
+        elif action_type =='finish':
             done = True
-
-        elif action.startswith("think[") and action.endswith("]"):
+        
+        elif action_type == 'think':
             obs = "Nice thought."
         else:
-            obs = "Invalid action: {}".format(action)
+            obs = "Invalid action: {}".format(action_text)
 
-        return obs, done, answer
+        return action_type, action_entity, docs, obs, done
 
     def inference(self, question):
         self.page = None  # current Wikipedia page
@@ -1448,8 +1451,8 @@ class ReAct_RAG(BasicRAG):
         instruct_exps = self.instruction + self.examples_text 
         input_prompt = instruct_exps + f"Question: {search_query}\n"
         path = []
+        
         for iter_num in range(1, self.args.max_iter+1):
-            # Get Thought & Action
             messages = [
                 {"role": "system", "content": ''},
                 {"role": "user", "content": input_prompt + f"Thought {iter_num}:"}
@@ -1459,7 +1462,7 @@ class ReAct_RAG(BasicRAG):
                 self.generate_stopping_criteria([f"\n\nObservation {iter_num}:", f"\nObservation {iter_num}:", f"Observation {iter_num}:", f"Observation {iter_num}: ", f"\nObservation {iter_num}: "])
             )
             try:
-                thought, action = thought_action.strip().split(f"\nAction {iter_num}: ")
+                thought, action = thought_action.strip().split(f"Action {iter_num}:")
             except:
                 # print('ohh...', thought_action)
                 thought = thought_action.strip().split('\n')[0]
@@ -1467,25 +1470,39 @@ class ReAct_RAG(BasicRAG):
                     {"role": "system", "content": ''},
                     {"role": "user", "content": input_prompt + f"Thought {iter_num}: {thought}\nAction {iter_num}:"}
                 ]
-                _, action = self.generator.generate(messages, self.generate_stopping_criteria(["\n", "\n\n", " \n", " \n\n"]))
+                _, action = self.generator.generate(messages, self.generate_stopping_criteria(["]\n", "]\n\n", " ]\n", " ]\n\n"]))
+            thought = thought.replace('\n', ' ').strip()
             
-            thought = thought.replace('\n', '')
-            action = self.clean_action(action).replace('\n', '')
             
-            # Get Observation
-            obs, done, pred_answer = self.get_observation(action)
-            obs = obs.replace('\\n', '')
+            action_text = self.clean_action(action).replace('\n', ' ').strip()
+            action_text = self.extract_action_text(action_text)
             
-            path.append({'Thought': thought, 'Action': action, 'Observation': obs})
-            step_str = f"Thought {iter_num}: {thought}\nAction {iter_num}: {action}\nObservation {iter_num}: {obs}\n"
-            input_prompt += step_str
+            if action_text: # if the action text is valid
+                action_type, action_entity, docs, obs, done = self.get_observation(action_text)
+                obs = obs.replace('\\n', ' ').strip() if obs else None
+                
+                if action_type == 'search':
+                    path.append({'think': thought, 'action_type': action_type, 'search_query': action_entity, 'docs': docs})
+                elif action_type == 'lookup':
+                    path.append({'think': thought, 'action_type': action_type, 'entity': action_entity, 'observation': docs})
+                elif action_type == 'finish':
+                    path.append({'think': thought, 'answer': action_entity})
+                    pred_answer = action_entity
+                
+                if done or (iter_num == self.args.max_iter):
+                    break
+                
+                current_step_text = self.current_step_template.format(
+                    iter_num=iter_num,
+                    think=thought,
+                    action_text=action_text,
+                    observation=obs
+                )
+                input_prompt += current_step_text
             
-            if done:
-                break
         
         # Regenerate the last sentence if it is needed
-        action = action.strip().lower()
-        if not (action.startswith("finish[") and action.endswith("]")):
+        if action_type != 'finish':
             messages = [
                 {"role": "system", "content": ''},
                 {"role": "user", "content": input_prompt + f"Action {iter_num+1}: Finish["}
@@ -1496,14 +1513,30 @@ class ReAct_RAG(BasicRAG):
                 max_new_tokens=32
             )
             pred_answer = output_text[:-1]
-            path.append({'Action': pred_answer})
+            path.append({'think': '', 'answer': pred_answer})
         
         return pred_answer, path
+
+    # --
+    def get_input_prompt_self_consistency(self, question, trace):
+        pass
+    
+    def partial_inference_self_consistency(self, question, trace):
+        pass
+    
+    def get_input_prompt_reasoning_consistency(self, question, trace):
+        pass
+    
+    def partial_inference_reasoning_consistency(self, input_prompt_text):
+        pass
+    
+    def partial_inference_rag_consistency(self, question, generated_trace):
+        pass
+
 
 class SearchO1_RAG(BasicRAG):
     def __init__(self, generation_model, generation_tokenizer, device, args):
         super().__init__(generation_model, generation_tokenizer, device, args)
-        
         # Define special tokens
         self.BEGIN_SEARCH_QUERY = "<|begin_search_query|>"
         self.END_SEARCH_QUERY = "<|end_search_query|>"
@@ -1511,13 +1544,11 @@ class SearchO1_RAG(BasicRAG):
         self.END_SEARCH_RESULT = "<|end_search_result|>"
         self.MAX_SEARCH_LIMIT = 10
         self.with_reason_in_documents = True
-        
         # 
         if args.dataset in ['nq', 'triviaqa']:
             self.instruction = get_singleqa_search_o1_instruction(self.MAX_SEARCH_LIMIT)
         elif args.dataset in ['hotpotqa', 'musique', '2wikimultihopqa', 'bamboogle']:
             self.instruction = get_multiqa_search_o1_instruction(self.MAX_SEARCH_LIMIT)
-
         # 
         self.answer_template = '\\boxed{answer}'
         self.current_step_template = '\n{think}\n<|begin_search_query|>{search_query}<|end_search_query|>\n<|begin_search_result|>{search_result}<|end_search_result|>\n'
@@ -1644,7 +1675,6 @@ class SearchO1_RAG(BasicRAG):
         return last_think, pred_answer
 
     def partial_inference_rag_consistency(self, question, generated_trace):
-        
         input_prompt = self.instruction + get_task_instruction_openqa(question)
         for step in generated_trace[:-1]:
             input_prompt += self.current_step_template.format(
@@ -2574,3 +2604,32 @@ class DRAGIN_RAG_OLD(BasicRAG):
 #         )},
 #         {"role": "assistant", "content": ' '.join([step['think'] for step in path])}
 #     ]
+
+
+# action = action.strip().lower()
+# if action.startswith("search[") and action.endswith("]"):
+#     entity = action[len("search["):-1]
+#     # obs = self.wikipedia_search(entity) # Search in wikipedia
+#     obs = passages2string(self.retriever_search(entity)) # Search with retriever
+
+# elif action.startswith("lookup[") and action.endswith("]"):
+#     keyword = action[len("lookup["):-1]
+#     if self.lookup_keyword != keyword:  # reset lookup
+#         self.lookup_keyword = keyword
+#         self.lookup_list = self.construct_lookup_list(keyword)
+#         self.lookup_cnt = 0
+#     if self.lookup_cnt >= len(self.lookup_list):
+#         obs = "No more results.\n"
+#     else:
+#         obs = f"(Result {self.lookup_cnt + 1} / {len(self.lookup_list)}) " + self.lookup_list[self.lookup_cnt]
+#         self.lookup_cnt += 1
+
+# elif action.startswith("finish[") and action.endswith("]"):
+#     answer = action[len("finish["):-1]
+#     obs = f"Episode finished\n"
+#     done = True
+
+# elif action.startswith("think[") and action.endswith("]"):
+#     obs = "Nice thought."
+# else:
+#     obs = "Invalid action: {}".format(action)
