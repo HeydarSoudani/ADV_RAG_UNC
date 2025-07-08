@@ -532,7 +532,7 @@ class AnswerValidator:
 
     def summarization_inference(self, qid, question, trace, repeat=5):
         summarizations = []
-        all_docs = [doc for step in trace[:-1] for doc in step['docs']]
+        all_docs = [doc for step in trace[:-1] if 'docs' in step for doc in step['docs']]
         unq_docs = self.get_unique_docs(all_docs)
         docs_text = passages2string(unq_docs)
         
@@ -540,10 +540,7 @@ class AnswerValidator:
         output_texts = self.generate_batch(input_prompt, num_return=repeat, temperature=self.args.consistency_temperature)
         summarizations = [self.get_information_summary(output_text) for output_text in output_texts]
         assert len(summarizations) == repeat, f"For query {qid}, expected {repeat} items, got {len(summarizations)} summarizations!!!"
-        
-        # print(summarizations)
-        # print('---')
-        
+    
         return summarizations
         
     def validation_inference(self, qid, question, prediction, summarization_list, repeat=5):
@@ -553,11 +550,6 @@ class AnswerValidator:
             output_text = self.generate_sequential(input_prompt, num_return=1, temperature=self.args.consistency_temperature)[0]
             thinks.append(self.get_think(output_text))
             queries.append(self.get_query(output_text))
-        
-        # print(thinks)
-        # print('-')
-        # print(queries)
-        # print('---')
         
         assert len(thinks) == repeat and len(queries) == repeat, f"Expected {repeat} items, got {len(thinks)} thinks and {len(queries)} queries"
         return thinks, queries

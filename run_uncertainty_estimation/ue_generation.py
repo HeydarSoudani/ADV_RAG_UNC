@@ -152,8 +152,8 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                if i == 10:
-                    break
+                # if i == 3:
+                #     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
@@ -380,7 +380,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_iter', type=int, default=5)
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='reasoning_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
@@ -422,9 +422,9 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    ue_generation(args)
-    # merge_result_files(args)
-    # evaluation_correlation(args)
+    # ue_generation(args)
+    merge_result_files(args)
+    evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_generation.py

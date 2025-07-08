@@ -51,7 +51,7 @@ class RagConsistency:
     
     def get_masked_traces(self, qid, question, prediction, trace):
         # actions = ['query_paraphrasing', 'adding_critical_thought', 'answer_validation'] #  'answer_validation', 'doc_shuffling'
-        actions = ['answer_validation']
+        actions = ['adding_critical_thought']
         
         masked_traces, answer_output_list = [], []    
         if self.args.rag_method == 'self_ask':
@@ -60,7 +60,7 @@ class RagConsistency:
         elif self.args.rag_method == 'react':
             think_search_indices = [idx for idx, step in enumerate(trace[:-1]) if step['action_type']=='search']
             has_search = len(think_search_indices) > 0
-            print(think_search_indices)
+            # print(think_search_indices)
         else:
             has_search = len(trace) > 1
             think_search_indices = range(0, len(trace)-1)
@@ -98,12 +98,14 @@ class RagConsistency:
                             new_trace = copy.deepcopy(trace[:selected_index])
                             paraphrased_query = paraphrased_queries[i].strip()
                             retrieved_docs = retrieved_docs_list[i]
-                            
                             new_trace.append({"think": original_think, "search_query": paraphrased_query, "docs": retrieved_docs})
+                            
                             if self.args.rag_method == "search_o1" and self.rag_model.with_reason_in_documents:
                                 retrieved_docs_text = passages2string(retrieved_docs)
                                 rid_output_text = self.rag_model.reason_in_documents(new_trace, paraphrased_query, retrieved_docs_text)
                                 new_trace[-1]['reason_in_docs'] = rid_output_text
+                            elif self.args.rag_method == "react":
+                                new_trace[-1]['action_type'] = 'search'
                             
                         elif action == 'adding_critical_thought':
                             new_trace = copy.deepcopy(trace[:selected_index+1])
@@ -116,6 +118,8 @@ class RagConsistency:
                                 critical_docs_text = passages2string(critical_docs)
                                 rid_output_text = self.rag_model.reason_in_documents(new_trace, critical_query, critical_docs_text)
                                 new_trace[-1]['reason_in_docs'] = rid_output_text
+                            elif self.args.rag_method == "react":
+                                new_trace[-1]['action_type'] = 'search'
                         
                         elif action == 'answer_validation':
                             new_trace = []
@@ -127,12 +131,16 @@ class RagConsistency:
                             new_trace.append({"think": '', "search_query": '', "docs": [{'id':'000', 'contents': f"\n{summarization}"}]})
                             if self.args.rag_method == "search_o1" and self.rag_model.with_reason_in_documents:
                                 new_trace[-1]['reason_in_docs'] = summarization
+                            elif self.args.rag_method == "react":
+                                new_trace[-1]['action_type'] = 'search'
                             
                             new_trace.append({"think": validation_think, "search_query": search_query, "docs": docs})
                             if self.args.rag_method == "search_o1" and self.rag_model.with_reason_in_documents:
                                 docs_text = passages2string(docs)
                                 rid_output_text = self.rag_model.reason_in_documents(new_trace, search_query, docs_text)
                                 new_trace[-1]['reason_in_docs'] = rid_output_text
+                            elif self.args.rag_method == "react":
+                                new_trace[-1]['action_type'] = 'search'
                         
                         # After break point: ask searchR1 to generate
                         pred_answer, rest_of_trace = self.rag_model.partial_inference_rag_consistency(question, new_trace)
