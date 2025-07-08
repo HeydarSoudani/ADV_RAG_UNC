@@ -44,7 +44,10 @@ class ReasoningConsistency:
         for partial_trace in masked_traces_: 
             last_think_first_part = partial_trace[-1].get('think', '')
             input_prompt_text = self.rag_model.get_input_prompt_reasoning_consistency(question, partial_trace)
-            last_think_second_part, final_ans = self.rag_model.partial_inference_reasoning_consistency(input_prompt_text)
+            if self.args.rag_method == 'react':
+                last_think_second_part, final_ans = self.rag_model.partial_inference_reasoning_consistency(input_prompt_text, len(partial_trace))
+            else:
+                last_think_second_part, final_ans = self.rag_model.partial_inference_reasoning_consistency(input_prompt_text)
             
             new_trace = copy.deepcopy(trace)
             new_trace[-1]['think'] = f"{last_think_first_part.strip()} {last_think_second_part.strip()}".strip()

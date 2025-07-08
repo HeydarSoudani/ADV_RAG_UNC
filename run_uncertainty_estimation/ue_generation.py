@@ -96,7 +96,7 @@ def ue_generation(args):
     elif args.rag_method == 'self_ask':
         rag_model = SelfAsk_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'react':
-        rag_model = ReAct_RAG(args, device)
+        rag_model = ReAct_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'search_o1':
         rag_model = SearchO1_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'search_r1':
@@ -152,8 +152,8 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 5:
-                #     break
+                if i == 10:
+                    break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
@@ -370,7 +370,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='search_o1', choices=[
+    parser.add_argument('--rag_method', type=str, default='react', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_sentence_retrieval', 'fix_length_retrieval', 'ircot', 'flare', 'dragin',
         'react', 'self_ask', 'search_o1',
@@ -380,7 +380,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_iter', type=int, default=5)
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='reasoning_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
@@ -422,9 +422,9 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    # ue_generation(args)
-    merge_result_files(args)
-    evaluation_correlation(args)
+    ue_generation(args)
+    # merge_result_files(args)
+    # evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_generation.py

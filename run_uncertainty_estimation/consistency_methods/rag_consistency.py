@@ -57,6 +57,10 @@ class RagConsistency:
         if self.args.rag_method == 'self_ask':
             has_search = len(trace) > 2
             think_search_indices = range(1, len(trace)-1)
+        elif self.args.rag_method == 'react':
+            think_search_indices = [idx for idx, step in enumerate(trace[:-1]) if step['action_type']=='search']
+            has_search = len(think_search_indices) > 0
+            print(think_search_indices)
         else:
             has_search = len(trace) > 1
             think_search_indices = range(0, len(trace)-1)

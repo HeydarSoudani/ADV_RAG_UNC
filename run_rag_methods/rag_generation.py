@@ -351,11 +351,11 @@ if __name__ == "__main__":
 
     ### === Run Steps ============================
     set_seed(args.seed)
-    rag_generation(args)
+    # rag_generation(args)
     # merge_result_files(args)
     # get_num_retrieval(args)
     # evaluate(args)
-    # subsample_generation(args)
+    subsample_generation(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py

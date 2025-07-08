@@ -18,7 +18,7 @@ from run_rag_methods.src.templetes import (
     SYSTEM_PROMPT_DIRECT, SYSTEM_PROMPT_COT, SYSTEM_PROMPT_IRCOT,
     SYSTEM_PROMPT_DRAGIN,
     SELF_ASK_PROMPT_SINGLE_HOP, SELF_ASK_PROMPT_MULTI_HOP,
-    REACT_INSTRUCTION,
+    REACT_INSTRUCTION, REACT_ANSWER_INSTRUCTION,
     get_singleqa_search_o1_instruction, get_multiqa_search_o1_instruction,
     get_task_instruction_openqa, get_webpage_to_reasonchain_instruction
 )
@@ -1176,10 +1176,10 @@ class ReAct_RAG(BasicRAG):
     def __init__(self, generation_model, generation_tokenizer, device, args):
         super().__init__(generation_model, generation_tokenizer, device, args)
         self.instruction = REACT_INSTRUCTION
+        self.answer_instruction = REACT_ANSWER_INSTRUCTION
         self.answer_template = '{answer}'
         self.pattern_action = r"^(\w+)\[(.+?)\]$"
         self.current_step_template = 'Thought {iter_num}: {think}\nAction {iter_num}: {action_text}\nObservation {iter_num}: {observation}\n'
-        
         
         self.examples = {
             "webthink_simple6": [
@@ -1350,6 +1350,18 @@ class ReAct_RAG(BasicRAG):
         match = re.search(pattern, text)
         return match.group(0) if match else None
 
+    def extract_action_type_entity(self, action_text):
+        match = re.match(self.pattern_action, action_text)
+        if match:
+            action_type = match.group(1).lower()
+            action_entity = match.group(2)
+            print(f"Action Type: {action_type}, Action Entity: {action_entity}")
+        else:
+            print("Action text does not match the expected template.")
+            action_type, action_entity = '', ''
+        
+        return action_type, action_entity
+
     # For search action
     def wikipedia_search(self, entity):
         entity_ = entity.replace(" ", "+")
@@ -1408,15 +1420,8 @@ class ReAct_RAG(BasicRAG):
 
     def get_observation(self, action_text):
         done, docs, obs = False, None, None
-
-        match = re.match(self.pattern_action, action_text)
-        if match:
-            action_type = match.group(1).lower()
-            action_entity = match.group(2)
-            print(f"Action Type: {action_type}, Action Entity: {action_entity}")
-        else:
-            print("Action text does not match the expected template.")
         
+        action_type, action_entity = self.extract_action_type_entity(action_text)
         if action_type == 'search':
             docs = self.retriever_search(action_entity)
             obs = passages2string(docs)
@@ -1471,9 +1476,8 @@ class ReAct_RAG(BasicRAG):
                     {"role": "user", "content": input_prompt + f"Thought {iter_num}: {thought}\nAction {iter_num}:"}
                 ]
                 _, action = self.generator.generate(messages, self.generate_stopping_criteria(["]\n", "]\n\n", " ]\n", " ]\n\n"]))
+            
             thought = thought.replace('\n', ' ').strip()
-            
-            
             action_text = self.clean_action(action).replace('\n', ' ').strip()
             action_text = self.extract_action_text(action_text)
             
@@ -1484,7 +1488,7 @@ class ReAct_RAG(BasicRAG):
                 if action_type == 'search':
                     path.append({'think': thought, 'action_type': action_type, 'search_query': action_entity, 'docs': docs})
                 elif action_type == 'lookup':
-                    path.append({'think': thought, 'action_type': action_type, 'entity': action_entity, 'observation': docs})
+                    path.append({'think': thought, 'action_type': action_type, 'entity': action_entity, 'observation': obs})
                 elif action_type == 'finish':
                     path.append({'think': thought, 'answer': action_entity})
                     pred_answer = action_entity
@@ -1499,8 +1503,7 @@ class ReAct_RAG(BasicRAG):
                     observation=obs
                 )
                 input_prompt += current_step_text
-            
-        
+
         # Regenerate the last sentence if it is needed
         if action_type != 'finish':
             messages = [
@@ -1518,18 +1521,151 @@ class ReAct_RAG(BasicRAG):
         return pred_answer, path
 
     # --
-    def get_input_prompt_self_consistency(self, question, trace):
-        pass
+    def clean_output_finial_answer(self, text):
+        
+        # Case 1: Remove everything after first \n
+        if '\n' in text:
+            text = text.split('\n', 1)[0]
+        if '\n\n' in text:
+            text = text.split('\n\n', 1)[0]
+        
+        # Case 2: Extract inside Finish[...]
+        match = re.search(r'Finish\[(.*?)\]', text)
+        if match:
+            text = match.group(1)
+        else:
+            text = ''
+
+        # Case 3: Remove trailing ] if there's no matching opening bracket
+        if text.strip().endswith(']') and text.count('[') < text.count(']'):
+            text = text.rstrip(']')
+        
+        cleaned = text.strip('[]')
+
+        return cleaned
     
+    def get_input_prompt_self_consistency(self, question, trace):
+        search_query = question
+        instruct_exps = self.instruction + self.examples_text 
+        input_prompt = instruct_exps + f"Question: {search_query}\n"
+        
+        for idx, step in enumerate(trace[:-1]):
+            if step['action_type'] == 'search':
+                action_text = f"{step['action_type']}[{step['search_query']}]"
+                obs = passages2string(step['docs'])
+            elif step['action_type'] == 'lookup':
+                action_text = f"{step['action_type']}[{step['entity']}]"
+                obs = step['observation']
+            else:
+                action_text, obs = '', ''
+            
+            input_prompt += self.current_step_template.format(
+                iter_num=idx+1,
+                think=step['think'],
+                action_text=action_text,
+                observation=obs
+            )
+        input_prompt += trace[-1]['think']
+        
+        return input_prompt
+        
     def partial_inference_self_consistency(self, question, trace):
-        pass
+        input_prompt = self.get_input_prompt_self_consistency(question, trace)
+        messages = [
+            {"role": "system", "content": ''},
+            {"role": "user", "content": input_prompt + f"Action {len(trace)}: Finish["}
+        ]
+        # answer_list = self.generator.generate_batch(
+        #     messages,
+        #     num_return=self.args.n_generations,
+        #     temperature=self.args.consistency_temperature
+        # )
+        # answer_list_ = [answer[:-1] for answer in answer_list]
+        
+        answer_list_ = []
+        for i in range(self.args.n_generations):
+            _, output_text = self.generator.generate(
+                messages,
+                self.generate_stopping_criteria(["]", "] ", ']\n', ']\n ', ']\n\n', ']\n\n ']),
+                temperature=self.args.consistency_temperature,
+                max_new_tokens=32
+            )
+            pred_answer = self.clean_output_finial_answer(output_text)
+            answer_list_.append(pred_answer)
+        
+        return answer_list_
     
     def get_input_prompt_reasoning_consistency(self, question, trace):
-        pass
+        search_query = question
+        instruct_exps = self.instruction + self.examples_text
+        input_prompt = instruct_exps + f"Question: {search_query}\n"
+        for idx, step in enumerate(trace[:-1]):
+            if step['action_type'] == 'search':
+                action_text = f"{step['action_type']}[{step['search_query']}]"
+                obs = passages2string(step['docs'])
+            elif step['action_type'] == 'lookup':
+                action_text = f"{step['action_type']}[{step['entity']}]"
+                obs = step['observation']
+            else:
+                action_text, obs = '', ''
+            
+            input_prompt += self.current_step_template.format(
+                iter_num=idx+1,
+                think=step['think'],
+                action_text=action_text,
+                observation=obs
+            )
+        return input_prompt
     
-    def partial_inference_reasoning_consistency(self, input_prompt_text):
-        pass
+    def partial_inference_reasoning_consistency(self, input_prompt_text, iter_num):
+        messages = [
+            {"role": "system", "content": ''},
+            {"role": "user", "content": input_prompt_text + f"Thought {iter_num}:"}
+        ]
+        _, thought_action = self.generator.generate(
+            messages,
+            self.generate_stopping_criteria(["]", "] ", ']\n', ']\n ', ']\n\n', ']\n\n ']),
+            temperature=self.args.consistency_temperature,
+        )
+        try:
+            thought, action = thought_action.strip().split(f"Action {iter_num}:")
+        except:
+            thought = thought_action.strip().split('\n')[0]
+            messages = [
+                {"role": "system", "content": ''},
+                {"role": "user", "content": input_prompt_text + f"Thought {iter_num}: {thought}\nAction {iter_num}: Finish["}
+            ]
+            _, output_text = self.generator.generate(
+                messages,
+                self.generate_stopping_criteria(["]", "] ", ']\n', ']\n ', ']\n\n', ']\n\n ']),
+                temperature=self.args.consistency_temperature,
+                # max_new_tokens=32
+            )
+            pred_answer = self.clean_output_finial_answer(output_text)
+            return thought, pred_answer
+        
+        thought = thought.replace('\n', ' ').strip()
+        action_text = self.clean_action(action).replace('\n', ' ').strip()
+        action_text = self.extract_action_text(action_text) if action_text else ''
+        action_type, action_entity = self.extract_action_type_entity(action_text) if action_text else '', ''
+        
+        if action_type =='finish':
+            pred_answer = action_entity
+        else:
+            messages = [
+                {"role": "system", "content": ''},
+                {"role": "user", "content": input_prompt_text + f"Thought {iter_num}: {thought}\nAction {iter_num}: Finish["}
+            ]
+            _, output_text = self.generator.generate(
+                messages,
+                self.generate_stopping_criteria(["]", "] ", ']\n', ']\n ', ']\n\n', ']\n\n ']),
+                temperature=self.args.consistency_temperature,
+                # max_new_tokens=32
+            )
+            pred_answer = self.clean_output_finial_answer(output_text)
     
+        return thought, pred_answer
+        
     def partial_inference_rag_consistency(self, question, generated_trace):
         pass
 
