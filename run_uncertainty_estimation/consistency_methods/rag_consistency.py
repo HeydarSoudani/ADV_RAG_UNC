@@ -128,7 +128,7 @@ class RagConsistency:
                             search_query = search_queries[i].strip()
                             docs = retrieved_docs_list[i]
                             
-                            new_trace.append({"think": '', "search_query": '', "docs": [{'id':'000', 'contents': f"\n{summarization}"}]})
+                            new_trace.append({"think": '', "search_query": '', "docs": [{'id':'-1', 'contents': f"\n{summarization}"}]})
                             if self.args.rag_method == "search_o1" and self.rag_model.with_reason_in_documents:
                                 new_trace[-1]['reason_in_docs'] = summarization
                             elif self.args.rag_method == "react":

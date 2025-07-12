@@ -20,9 +20,11 @@ from run_rag_methods.src.correctness import em_score, subem_score, f1_score
 from run_uncertainty_estimation.src.uncertainty_estimator import UncertaintyEstimator
 from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 from run_uncertainty_estimation.ue_methods import *
+from run_rag_methods.src.retrievers_local import load_docs
 
 def ue_generation(args):
-    # === MultiGPU setup ========================
+    are_traces_generated = True
+    # === MultiGPU setup =========================
     accelerator = Accelerator()
     device = accelerator.device
     
@@ -48,7 +50,7 @@ def ue_generation(args):
             print("CUDA is not available. No GPUs detected.")
         print('\n')
 
-    # === Read input data =======================
+    # === Read input data ========================
     query_ids, rag_generations = [], {}
     if os.path.exists(args.inference_results_file):
         with open(args.inference_results_file, 'r', encoding='utf-8') as f:
@@ -58,20 +60,30 @@ def ue_generation(args):
                     query_ids.append(data['qid'])
                     rag_generations[data['qid']] = data
     sorted_query_ids = sorted(query_ids, key=lambda x: int(x.split('_')[1]))
-    
     # sorted_query_ids = ['test_73'] # 'test_5', 'test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_76', 'test_83'
     
     # === Read existing (generated) samples ======
     generated_qids = []
-    if os.path.exists(args.consistency_results_file):
-        with open(args.consistency_results_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                data = json.loads(line)
-                if 'qid' in data:
-                    generated_qids.append(data['qid'])
-    generated_qids = set(generated_qids)
+    if not are_traces_generated:
+        if os.path.exists(args.consistency_results_file):
+            with open(args.consistency_results_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    data = json.loads(line)
+                    if 'qid' in data:
+                        generated_qids.append(data['qid'])
+        generated_qids = set(generated_qids)
     filtered_sorted_query_ids = [id_ for id_ in sorted_query_ids if id_ not in generated_qids]
     
+    # === Read traces (generated) samples =======
+    if are_traces_generated:
+        generated_traces_obj = {}
+        if os.path.exists(args.masked_traces_results_file):
+            with open(args.masked_traces_results_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    data = json.loads(line)
+                    if 'qid' in data:
+                        generated_traces_obj[data['qid']] = data['masked_traces']
+                    
     # === Read Models ============================
     generation_model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16).to(device) # attn_implementation="eager" # Disable this for searchR1
     generation_tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
@@ -142,7 +154,7 @@ def ue_generation(args):
 
         trace_f = None
         write_traces = args.consistency_method != 'self_consistency'
-        if write_traces:
+        if write_traces and not are_traces_generated:
             masked_traces_results_file_ranked = (
                 f"{args.output_dir}/{args.consistency_method}_masked_traces_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl"
                 if args.rag_method in ['flare', 'dragin'] 
@@ -152,16 +164,55 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 3:
+                # if i == 10:
                 #     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
-                ### --- 1) Generate output list
-                # TODO: if exists ... (for the case of adding new UE method)
-                masked_traces, masked_traces_text, final_answer_list = consistency_model.get_masked_traces(qid, user_query, prediction, trace)
-                context = passages2string(get_unique_docs(masked_traces))
-            
+                ### --- 1.1) Generate traces list
+                if not are_traces_generated:
+                    masked_traces, masked_traces_text, final_answer_list = consistency_model.get_masked_traces(qid, user_query, prediction, trace)
+                    context = passages2string(get_unique_docs(masked_traces))
+                
+                ### --- 1.2) Read traces list
+                elif are_traces_generated:
+                    ## -- Read docs
+                    generated_masked_traces_wo_docs = generated_traces_obj[qid]
+                    generated_masked_traces_with_docs = []
+                    for generated_masked_trace_wo_docs in generated_masked_traces_wo_docs:
+                        generated_masked_trace_with_docs = []
+                        for step in generated_masked_trace_wo_docs:
+                            if 'docs' in step:
+                                docs_with_context = []
+                                for doc_item in step["docs"]:
+                                    if doc_item['id'] == '-1':
+                                        docs_with_context.append(doc_item)
+                                    else:
+                                        docs_with_context.append({
+                                            'id': doc_item['id'],
+                                            'contents': load_docs(rag_model.retriever.corpus, [doc_item['id']])[0]['contents']
+                                        })
+                                step_with_docs = {
+                                    **step,
+                                    "docs": docs_with_context
+                                }
+                                generated_masked_trace_with_docs.append(step_with_docs)
+                            else:
+                                generated_masked_trace_with_docs.append(step)
+                        generated_masked_traces_with_docs.append(generated_masked_trace_with_docs)
+                        
+                    ## -- Convert masked trace to text
+                    masked_traces_text = [
+                        rag_model.get_input_prompt_self_consistency(user_query, masked_trace)
+                        for masked_trace in generated_masked_traces_with_docs
+                    ]
+                    final_answer_list = [
+                        masked_trace[-1]['answer'].strip() if masked_trace[-1]['answer'] else ''
+                        for masked_trace in generated_masked_traces_with_docs
+                    ]
+                    context = passages2string(get_unique_docs(generated_masked_traces_with_docs))
+                            
+                
                 ### --- 2) Calculate UE scores
                 ue_scores = uncertainty_estimator_model.estimate(
                     user_query,
@@ -183,13 +234,12 @@ def ue_generation(args):
                 }
                 cons_f.write(json.dumps(cons_item) + "\n")
                 
-                if trace_f:
+                if trace_f and not are_traces_generated:
                     new_masked_traces = [
                         [
                             {
-                                "think": step["think"],
-                                "search_query": step["search_query"],
-                                "docs": [{"id": doc["id"]} for doc in step["docs"]]
+                                **step,
+                                "docs": [{"id": doc["id"]} if doc["id"] != "-1" else doc for doc in step["docs"]]
                             } if "docs" in step else step
                             for step in masked_trace
                         ]
@@ -204,7 +254,7 @@ def ue_generation(args):
 
         finally:
             cons_f.close()
-            if trace_f:
+            if trace_f and not are_traces_generated:
                 trace_f.close()
 
 def merge_result_files(args):
@@ -331,9 +381,9 @@ def correctness_evaluation_mv(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
     # parser.add_argument('--model_name_or_path', type=str, default="agentrl/ReSearch-Qwen-7B-Instruct")
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_token', type=int, default=1024)
     
@@ -370,7 +420,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='react', choices=[
+    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_sentence_retrieval', 'fix_length_retrieval', 'ircot', 'flare', 'dragin',
         'react', 'self_ask', 'search_o1',
@@ -427,5 +477,5 @@ if __name__ == "__main__":
     evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     
-    # python run_uncertainty_estimation/ue_generation.py
-    # accelerate launch --multi_gpu run_uncertainty_estimation/ue_generation.py
+    # python run_uncertainty_estimation/ue_calculation.py
+    # accelerate launch --multi_gpu run_uncertainty_estimation/ue_calculation.py

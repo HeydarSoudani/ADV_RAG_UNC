@@ -131,6 +131,7 @@ class BaseRetriever:
         
         self.index_path = config.index_path
         self.corpus_path = config.corpus_path
+        self._docid_to_doc = None
 
     def _search(self, query: str, num: int, return_score: bool):
         raise NotImplementedError
@@ -226,8 +227,6 @@ class DenseRetriever(BaseRetriever):
             co = faiss.GpuClonerOptions()
             co.useFloat16 = True
             self.index = faiss.index_cpu_to_gpu(res, device_id, self.index, co)
-
-
 
         print('loading corpus ...')
         self.corpus = load_corpus(self.corpus_path)

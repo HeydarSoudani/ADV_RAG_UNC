@@ -24,8 +24,8 @@ class UncertaintyEstimator:
         self.ue_methods_ = {
             "majority_voting": MajorityVoting(self.se_model),
             # "p_true": PTrue(self.model, self.tokenizer),
-            # "num_ss": NumSemanticSet(model_for_entailment, tokenizer_for_entailment),
-            # "sum_eigen": SumEigenUncertainty(model_for_entailment, tokenizer_for_entailment),
+            "num_ss": NumSemanticSet(model_for_entailment, tokenizer_for_entailment),
+            "sum_eigen": SumEigenUncertainty(model_for_entailment, tokenizer_for_entailment),
             # "eccentricity": EccentricityUncertainty(model_for_entailment, tokenizer_for_entailment),
             # "matrix_degree": MatrixDegreeUncertainty(model_for_entailment, tokenizer_for_entailment),
             # "predictive_entropy": PredictiveEntropy(),
