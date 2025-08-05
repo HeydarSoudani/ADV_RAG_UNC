@@ -397,64 +397,99 @@ class FixSentenceRAG(BasicRAG):
         return pred_answer, path
 
 class IRCOT_RAG(BasicRAG):
-    def __init__(self, args, device):
-        super().__init__(args, device)
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        super().__init__(generation_model, generation_tokenizer, device, args)
         self.system_prompt = SYSTEM_PROMPT_IRCOT
+        self.answer_template = '{answer}'
 
     def inference(self, question):
+        path = []
+        
         # Initial retrieval
         search_query = question
         cur_search_docs = self.retriever.search(search_query)
+        user_input_prompt = self.user_prompt_with_context.format(
+            examples=self.cot_examples_text,
+            documents=passages2string(cur_search_docs),
+            question=question
+        )
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": self.user_prompt_with_context.format(
-                examples=self.cot_examples_text,
-                documents=passages2string(cur_search_docs),
-                question=question
-            )}
+            {"role": "user", "content": user_input_prompt}
         ]
+        path.append({'think': '', 'search_query': search_query, 'docs': cur_search_docs})
         
-        path, iter_num = [], 0
-        while iter_num < self.args.max_iter:
+        for idx in range(self.args.max_iter):
             output, output_text = self.generator.generate(messages, self.generator.ircot_stopping_criteria)
-            path.append({'search_query': search_query, 'docs': cur_search_docs, 'think': output_text})
-            pred_answer = get_answer(output_text)
-            
-            if "So the answer is:" in output_text:
-                path.append({'think': output_text})
+
+            if "the answer is:" in output_text:
                 break
-            iter_num += 1
-            if (output[-1].item() in self.generator.curr_eos) or (iter_num == self.args.max_iter):
+            if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.args.max_iter):
                 break  # Don't perform another retrieval or prompt construction
             
+            think = output_text
             search_query = output_text
             cur_search_docs = self.retriever.search(search_query) if search_query else []
-            tmp = [doc for step in path for doc in step['docs']] + cur_search_docs
+            tmp_docs = [doc for step in path for doc in step['docs']] + cur_search_docs
+            
+            path.append({
+                'think': think,
+                'search_query': search_query,
+                'docs': cur_search_docs
+            })
+            
+            user_input_prompt = self.user_prompt_with_context.format(
+                examples=self.cot_examples_text,
+                documents=passages2string(tmp_docs),
+                question=question
+            )
             messages = [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": self.user_prompt_with_context.format(
-                    examples=self.cot_examples_text,
-                    documents=passages2string(tmp),
-                    question=question
-                )},
+                {"role": "user", "content": user_input_prompt},
                 {"role": "assistant", "content": ' '.join([step['think'] for step in path])}
             ]
         
         # Regenerate the last sentence if it is needed
-        if "So the answer is:" not in output_text:
-            docs_tmp = [doc for step in path for doc in step['docs']]
-            output_text = self.regenerate(self.system_prompt, question, docs_tmp, path)
-            path.append({'think': f'So the answer is: {output_text}'})
-            pred_answer = get_answer(output_text) if get_answer(output_text) else output_text       
+        if "the answer is:" not in output_text:
+            text = ' '.join([step['think'] for step in path]) + " .So the answer is:"
+            tmp_docs = [doc for step in path for doc in step['docs']]
+            user_input_prompt = self.user_prompt_with_context.format(
+                examples=self.cot_examples_text,
+                documents=passages2string(tmp_docs),
+                question=question
+            )
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": user_input_prompt},
+                {"role": "assistant", "content": text}
+            ]
+            _, output_text = self.generator.generate(messages)
+            pred_answer = get_answer(output_text) if get_answer(output_text) else output_text
+            path.append({'think': output_text, 'answer': pred_answer})
+        
         else:
             pred_answer = get_answer(output_text)
+            path.append({'think': output_text, 'answer': pred_answer})
         
         return pred_answer, path
 
+    # --
+    def get_input_prompt_self_consistency(self, question, trace):
+        pass
+    def partial_inference_self_consistency(self, question, trace):
+        pass
+    def get_input_prompt_reasoning_consistency(self, question, trace):
+        pass
+    def partial_inference_reasoning_consistency(self, input_prompt_text):
+        pass
+    def partial_inference_rag_consistency(self, question, generated_trace):
+        pass
+
 class FLARE_RAG_V1(BasicRAG):
     # Base on DRAGIN git code
-    def __init__(self, args, device):
-        super().__init__(args, device)
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        super().__init__(generation_model, generation_tokenizer, device, args)
+        self.answer_template = '{answer}'
         self.modifier = self.modifier_token if args.modifier_method=='token' else self.modifier_entity
         self.system_prompt = SYSTEM_PROMPT_IRCOT
         
@@ -578,78 +613,104 @@ class FLARE_RAG_V1(BasicRAG):
         return text, None, False
     
     def inference(self, question):
-        
         path, text = [], ''
         while True:
             old_len = len(text)
+            user_input_prompt = self.user_prompt_wo_context.format(
+                examples=self.cot_examples_text,
+                question=question
+            )
             messages = [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": self.user_prompt_wo_context.format(
-                    examples=self.cot_examples_text,
-                    question=question
-                )},
+                {"role": "user", "content": user_input_prompt},
                 {"role": "assistant", "content": text}
             ]
-            # print(messages)
-            # print('----')
             new_text, tokens_text, logprobs = self.generator.generate_with_scores(
-                messages,
-                max_new_tokens=self.args.max_new_tokens,
+                messages, max_new_tokens=self.args.max_new_tokens,
             )
             ptext, curr, hallucination = self.modifier(new_text, tokens_text, logprobs)
             
-            # print(new_text)
-            # print(ptext)
-            # print('-')
-            # print(curr)
-            # print(hallucination)
-            # print('----')
-            
             if not hallucination:
                 text = text.strip() + " " + new_text.strip()
-                path.append({'search_query': '', 'docs': [], 'think': new_text.strip()})
+                path.append({'think': new_text.strip(), 'search_query': '', 'docs': []})
             else:
                 if self.args.query_formulation == "direct":
-                    retrieve_question = curr.replace("[xxx]", "")
+                    # retrieve_question = curr.replace("[xxx]", "")
+                    retrieve_question = re.sub(r"\[xxx[^\]]*\]", "", curr)
+
                 elif self.args.query_formulation == "forward_all":
                     tmp_all = [question, text, ptext]
                     retrieve_question = " ".join(s for s in tmp_all if len(s) > 0)
                 else:
                     raise NotImplemented
-
-                search_docs = self.retriever.search(retrieve_question)
+                
+                cur_search_docs = self.retriever.search(retrieve_question)
+                tmp_docs = [doc for step in path for doc in step['docs']] + cur_search_docs
+                unq_tmp_doc = self.get_unique_docs(tmp_docs)
+                
+                user_input_prompt = self.user_prompt_with_context.format(
+                    examples=self.cot_examples_text,
+                    documents=passages2string(unq_tmp_doc),
+                    question=question
+                )
                 messages = [
                     {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": self.user_prompt_with_context.format(
-                        examples=self.cot_examples_text,
-                        documents=passages2string(search_docs),
-                        question=question
-                    )},
-                    {"role": "assistant", "content": text + " " + ptext.strip()}
+                    {"role": "user", "content": user_input_prompt},
+                    {"role": "assistant", "content": f"{text} {ptext.strip()}"}
                 ]
                 _, new_text = self.generator.generate(messages, self.generator.ircot_stopping_criteria)
-                text = text.strip() + " " + ptext.strip() + " " + new_text.strip()
-                path.append({'search_query': retrieve_question, 'docs': search_docs, 'think': f"{ptext.strip()} {new_text.strip()}"})
+                text = f"{text.strip()} {ptext.strip()} {new_text.strip()}"
+                path.append({
+                    'think': f"{ptext.strip()} {new_text.strip()}",
+                    'search_query': retrieve_question,
+                    'docs': cur_search_docs
+                })
 
             tokens_count = len(self.generator.tokenizer.encode(text))
             if tokens_count > self.args.max_new_tokens or len(text) <= old_len or "the answer is" in text:
                 break
 
         # Regenerate the last sentence if it is needed
-        if "So the answer is:" not in text:
-            docs_tmp = path[-1]['docs']
-            output_text = self.regenerate(self.system_prompt, question, docs_tmp, path)
-            path.append({'think': f'So the answer is: {output_text}'})
+        if "the answer is:" not in text:
+            tmp_docs = [doc for step in path for doc in step['docs']]
+            unq_tmp_doc = self.get_unique_docs(tmp_docs)
+            user_input_prompt = self.user_prompt_with_context.format(
+                examples=self.cot_examples_text,
+                documents=passages2string(unq_tmp_doc),
+                question=question
+            )
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": user_input_prompt},
+                {"role": "assistant", "content": text}
+            ]
+            _, output_text = self.generator.generate(messages)
             pred_answer = get_answer(output_text) if get_answer(output_text) else output_text       
+            path.append({'think': output_text, 'answer': pred_answer})
+            
         else:
             pred_answer = get_answer(text)
+            path.append({'think': f"{ptext.strip()} {new_text.strip()}", 'answer': pred_answer})
         
         return pred_answer, path
 
+    # --
+    def get_input_prompt_self_consistency(self, question, trace):
+        pass
+    def partial_inference_self_consistency(self, question, trace):
+        pass
+    def get_input_prompt_reasoning_consistency(self, question, trace):
+        pass
+    def partial_inference_reasoning_consistency(self, input_prompt_text):
+        pass
+    def partial_inference_rag_consistency(self, question, generated_trace):
+        pass
+
 class DRAGIN_RAG(BasicRAG):
-    def __init__(self, args, device):
-        super().__init__(args, device)
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        super().__init__(generation_model, generation_tokenizer, device, args)
         self.system_prompt = SYSTEM_PROMPT_DRAGIN
+        self.answer_template = '{answer}'
     
     def get_sentence_token_indices(self, text, tokens):
         doc = nlp(text)
@@ -708,7 +769,6 @@ class DRAGIN_RAG(BasicRAG):
         return False, text, None, None
 
     def keep_real_words(self, prev_text, curr_tokens, curr_hit):
-        
         curr_text = " ".join(curr_tokens)
         all_text = prev_text + " " + curr_text
         input_ids = self.generator.tokenizer.encode(all_text, return_tensors="pt")
@@ -809,12 +869,13 @@ class DRAGIN_RAG(BasicRAG):
         path, text = [], ""
         while True:
             old_len = len(text)
+            user_input_prompt = self.user_prompt_wo_context.format(
+                examples=self.cot_examples_text,
+                question=question
+            )
             messages = [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": self.user_prompt_wo_context.format(
-                    examples=self.cot_examples_text,
-                    question=question
-                )},
+                {"role": "user", "content": user_input_prompt},
                 {"role": "assistant", "content": text}
             ]
             new_text, tokens, attns, logprobs, entropies = self.generator.generate_attn(
@@ -823,17 +884,9 @@ class DRAGIN_RAG(BasicRAG):
             weight = entropies if self.args.rag_method == "dragin" else [-v for v in logprobs]
             hallucination, ptext, curr_tokens, curr_hit =  self.modifier(new_text, tokens, attns, weight)
             
-            # print(messages)
-            # print('-')
-            # print(new_text)
-            # print(ptext)
-            # print(curr_tokens)
-            # print(curr_hit)
-            # print('-')
-            
             if not hallucination:
                 text = text.strip() + " " + new_text.strip()
-                path.append({'search_query': '', 'docs': [], 'think': new_text.strip()})
+                path.append({'think': new_text.strip(), 'search_query': '', 'docs': []})
             else:
                 forward_all = [question, text, ptext]
                 forward_all = " ".join(s for s in forward_all if len(s) > 0)
@@ -858,46 +911,67 @@ class DRAGIN_RAG(BasicRAG):
                 else:
                     raise NotImplemented
                 
-                search_docs = self.retriever.search(retrieve_question)
+                cur_search_docs = self.retriever.search(retrieve_question)
+                tmp_docs = [doc for step in path for doc in step['docs']] + cur_search_docs
+                unq_tmp_doc = self.get_unique_docs(tmp_docs)
+                
+                user_input_prompt = self.user_prompt_with_context.format(
+                    examples=self.cot_examples_text,
+                    documents=passages2string(unq_tmp_doc),
+                    question=question
+                )
                 messages = [
                     {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": self.user_prompt_with_context.format(
-                        examples=self.cot_examples_text,
-                        documents=passages2string(search_docs),
-                        question=question
-                    )},
-                    {"role": "assistant", "content": text + " " + ptext.strip()}
+                    {"role": "user", "content": user_input_prompt},
+                    {"role": "assistant", "content": f"{text} {ptext.strip()}"}
                 ]
-                _, new_text = self.generator.generate(
-                    messages,
-                    max_new_tokens=self.args.max_new_tokens
-                )
-                text = text.strip() + " " + ptext.strip() + " " + new_text.strip()
-                
-                path.append({'search_query': retrieve_question, 'docs': search_docs, 'think': f"{ptext.strip()} {new_text.strip()}"})
+                _, new_text = self.generator.generate(messages, max_new_tokens=self.args.max_new_tokens)
+                text = f"{text.strip()} {ptext.strip()} {new_text.strip()}"
+                path.append({
+                    'think': f"{ptext.strip()} {new_text.strip()}",
+                    'search_query': retrieve_question,
+                    'docs': cur_search_docs
+                })
             
-                # print(messages)
-                # print('-')
-                # print(retrieve_question)
-                # print(new_text)
-            
-            # print('----') 
-               
             tokens_count = len(self.generator.tokenizer.encode(text))
             if tokens_count > self.args.max_new_tokens or len(text) <= old_len or "the answer is" in text:
                 break
             
-        
         # Regenerate the last sentence if it is needed
-        if "So the answer is:" not in text:
-            docs_tmp = path[-1]['docs']
-            output_text = self.regenerate(self.system_prompt, question, docs_tmp, path)
-            path.append({'think': f'So the answer is: {output_text}'})
+        if "the answer is:" not in text:
+            tmp_docs = [doc for step in path for doc in step['docs']]
+            unq_tmp_doc = self.get_unique_docs(tmp_docs)
+            user_input_prompt = self.user_prompt_with_context.format(
+                examples=self.cot_examples_text,
+                documents=passages2string(unq_tmp_doc),
+                question=question
+            )
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": user_input_prompt},
+                {"role": "assistant", "content": text}
+            ]
+            _, output_text = self.generator.generate(messages)
             pred_answer = get_answer(output_text) if get_answer(output_text) else output_text       
+            path.append({'think': output_text, 'answer': pred_answer})
+            
         else:
             pred_answer = get_answer(text)
+            path.append({'think': f"{ptext.strip()} {new_text.strip()}", 'answer': pred_answer})
         
         return pred_answer, path
+
+    # --
+    def get_input_prompt_self_consistency(self, question, trace):
+        pass
+    def partial_inference_self_consistency(self, question, trace):
+        pass
+    def get_input_prompt_reasoning_consistency(self, question, trace):
+        pass
+    def partial_inference_reasoning_consistency(self, input_prompt_text):
+        pass
+    def partial_inference_rag_consistency(self, question, generated_trace):
+        pass
 
 class SelfAsk_RAG(BasicRAG):
     def __init__(self, generation_model, generation_tokenizer, device, args):
@@ -1759,7 +1833,7 @@ class SearchO1_RAG(BasicRAG):
         # 
         if args.dataset in ['nq', 'triviaqa']:
             self.instruction = get_singleqa_search_o1_instruction(self.MAX_SEARCH_LIMIT)
-        elif args.dataset in ['hotpotqa', 'musique', '2wikimultihopqa', 'bamboogle']:
+        elif args.dataset in ['popqa', 'hotpotqa', 'musique', '2wikimultihopqa', 'bamboogle']:
             self.instruction = get_multiqa_search_o1_instruction(self.MAX_SEARCH_LIMIT)
         # 
         self.answer_template = '\\boxed{answer}'
@@ -1943,184 +2017,6 @@ class SearchO1_RAG(BasicRAG):
         
         return pred_answer, path
 
-class SearchR1_RAG(BasicRAG):
-    def __init__(self, generation_model, generation_tokenizer, device, args):
-        super().__init__(generation_model, generation_tokenizer, device, args)
-        self.curr_step_template = '\n\n{output_text}<information>{search_results}</information>\n\n'
-        self.answer_template = '<answer>{answer}</answer>'
-        self.prompt = """Answer the given question. \
-You must conduct reasoning inside <think> and </think> first every time you get new information. \
-After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. \
-You can search as many times as your want. \
-If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}\n"""
-    
-    def get_think(self, text):
-        pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
-        matches = pattern.findall(text)
-        if matches:
-            # return matches[-1]
-            return matches[0]
-        else:
-            return None
-
-    def get_partial_think(self, text):
-        pattern = re.compile(r"(.*?)</think>", re.DOTALL)
-        matches = pattern.findall(text)
-        if matches:
-            # return matches[-1]
-            return matches[0]
-        else:
-            return None
-
-    def get_query(self, text):
-        pattern = re.compile(r"<search>(.*?)</search>", re.DOTALL)
-        matches = pattern.findall(text)
-        if matches:
-            # return matches[-1]
-            return matches[0]
-        else:
-            return None
-
-    def get_answer(self, text):
-        pattern = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
-        matches = pattern.findall(text)
-        if matches:
-            # return matches[-1]
-            return matches[0]
-        else:
-            return None
-    
-    def get_partial_answer(self, text):
-        pattern = re.compile(r"(.*?)</answer>", re.DOTALL)
-        matches = pattern.findall(text)
-        if matches:
-            # return matches[-1]
-            return matches[0]
-        else:
-            return None
-
-    def inference(self, question):
-        input_prompt = self.prompt.format(question=question)
-        messages = [{"role": "user", "content": input_prompt}]
-        
-        path = []
-        while True:
-            output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
-    
-            if output_[-1].item() in self.generator.curr_eos:
-                break
-        
-            tmp_query = self.get_query(output_text)
-            if tmp_query:
-                search_docs = self.retriever.search(tmp_query)
-                search_results = passages2string(search_docs)
-            else:
-                search_docs, search_results = [], ''
-
-            path.append({
-                'think': self.get_think(output_text),
-                'search_query': tmp_query,
-                'docs': search_docs
-            })
-            search_text = self.curr_step_template.format(output_text=output_text, search_results=search_results)
-            input_prompt += search_text
-            messages = [{"role": "user", "content": input_prompt}]
-
-        one_step_think = self.get_think(output_text)
-        pred_answer = self.get_answer(output_text)
-        path.append({'think': one_step_think, 'answer': pred_answer})
-            
-        return pred_answer, path
-    
-    # --
-    def get_input_prompt_self_consistency(self, question, trace):
-        prompt_text = self.prompt.format(question=question)
-        for step in trace[:-1]:
-            prompt_text += f"<think> {step['think']} </think>\n"
-            prompt_text += f"<search> {step['search_query']} </search>\n"
-            prompt_text += f"<information> {passages2string(step['docs'])} </information>\n\n"
-        prompt_text += f"<think> {trace[-1]['think']} </think>\n"
-        # prompt_text += f"<answer> "
-        
-        return prompt_text
-    
-    def partial_inference_self_consistency(self, question, trace):
-        answer_list = []
-        input_prompt_text = self.get_input_prompt_self_consistency(question, trace)
-        messages = [{"role": "user", "content": input_prompt_text}]
-        for i in range(self.args.n_generations):
-            output_, output_text = self.generator.generate(
-                messages,
-                self.generator.searchr1_answer_stopping_criteria,
-                temperature=self.args.consistency_temperature
-            )
-            answer_ = self.get_answer(output_text)
-            answer = answer_.strip() if answer_ else ''
-            answer_list.append(answer)
-        
-        return answer_list
-    
-    def get_input_prompt_reasoning_consistency(self, question, trace):
-        prompt_text = self.prompt.format(question=question)
-        for step in trace[:-1]:
-            prompt_text += f"<think> {step['think']} </think>\n"
-            prompt_text += f"<search> {step['search_query']} </search>\n"
-            prompt_text += f"<information> {passages2string(step['docs'])} </information>\n\n"
-        # prompt_text += f"<think> {trace[-1]['think']} "
-        return prompt_text 
-        
-    def partial_inference_reasoning_consistency(self, input_prompt_text):
-        messages = [{"role": "user", "content": input_prompt_text}]
-        _, output_text = self.generator.generate(
-            messages,
-            self.generator.searchr1_answer_stopping_criteria,
-            temperature=self.args.consistency_temperature
-        )
-        answer_ = self.get_answer(output_text)
-        answer = answer_.strip() if answer_ else ''
-        think_ = self.get_think(output_text)
-        think = think_.strip() if think_ else ''
-        return think, answer
-        
-    def partial_inference_rag_consistency(self, question, generated_trace):
-        input_prompt = self.prompt.format(question=question)
-        generated_trace_text = ''.join(
-            self.curr_step_template.format(
-                output_text=f"<think> {step['think']} </think>\n<search> {step['search_query']} </search>\n",
-                search_results=passages2string(step['docs'])
-            ) for step in generated_trace
-        )
-        input_prompt += generated_trace_text
-        messages = [{"role": "user", "content": input_prompt}]
-        
-        path = []
-        while True:
-            output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
-            if output_[-1].item() in self.generator.curr_eos:
-                break
-
-            tmp_query = self.get_query(output_text)
-            if tmp_query:
-                search_docs = self.retriever.search(tmp_query)
-                search_results = passages2string(search_docs)
-            else:
-                search_docs, search_results = [], ''
-
-            path.append({
-                'think': self.get_think(output_text),
-                'search_query': tmp_query,
-                'docs': search_docs
-            })
-            search_text = self.curr_step_template.format(output_text=output_text, search_results=search_results)
-            input_prompt += search_text
-            messages = [{"role": "user", "content": input_prompt}]
-
-        one_step_think = self.get_think(output_text)
-        pred_answer = self.get_answer(output_text)
-        path.append({'think': one_step_think, 'answer': pred_answer})
-            
-        return pred_answer, path
-    
 class ReSearch_RAG(BasicRAG):
     def __init__(self, generation_model, generation_tokenizer, device, args):
         super().__init__(generation_model, generation_tokenizer, device, args)
@@ -2313,8 +2209,196 @@ In the last part of the answer, the final exact answer is enclosed within \\boxe
         pred_answer = self.get_boxed_answer(output_text)
         path.append({'think': one_step_think, 'answer': pred_answer})
     
-        
         return pred_answer, path
+
+class SearchR1_RAG(BasicRAG):
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        super().__init__(generation_model, generation_tokenizer, device, args)
+        self.curr_step_template = '\n\n{output_text}<information>{search_results}</information>\n\n'
+        self.answer_template = '<answer>{answer}</answer>'
+        self.prompt = """Answer the given question. \
+You must conduct reasoning inside <think> and </think> first every time you get new information. \
+After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. \
+You can search as many times as your want. \
+If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}\n"""
+    
+    def get_think(self, text):
+        pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+        matches = pattern.findall(text)
+        if matches:
+            # return matches[-1]
+            return matches[0]
+        else:
+            return None
+
+    def get_partial_think(self, text):
+        pattern = re.compile(r"(.*?)</think>", re.DOTALL)
+        matches = pattern.findall(text)
+        if matches:
+            # return matches[-1]
+            return matches[0]
+        else:
+            return None
+
+    def get_query(self, text):
+        pattern = re.compile(r"<search>(.*?)</search>", re.DOTALL)
+        matches = pattern.findall(text)
+        if matches:
+            # return matches[-1]
+            return matches[0]
+        else:
+            return None
+
+    def get_answer(self, text):
+        pattern = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
+        matches = pattern.findall(text)
+        if matches:
+            # return matches[-1]
+            return matches[0]
+        else:
+            return None
+    
+    def get_partial_answer(self, text):
+        pattern = re.compile(r"(.*?)</answer>", re.DOTALL)
+        matches = pattern.findall(text)
+        if matches:
+            # return matches[-1]
+            return matches[0]
+        else:
+            return None
+
+    def inference(self, question):
+        input_prompt = self.prompt.format(question=question)
+        messages = [{"role": "user", "content": input_prompt}]
+        
+        path = []
+        while True:
+            output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
+    
+            if output_[-1].item() in self.generator.curr_eos:
+                break
+        
+            tmp_query = self.get_query(output_text)
+            if tmp_query:
+                search_docs = self.retriever.search(tmp_query)
+                search_results = passages2string(search_docs)
+            else:
+                search_docs, search_results = [], ''
+
+            path.append({
+                'think': self.get_think(output_text),
+                'search_query': tmp_query,
+                'docs': search_docs
+            })
+            search_text = self.curr_step_template.format(output_text=output_text, search_results=search_results)
+            input_prompt += search_text
+            messages = [{"role": "user", "content": input_prompt}]
+
+        one_step_think = self.get_think(output_text)
+        pred_answer = self.get_answer(output_text)
+        path.append({'think': one_step_think, 'answer': pred_answer})
+            
+        return pred_answer, path
+    
+    # --
+    def get_input_prompt_self_consistency(self, question, trace):
+        prompt_text = self.prompt.format(question=question)
+        for step in trace[:-1]:
+            prompt_text += f"<think> {step['think']} </think>\n"
+            prompt_text += f"<search> {step['search_query']} </search>\n"
+            prompt_text += f"<information> {passages2string(step['docs'])} </information>\n\n"
+        prompt_text += f"<think> {trace[-1]['think']} </think>\n"
+        # prompt_text += f"<answer> "
+        
+        return prompt_text
+    
+    def partial_inference_self_consistency(self, question, trace):
+        answer_list = []
+        input_prompt_text = self.get_input_prompt_self_consistency(question, trace)
+        messages = [{"role": "user", "content": input_prompt_text}]
+        for i in range(self.args.n_generations):
+            output_, output_text = self.generator.generate(
+                messages,
+                self.generator.searchr1_answer_stopping_criteria,
+                temperature=self.args.consistency_temperature
+            )
+            answer_ = self.get_answer(output_text)
+            answer = answer_.strip() if answer_ else ''
+            answer_list.append(answer)
+        
+        return answer_list
+    
+    def get_input_prompt_reasoning_consistency(self, question, trace):
+        prompt_text = self.prompt.format(question=question)
+        for step in trace[:-1]:
+            prompt_text += f"<think> {step['think']} </think>\n"
+            prompt_text += f"<search> {step['search_query']} </search>\n"
+            prompt_text += f"<information> {passages2string(step['docs'])} </information>\n\n"
+        # prompt_text += f"<think> {trace[-1]['think']} "
+        return prompt_text 
+        
+    def partial_inference_reasoning_consistency(self, input_prompt_text):
+        messages = [{"role": "user", "content": input_prompt_text}]
+        _, output_text = self.generator.generate(
+            messages,
+            self.generator.searchr1_answer_stopping_criteria,
+            temperature=self.args.consistency_temperature
+        )
+        answer_ = self.get_answer(output_text)
+        answer = answer_.strip() if answer_ else ''
+        think_ = self.get_think(output_text)
+        think = think_.strip() if think_ else ''
+        return think, answer
+        
+    def partial_inference_rag_consistency(self, question, generated_trace):
+        input_prompt = self.prompt.format(question=question)
+        generated_trace_text = ''.join(
+            self.curr_step_template.format(
+                output_text=f"<think> {step['think']} </think>\n<search> {step['search_query']} </search>\n",
+                search_results=passages2string(step['docs'])
+            ) for step in generated_trace
+        )
+        input_prompt += generated_trace_text
+        messages = [{"role": "user", "content": input_prompt}]
+        
+        path = []
+        while True:
+            output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
+            if output_[-1].item() in self.generator.curr_eos:
+                break
+
+            tmp_query = self.get_query(output_text)
+            if tmp_query:
+                search_docs = self.retriever.search(tmp_query)
+                search_results = passages2string(search_docs)
+            else:
+                search_docs, search_results = [], ''
+
+            path.append({
+                'think': self.get_think(output_text),
+                'search_query': tmp_query,
+                'docs': search_docs
+            })
+            search_text = self.curr_step_template.format(output_text=output_text, search_results=search_results)
+            input_prompt += search_text
+            messages = [{"role": "user", "content": input_prompt}]
+
+        one_step_think = self.get_think(output_text)
+        pred_answer = self.get_answer(output_text)
+        path.append({'think': one_step_think, 'answer': pred_answer})
+            
+        return pred_answer, path
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2606,33 +2690,38 @@ class DRAGIN_RAG_OLD(BasicRAG):
 
         return text, num_hallucination, generation_path, (gen_count, ret_count, sent_count, token_count)
     
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# while iter_num < self.args.max_iter:
+#     output, output_text = self.generator.generate(messages, self.generator.ircot_stopping_criteria)
+#     path.append({'search_query': search_query, 'docs': cur_search_docs, 'think': output_text})
+#     pred_answer = get_answer(output_text)
+    
+#     if "So the answer is:" in output_text:
+#         path.append({'think': output_text})
+#         break
+#     iter_num += 1
+#     if (output[-1].item() in self.generator.curr_eos) or (iter_num == self.args.max_iter):
+#         break  # Don't perform another retrieval or prompt construction
+    
+#     search_query = output_text
+#     cur_search_docs = self.retriever.search(search_query) if search_query else []
+#     tmp = [doc for step in path for doc in step['docs']] + cur_search_docs
+#     messages = [
+#         {"role": "system", "content": self.system_prompt},
+#         {"role": "user", "content": self.user_prompt_with_context.format(
+#             examples=self.cot_examples_text,
+#             documents=passages2string(tmp),
+#             question=question
+#         )},
+#         {"role": "assistant", "content": ' '.join([step['think'] for step in path])}
+#     ]
+        # Regenerate the last sentence if it is needed
+# if "So the answer is:" not in output_text:
+# docs_tmp = [doc for step in path for doc in step['docs']]
+# output_text = self.regenerate(self.system_prompt, question, docs_tmp, path)
+# path.append({'think': f'So the answer is: {output_text}'})
+# pred_answer = get_answer(output_text) if get_answer(output_text) else output_text       
+# else:
+# pred_answer = get_answer(output_text)
 
 
 # gen_count, ret_count, sent_count, token_count = 0,0,0,0

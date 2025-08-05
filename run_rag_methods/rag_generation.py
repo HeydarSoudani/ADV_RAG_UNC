@@ -112,21 +112,21 @@ def rag_generation(args):
     elif args.rag_method == "fix_length_retrieval":
         rag_model = FixLengthRAG(args, device)
     elif args.rag_method == 'ircot':
-        rag_model = IRCOT_RAG(args, device)
+        rag_model = IRCOT_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'flare':
-        rag_model = FLARE_RAG_V1(args, device)
+        rag_model = FLARE_RAG_V1(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'dragin':
-        rag_model = DRAGIN_RAG(args, device)
+        rag_model = DRAGIN_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'self_ask':
         rag_model = SelfAsk_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'react':
         rag_model = ReAct_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'search_o1':
         rag_model = SearchO1_RAG(generation_model, generation_tokenizer, device, args)
-    elif args.rag_method == 'search_r1':
-        rag_model = SearchR1_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'research':
         rag_model = ReSearch_RAG(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'search_r1':
+        rag_model = SearchR1_RAG(generation_model, generation_tokenizer, device, args)
     else:
         raise NotImplementedError
 
@@ -141,7 +141,7 @@ def rag_generation(args):
             inference_results_file_ranked = f"{args.output_dir}/inference_results_rank{accelerator.process_index}.jsonl"
         with open(inference_results_file_ranked, 'w') as res_f:
             for i, sample in enumerate(tqdm(test_dataset_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 30:
+                # if i == 5:
                 #     break
                 qid, question, gt_answers = sample['id'], sample['question'], sample['golden_answers']
                 question = question.strip()
@@ -233,7 +233,7 @@ def subsample_generation(args):
                     qids.append(match.group(1))
         return qids
 
-    sample_size = 125
+    sample_size = 500
     src_file = args.inference_results_file
     
     # Subsampling qids
@@ -306,16 +306,16 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='react', choices=[
+    parser.add_argument('--rag_method', type=str, default='flare', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
-        'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot',
-        'flare', 'dragin',
+        'fix_length_retrieval', 'fix_sentence_retrieval',
+        'ircot', 'flare', 'dragin',
         'self_ask', 'react', 'search_o1',
-        'search_r1', 'research'
+        'research', 'search_r1'
     ])
     parser.add_argument('--generate_fix_length', type=int, default=25)
     parser.add_argument('--modifier_method', type=str, default='token', choices=['token', 'entity'])          # for FLARE
-    parser.add_argument('--query_formulation', type=str, default='real_words', choices=[                      # for FLARE & DRAGIN
+    parser.add_argument('--query_formulation', type=str, default='real_words', choices=[                          # for FLARE & DRAGIN
         'direct', 'forward_all',
         'real_words', 'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens',
     ])
@@ -352,10 +352,10 @@ if __name__ == "__main__":
     ### === Run Steps ============================
     set_seed(args.seed)
     # rag_generation(args)
-    # merge_result_files(args)
+    merge_result_files(args)
     # get_num_retrieval(args)
-    # evaluate(args)
-    subsample_generation(args)
+    evaluate(args)
+    # subsample_generation(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py

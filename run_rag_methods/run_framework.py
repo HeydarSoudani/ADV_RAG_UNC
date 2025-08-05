@@ -49,9 +49,10 @@ if __name__ == "__main__":
     # RAG setup
     parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
-        'fix_length_retrieval', 'fix_sentence_retrieval', 'ircot',
-        'flare', 'dragin',
-        'react', 'self_ask', 'search_o1', 'search_r1'
+        'fix_length_retrieval', 'fix_sentence_retrieval', 
+        'ircot', 'flare', 'dragin',
+        'react', 'self_ask', 'search_o1',
+        'research', 'search_r1'
     ])
     parser.add_argument('--generate_fix_length', type=int, default=25)
     parser.add_argument('--modifier_method', type=str, default='token', choices=['token', 'entity'])          # for FLARE
