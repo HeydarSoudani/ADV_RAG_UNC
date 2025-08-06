@@ -1724,7 +1724,6 @@ class ReAct_RAG(BasicRAG):
                 temperature=self.args.consistency_temperature,
                 # max_new_tokens=32
             )
-            print(output_text)
             pred_answer = self.clean_output_finial_answer(output_text)
     
         return thought, pred_answer

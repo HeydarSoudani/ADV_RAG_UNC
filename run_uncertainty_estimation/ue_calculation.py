@@ -23,7 +23,7 @@ from run_uncertainty_estimation.ue_methods import *
 from run_rag_methods.src.retrievers_local import load_docs
 
 def ue_generation(args):
-    are_traces_generated = True
+    are_traces_generated = False
     # === MultiGPU setup =========================
     accelerator = Accelerator()
     device = accelerator.device
@@ -95,16 +95,18 @@ def ue_generation(args):
         rag_model = DirectInference(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'cot_inference':
         rag_model = CoTInference(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == "cot_single_retrieval":
+        rag_model = CoTSingleRAG(args, device)
     elif args.rag_method == "fix_sentence_retrieval":
         rag_model = FixSentenceRAG(args, device)
     elif args.rag_method == "fix_length_retrieval":
         rag_model = FixLengthRAG(args, device)
     elif args.rag_method == 'ircot':
-        rag_model = IRCOT_RAG(args, device)
+        rag_model = IRCOT_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'flare':
-        rag_model = FLARE_RAG_V1(args, device)
+        rag_model = FLARE_RAG_V1(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'dragin':
-        rag_model = DRAGIN_RAG(args, device)
+        rag_model = DRAGIN_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'self_ask':
         rag_model = SelfAsk_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'react':
@@ -420,12 +422,12 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
+    parser.add_argument('--rag_method', type=str, default='search_o1', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
-        'fix_sentence_retrieval', 'fix_length_retrieval', 'ircot', 'flare', 'dragin',
-        'react', 'self_ask', 'search_o1',
-        'search_r1', 'research'
-        'RASPberry'
+        'fix_length_retrieval', 'fix_sentence_retrieval',
+        'ircot', 'flare', 'dragin',
+        'self_ask', 'react', 'search_o1',
+        'research', 'search_r1'
     ])
     parser.add_argument('--max_iter', type=int, default=5)
     
@@ -472,9 +474,9 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    ue_generation(args)
-    # merge_result_files(args)
-    # evaluation_correlation(args)
+    # ue_generation(args)
+    merge_result_files(args)
+    evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_calculation.py

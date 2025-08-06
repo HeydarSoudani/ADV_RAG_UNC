@@ -15,8 +15,11 @@ from utils.general_utils import set_seed
 
 def correctness_distribution_analyze(args):
     rag_methods = [
-        ('Qwen2.5-7B-Instruct', 'react'),
+        ('Qwen2.5-7B-Instruct', 'ircot'),
+        ('Qwen2.5-7B-Instruct', 'flare', 0.08),
+        ('Qwen2.5-7B-Instruct', 'dragin', 0.6),
         ('Qwen2.5-7B-Instruct', 'self_ask'),
+        ('Qwen2.5-7B-Instruct', 'react'),
         ('Qwen2.5-7B-Instruct', 'search_o1'),
         ('ReSearch-Qwen-7B-Instruct', 'research'),
         ('SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo', 'search_r1')
@@ -25,7 +28,10 @@ def correctness_distribution_analyze(args):
     # === Load data
     dfs = []
     for rag_method in rag_methods:
-        file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/inference_results.jsonl"
+        if rag_method[1] in ['flare', 'dragin']:
+            file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/inference_results_th{rag_method[2]}.jsonl"
+        else:
+            file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/inference_results.jsonl"
         with open(file_path, "r") as f:
             data = [json.loads(line) for line in f]
         df = pd.DataFrame(data)[["qid", "em"]].rename(columns={"em": rag_method[1]})
@@ -50,7 +56,6 @@ def correctness_distribution_analyze(args):
     oracle_accuracy = oracle_correct.mean()
     print(f"Oracle upper bound accuracy: {oracle_accuracy:.4f}")
     
-    
     # Plot UpSet
     up = UpSet(upset_data, show_counts=True, show_percentages=True)
     up.plot()
@@ -63,8 +68,8 @@ def correctness_distribution_analyze(args):
 def rag_selection(args):
     rag_methods = [
         ('Qwen2.5-7B-Instruct', 'self_ask'),
-        ('Qwen2.5-7B-Instruct', 'react', ),
-        ('Qwen2.5-7B-Instruct', 'search_o1'),
+        ('Qwen2.5-7B-Instruct', 'react'),
+        # ('Qwen2.5-7B-Instruct', 'search_o1'),
         ('ReSearch-Qwen-7B-Instruct', 'research'),
         ('SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo', 'search_r1')
     ]
@@ -85,11 +90,13 @@ def rag_selection(args):
     for df in dfs[1:]:
         merged_df = merged_df.merge(df, on="qid", how="outer")
     merged_df = merged_df.sort_values(by="qid", key=lambda x: x.str.extract(r"(\d+)").squeeze().astype(int)).reset_index(drop=True)
-    print(merged_df)
     
     
     rag_columns = [rm[1] for rm in rag_methods]
-    weights_list = [25.6, 33.6, 36.0, 39.2, 44.0]
+    # weights_list = [25.6, 33.6, 36.0, 39.2, 44.0] # bamboogle
+    weights_list = [35.60, 36.80, 33.20, 38.60, 41.60] # popqa
+    # weights_list = [33.00, 27.80, 29.00, 38.80, 41.40] # hotpotqa
+    
     rag_weights = {col: w for col, w in zip(rag_columns, weights_list)}
     print(rag_weights)
     
@@ -114,7 +121,6 @@ def rag_selection(args):
         
     merged_df[["best_answer", "best_em", "best_method", "best_confidence"]] = merged_df.apply(select_best_answer, axis=1)
 
-    print(merged_df)
     accuracy = merged_df["best_em"].mean()
     print(f"Dataset Accuracy (based on EM): {accuracy:.4f}")
 
@@ -124,7 +130,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
@@ -156,7 +162,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
@@ -179,5 +185,5 @@ if __name__ == "__main__":
     # correctness_distribution_analyze(args)
     rag_selection(args)
     
-    # python run_uncertainty_estimation/rag_voting_application.py
-    # accelerate launch --multi_gpu run_uncertainty_estimation/rag_voting_application.py
+    # python rag_selection_application/rag_selection_no_train.py
+    # accelerate launch --multi_gpu rag_selection_application/rag_selection_no_train.py

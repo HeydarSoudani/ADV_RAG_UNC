@@ -24,6 +24,7 @@ class MajorityVoting:
         clusters = self.se_model.cluster_by_meaning(question, generated_texts)
         candidates_with_prob = self.cluster2prob(clusters)
         most_confident = max(candidates_with_prob.items(), key=lambda x: x[1])
+        
         return {
             "confidence": conf,
             "uncertainty": -conf,

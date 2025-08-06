@@ -377,7 +377,14 @@ class CriticalThinkGenerator:
             if critical_thinking and critical_query:
                 thinks.append(critical_thinking)
                 queries.append(critical_query)
-        assert len(thinks) == repeat and len(queries) == repeat, f"Expected {repeat} items, got {len(thinks)} thinks and {len(queries)} queries"
+        
+        # assert len(thinks) == repeat and len(queries) == repeat, f"Expected {repeat} items, got {len(thinks)} thinks and {len(queries)} queries"
+        if len(thinks) < repeat or len(queries) < repeat:
+            print(f"[Warning] Expected {repeat} items, got {len(thinks)} thinks and {len(queries)} queries. Padding with empty strings.")
+            missing = repeat - len(thinks)
+            thinks += [""] * missing
+            queries += [""] * missing
+        
         
         return thinks, queries
 
