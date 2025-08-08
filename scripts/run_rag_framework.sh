@@ -3,7 +3,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gpus=4
 #SBATCH --cpus-per-task=4
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --time=2:00:00
 #SBATCH --mem=80GB
 #SBATCH --output=script_logging/slurm_%A.out
@@ -17,7 +17,7 @@ model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
 # model_name_or_path="agentrl/ReSearch-Qwen-7B-Instruct"
 # model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 dataset="hotpotqa"
-subsec="dev"
+subsec="train"
 fraction_of_data_to_use=2000.0
 retriever_name="rerank_l6"
 index_path="data/search_r1_files/bm25"

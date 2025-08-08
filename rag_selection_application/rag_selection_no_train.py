@@ -16,8 +16,8 @@ from utils.general_utils import set_seed
 def correctness_distribution_analyze(args):
     rag_methods = [
         ('Qwen2.5-7B-Instruct', 'ircot'),
-        ('Qwen2.5-7B-Instruct', 'flare', 0.08),
-        ('Qwen2.5-7B-Instruct', 'dragin', 0.6),
+        # ('Qwen2.5-7B-Instruct', 'flare', 0.08),
+        # ('Qwen2.5-7B-Instruct', 'dragin', 0.6),
         ('Qwen2.5-7B-Instruct', 'self_ask'),
         ('Qwen2.5-7B-Instruct', 'react'),
         ('Qwen2.5-7B-Instruct', 'search_o1'),
@@ -69,7 +69,7 @@ def rag_selection(args):
     rag_methods = [
         ('Qwen2.5-7B-Instruct', 'self_ask'),
         ('Qwen2.5-7B-Instruct', 'react'),
-        # ('Qwen2.5-7B-Instruct', 'search_o1'),
+        ('Qwen2.5-7B-Instruct', 'search_o1'),
         ('ReSearch-Qwen-7B-Instruct', 'research'),
         ('SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo', 'search_r1')
     ]
@@ -97,6 +97,7 @@ def rag_selection(args):
     weights_list = [35.60, 36.80, 33.20, 38.60, 41.60] # popqa
     # weights_list = [33.00, 27.80, 29.00, 38.80, 41.40] # hotpotqa
     
+    
     rag_weights = {col: w for col, w in zip(rag_columns, weights_list)}
     print(rag_weights)
     
@@ -107,13 +108,13 @@ def rag_selection(args):
         
         max_conf = max(cand[0][2] for cand in candidates)
         top_candidates = [cand for cand in candidates if cand[0][2] == max_conf]
+        
+        # Without weight
         selected = random.choice(top_candidates)
         
-        # Get weights for these top candidates based on method name
-        top_weights = [rag_weights[cand[1]] for cand in top_candidates]
-        
-        # Weighted random selection
-        selected = random.choices(top_candidates, weights=top_weights, k=1)[0]
+        # with weight
+        # top_weights = [rag_weights[cand[1]] for cand in top_candidates]
+        # selected = random.choices(top_candidates, weights=top_weights, k=1)[0]
         
         ans, em, conf = selected[0]  # unpack the tuple (pred_answer, em, confidence)
         method = selected[1]
