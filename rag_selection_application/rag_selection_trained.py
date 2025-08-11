@@ -16,7 +16,7 @@ from sklearn.model_selection import train_test_split
 from utils.general_utils import set_seed
 
 
-def create_train_data(args):
+def prepare_data(args, subsec='train'):
     rag_methods = [
         ('Qwen2.5-7B-Instruct', 'self_ask'),
         ('Qwen2.5-7B-Instruct', 'react'),
@@ -28,7 +28,7 @@ def create_train_data(args):
     # === Load data
     dfs = []
     for rag_method in rag_methods:
-        file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"
+        file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"
         with open(file_path, "r") as f:
             data = [json.loads(line) for line in f]
         df_temp = pd.DataFrame(data)[["qid", "query", "pred_answer", "em", "ue_scores"]]
@@ -54,13 +54,14 @@ def create_train_data(args):
     
 
 class LinUCB:
-    def __init__(self, n_arms, n_features, alpha, data_df):
+    def __init__(self, n_arms, n_features, alpha, train_df, test_df):
         self.n_arms = n_arms
         self.n_features = n_features
         self.alpha = alpha
         self.correctness_weight = 1.0
         self.training_data = None
-        self.data_df = data_df
+        self.train_df = train_df
+        self.test_df = test_df
         
         # Initialization
         self.A = [np.identity(n_features) for _ in range(n_arms)] 
@@ -119,28 +120,37 @@ class LinUCB:
         return self.correctness_weight * correctness
 
     def run_simulation(self):
-        accuracy = 0
-        total_reward = 0
-        cumulative_rewards = []
-        expected_rewards = []
-        for i, sample in enumerate(self.data_df.to_dict(orient="records")):
+        
+        # train
+        for i, sample in enumerate(self.train_df.to_dict(orient="records")):
             qid, query, context, labels = sample['qid'], sample['query'], sample['context'], sample['labels']
             context = np.array(context)
             chosen_arm = self.select_arm(context)
             correct = labels[chosen_arm]
             actual_reward = self.get_rewards(correct)
             self.update(chosen_arm, context, actual_reward)
+            
+        # test
+        accuracy, total_reward = 0, 0
+        cumulative_rewards, expected_rewards = [], []
+        for i, sample in enumerate(self.test_df.to_dict(orient="records")):
+            qid, query, context, labels = sample['qid'], sample['query'], sample['context'], sample['labels']
+            context = np.array(context)
+            chosen_arm = self.select_arm(context)
+            correct = labels[chosen_arm]
+            actual_reward = self.get_rewards(correct)
+            self.update(chosen_arm, context, actual_reward)
+        
             total_reward += actual_reward
             accuracy += correct
-            
             cumulative_rewards.append(total_reward)
             expected_rewards.append(actual_reward)
     
-        accuracy_f = accuracy / len(self.data_df)
+        accuracy_f = accuracy / len(self.test_df)
         print(f"Acc: {accuracy_f}")
         
         # self.plot_cumulative_rewards(range(len(self.data_df)), cumulative_rewards)
-        self.plot_expected_rewards(range(len(self.data_df)), expected_rewards)
+        self.plot_expected_rewards(range(len(self.test_df)), expected_rewards)
 
     
     # --------- Plots -------------------
@@ -202,11 +212,12 @@ class LinUCB:
 
 def train_rag_selector(args):
     alpha = 2.5 # Exploration parameter
-    n_arms = 2  
-    n_features = 2 # Context dim
+    n_arms = 5  
+    n_features = 5 # Context dim
     arms = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']
-    data_df = create_train_data(args)
-    lin_ucb = LinUCB(n_arms, n_features, alpha, data_df)
+    train_df = prepare_data(args, 'train')
+    test_df = prepare_data(args, 'dev')
+    lin_ucb = LinUCB(n_arms, n_features, alpha, train_df, test_df)
     lin_ucb.run_simulation()
     
 
@@ -214,10 +225,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     

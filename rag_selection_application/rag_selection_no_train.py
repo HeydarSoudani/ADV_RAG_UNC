@@ -15,7 +15,7 @@ from utils.general_utils import set_seed
 
 def correctness_distribution_analyze(args):
     rag_methods = [
-        ('Qwen2.5-7B-Instruct', 'ircot'),
+        # ('Qwen2.5-7B-Instruct', 'ircot'),
         # ('Qwen2.5-7B-Instruct', 'flare', 0.08),
         # ('Qwen2.5-7B-Instruct', 'dragin', 0.6),
         ('Qwen2.5-7B-Instruct', 'self_ask'),
@@ -131,7 +131,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
@@ -173,7 +173,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_4 (rag_methods_500)')
+    parser.add_argument('--run', type=str, default='run_1 (rag_methods_2k)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -183,8 +183,8 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    # correctness_distribution_analyze(args)
-    rag_selection(args)
+    correctness_distribution_analyze(args)
+    # rag_selection(args)
     
     # python rag_selection_application/rag_selection_no_train.py
     # accelerate launch --multi_gpu rag_selection_application/rag_selection_no_train.py
