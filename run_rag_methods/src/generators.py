@@ -52,7 +52,6 @@ class LLMGenerator:
         
         self.curr_eos = [151645, 151643] # for Qwen2.5 series models
     
-        
         # IRCoT
         ircot_target_sequences = [".", " .", ".\n", " .\n", ".\n\n", " .\n\n", "\n", " \n", "\n\n", " \n\n"]
         self.ircot_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(ircot_target_sequences, self.tokenizer)])

@@ -68,7 +68,7 @@ def correctness_distribution_analyze(args):
 def rag_selection(args):
     rag_methods = [
         ('Qwen2.5-7B-Instruct', 'self_ask'),
-        ('Qwen2.5-7B-Instruct', 'react'),
+        # ('Qwen2.5-7B-Instruct', 'react'),
         ('Qwen2.5-7B-Instruct', 'search_o1'),
         ('ReSearch-Qwen-7B-Instruct', 'research'),
         ('SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo', 'search_r1')
@@ -131,10 +131,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -163,7 +163,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
@@ -173,7 +173,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_1 (rag_methods_2k)')
+    parser.add_argument('--run', type=str, default='run_4 (rag_methods_500)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -183,8 +183,8 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    correctness_distribution_analyze(args)
-    # rag_selection(args)
+    # correctness_distribution_analyze(args)
+    rag_selection(args)
     
-    # python rag_selection_application/rag_selection_no_train.py
-    # accelerate launch --multi_gpu rag_selection_application/rag_selection_no_train.py
+    # python rag_selection_application/wo_training.py
+    # accelerate launch --multi_gpu rag_selection_application/wo_training.py

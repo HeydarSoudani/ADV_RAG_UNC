@@ -127,6 +127,7 @@ run_output/
 test/
 wandb/
 archive/
-
+models/
+cache/
 
 
