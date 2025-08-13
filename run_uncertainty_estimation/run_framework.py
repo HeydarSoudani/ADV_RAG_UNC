@@ -14,7 +14,7 @@ if __name__ == "__main__":
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--max_new_token', type=int, default=1024)
+    parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
     parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
@@ -56,6 +56,16 @@ if __name__ == "__main__":
         'self_ask', 'react', 'search_o1',
         'research', 'search_r1'
     ])
+    parser.add_argument('--generate_fix_length', type=int, default=25)
+    parser.add_argument('--modifier_method', type=str, default='token', choices=['token', 'entity'])          # for FLARE
+    parser.add_argument('--query_formulation', type=str, default='direct', choices=[                          # for FLARE & DRAGIN
+        'direct', 'forward_all',
+        'real_words', 'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens',
+    ])
+    parser.add_argument('--sentence_solver', type=str, default='avg', choices=['avg', 'max', 'min'])          # for FLARE
+    parser.add_argument('--hallucination_threshold', type=float, default=0.08)                                # for FLARE & DRAGIN
+    parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
+    parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
     parser.add_argument('--max_iter', type=int, default=5)
     
     # Consistency Generation Methods (answer list) ---

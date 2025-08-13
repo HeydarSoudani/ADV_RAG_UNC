@@ -166,8 +166,9 @@ def ue_generation(args):
     
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 10:
-                #     break
+                print(qid)
+                if i == 10:
+                    break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 
@@ -213,8 +214,7 @@ def ue_generation(args):
                         for masked_trace in generated_masked_traces_with_docs
                     ]
                     context = passages2string(get_unique_docs(generated_masked_traces_with_docs))
-                            
-                
+
                 ### --- 2) Calculate UE scores
                 ue_scores = uncertainty_estimator_model.estimate(
                     user_query,
@@ -379,21 +379,20 @@ def correctness_evaluation_mv(args):
     print(f"EM (full): {np.mean(em_org_full_evaluation)*100}")
     print(f"EM (sub): {np.mean(em_org_sub_evaluation)*100}")
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
     # parser.add_argument('--model_name_or_path', type=str, default="agentrl/ReSearch-Qwen-7B-Instruct")
-    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--max_new_token', type=int, default=1024)
+    parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -422,16 +421,26 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
+    parser.add_argument('--rag_method', type=str, default='dragin', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
         'self_ask', 'react', 'search_o1',
         'research', 'search_r1'
     ])
+    parser.add_argument('--generate_fix_length', type=int, default=25)
+    parser.add_argument('--modifier_method', type=str, default='token', choices=['token', 'entity'])          # for FLARE
+    parser.add_argument('--query_formulation', type=str, default='real_words', choices=[                          # for FLARE & DRAGIN
+        'direct', 'forward_all',
+        'real_words', 'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens',
+    ])
+    parser.add_argument('--sentence_solver', type=str, default='avg', choices=['avg', 'max', 'min'])          # for FLARE
+    parser.add_argument('--hallucination_threshold', type=float, default=0.6)                                # for FLARE & DRAGIN
+    parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
+    parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
     parser.add_argument('--max_iter', type=int, default=5)
     
-    # Consistency Generation Methods (answer list) ---
+    # Consistency Generation Methods (answer list)
     parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
@@ -442,7 +451,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_4 (rag_methods_1000)')
+    parser.add_argument('--run', type=str, default='run_4 (rag_methods_500)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')

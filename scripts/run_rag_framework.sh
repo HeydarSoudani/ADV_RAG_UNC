@@ -4,7 +4,7 @@
 #SBATCH --gpus=4
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_h100
-#SBATCH --time=2:00:00
+#SBATCH --time=1:00:00
 #SBATCH --mem=80GB
 #SBATCH --output=script_logging/slurm_%A.out
 

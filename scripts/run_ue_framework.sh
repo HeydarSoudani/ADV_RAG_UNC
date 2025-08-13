@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus=4
+#SBATCH --gpus=3
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_h100
-#SBATCH --time=3:00:00
-#SBATCH --mem=80GB
+#SBATCH --time=2:00:00
+#SBATCH --mem=60GB
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
@@ -13,20 +13,23 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 
 ### === Set variables ==========================
-model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
+# model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
 # model_name_or_path="agentrl/ReSearch-Qwen-7B-Instruct"
-# model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
+model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 secondary_model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="hotpotqa"
-subsec="train"
+dataset="popqa"
+subsec="test"
 fraction_of_data_to_use=2000.0
 retriever_name="rerank_l6"
 index_path="data/search_r1_files/bm25"
 retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
-rag_method="search_r1"
+rag_method="dragin"
+query_formulation="real_words"
+hallucination_threshold=0.6
 consistency_method="rag_consistency"
-run="run_4 (rag_methods_1000)"
+run="run_4 (rag_methods_500)"
 n_generations=10
+
 
 # srun python
 accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_uncertainty_estimation/run_framework.py \
@@ -39,6 +42,8 @@ accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_uncertainty_estimation/run_f
     --index_path "$index_path" \
     --retrieval_model_path "$retrieval_model_path" \
     --rag_method "$rag_method" \
+    --query_formulation "$query_formulation" \
+    --hallucination_threshold "$hallucination_threshold" \
     --consistency_method "$consistency_method" \
     --n_generations "$n_generations" \
     --run "$run"

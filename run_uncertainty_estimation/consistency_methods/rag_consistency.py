@@ -61,6 +61,10 @@ class RagConsistency:
             think_search_indices = [idx for idx, step in enumerate(trace[:-1]) if step['action_type']=='search']
             has_search = len(think_search_indices) > 0
             # print(think_search_indices)
+        elif self.args.rag_method in ['flare', 'dragin']:
+            think_search_indices = [idx for idx, step in enumerate(trace[:-1]) if len(step['search_query']) > 0]
+            has_search = len(think_search_indices) > 0
+            # print(think_search_indices)
         else:
             has_search = len(trace) > 1
             think_search_indices = range(0, len(trace)-1)
@@ -142,7 +146,7 @@ class RagConsistency:
                             elif self.args.rag_method == "react":
                                 new_trace[-1]['action_type'] = 'search'
                         
-                        # After break point: ask searchR1 to generate
+                        # After break point: ask RAG system to generate
                         pred_answer, rest_of_trace = self.rag_model.partial_inference_rag_consistency(question, new_trace)
                         
                         new_trace.extend(rest_of_trace)
