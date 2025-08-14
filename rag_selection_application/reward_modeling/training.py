@@ -5,6 +5,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import json
 import torch
+import random
 import datasets
 import argparse
 import torch.nn as nn
@@ -91,15 +92,23 @@ def training(args):
     # === Prompt format
     if args.prompt_format == 'o_c':
         prompt_template = 'The answer is {answer}, with confidence score {sep_token} {conf_score}'
+    elif args.prompt_format == 'x_o':
+        prompt_template = '{query} {sep_token} {answer}'
     elif args.prompt_format == 'p_o_c':
         prompt_template = '{path} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
     elif args.prompt_format == 'x_o_c':
-        prompt_template = '{query} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
+        # prompt_template = '{query} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
+        prompt_template = '{query} {sep_token} {answer} {sep_token} {conf_score}'
+    elif args.prompt_format == 'x_o_mc':
+        prompt_template = '{query} {sep_token} {answer} {sep_token} {rag_method} {conf_score}'
     elif args.prompt_format == 'x_p_o_c':
-        prompt_template = '{query} {sep_token} {path} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
+        # prompt_template = '{query} {sep_token} {path} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
+        prompt_template = '{query} {sep_token} {path} {sep_token} {answer} {sep_token} {conf_score}'
+    elif args.prompt_format == 'x_g_o_c':
+        prompt_template = '{query} {sep_token} {generations} {sep_token} {answer} {sep_token} {conf_score}'
     elif args.prompt_format == 'x_p_o':
         prompt_template = '{query} {sep_token} {path} {sep_token} the answer is {answer}'
-        
+    
     # === Model 
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_name_or_path,
@@ -118,42 +127,52 @@ def training(args):
         gradient_accumulation_steps=4,
         learning_rate=1e-5,
         weight_decay=0.0,
-        num_train_epochs=5,
+        num_train_epochs=10,
         lr_scheduler_type="linear",             # or SchedulerType.LINEAR
         warmup_ratio=0.05,
         save_strategy="epoch",                  # "steps" or "epoch"
         remove_unused_columns=False,            # you were setting this later; set it here
-        logging_steps=50,                       # optional extras
+        logging_steps=100,                       # optional extras
         save_total_limit=2,                     # optional
         seed=args.seed,                                # optional
     )
     
     # --- Prapering training dataset
-    training_data_path = f"run_output/{args.run}/rag_selection_reward_modeling/{args.dataset}_{args.retriever_name}_{args.consistency_method}/train_preference_data.jsonl"
+    MASK_PROB = 0.7          # 70% of pairs will have conf masked
+    MASK_TOKEN = "[NO_CONF]" # or "" if you prefer empty
+    rng = random.Random(args.seed)  # set seed for reproducibility
     
-    dataset_list = [] # {"pos_output", "neg_output"}
+    training_data_path = f"run_output/{args.run}/rag_selection_reward_modeling/{args.dataset}_{args.retriever_name}_{args.consistency_method}/train_preference_data.jsonl"
+    train_dataset_list = [] # {"pos_output", "neg_output"}
     if os.path.exists(training_data_path):
         with open(training_data_path, 'r', encoding='utf-8') as f:
             for line in f:
                 sample = json.loads(line)
-                dataset_list.append({
+                
+                conf_visible = rng.random() > MASK_PROB
+
+                train_dataset_list.append({
                     "pos_output": prompt_template.format(
                         query=sample["query"],
                         sep_token=tokenizer.sep_token,
                         answer=sample['positive_sample'][0],
-                        conf_score=sample['positive_sample'][2],
-                        path=' '.join(str(q) for q in sample['positive_sample'][3] if q)
+                        conf_score=sample['positive_sample'][3], # if conf_visible else MASK_TOKEN
+                        rag_method=sample['positive_sample'][2],
+                        generations=' '.join(str(q) for q in sample['positive_sample'][4] if q),
+                        path=' '.join(str(q) for q in sample['positive_sample'][5] if q)
                     ),
                     "neg_output": prompt_template.format(
                         query=sample["query"],
                         sep_token=tokenizer.sep_token,
                         answer=sample['negative_sample'][0],
-                        conf_score=sample['negative_sample'][2],
-                        path=' '.join(str(q) for q in sample['negative_sample'][3] if q)
+                        conf_score=sample['negative_sample'][3], # if conf_visible else MASK_TOKEN
+                        rag_method=sample['negative_sample'][2],
+                        generations=' '.join(str(q) for q in sample['negative_sample'][4] if q),
+                        path=' '.join(str(q) for q in sample['negative_sample'][5] if q)
                     ),
                 })
 
-    train_dataset = datasets.Dataset.from_list(dataset_list)
+    train_dataset = datasets.Dataset.from_list(train_dataset_list)
     
     trainer = RewardTrainer(
         model = model,
@@ -182,7 +201,7 @@ if __name__ == "__main__":
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
-    parser.add_argument('--prompt_format', type=str, default='x_o_c', choices=['x_o_c', 'o_c', 'x_p_o_c', 'p_o_c', 'x_p_o'])
+    parser.add_argument('--prompt_format', type=str, default='x_o_c', choices=['x_o', 'x_o_c', 'o_c', 'x_g_o_c', 'x_p_o_c', 'p_o_c', 'x_p_o', 'x_o_mc'])
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
@@ -219,7 +238,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_4 (rag_methods_500)')
+    parser.add_argument('--run', type=str, default='run_3 (rag_methods_500)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')

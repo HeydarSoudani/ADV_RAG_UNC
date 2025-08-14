@@ -2415,13 +2415,16 @@ class SearchO1_RAG(BasicRAG):
                 break # Don't perform another retrieval or prompt construction
             
             # -- Extract info
-            tmp_think = self.get_reasoning_think(output_text).replace("\n", ' ').replace("\n\n", ' ')
-            tmp_query = self.get_search_query(output_text)
-            if tmp_query:
-                search_docs = self.retriever.search(tmp_query)
-                docs_text = passages2string(search_docs)
+            if output_text:
+                tmp_think = self.get_reasoning_think(output_text).replace("\n", ' ').replace("\n\n", ' ')
+                tmp_query = self.get_search_query(output_text)
+                if tmp_query:
+                    search_docs = self.retriever.search(tmp_query)
+                    docs_text = passages2string(search_docs)
+                else:
+                    search_docs, docs_text = [], ''
             else:
-                search_docs, docs_text = [], ''
+                tmp_think, search_docs, docs_text = '', [], ''
 
             # -- Save in the path
             path.append({'think': tmp_think, 'search_query': tmp_query, 'docs': search_docs})

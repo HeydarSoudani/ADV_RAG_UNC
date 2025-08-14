@@ -4,7 +4,9 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import json
+import torch
 import argparse
+import numpy as np
 import pandas as pd
 from datasets import Dataset
 from accelerate import Accelerator
@@ -17,6 +19,19 @@ from transformers import (
 )
 
 from utils.general_utils import set_seed
+
+def make_serializable(obj):
+    if isinstance(obj, (np.ndarray, torch.Tensor)):
+        return obj.tolist()
+    if isinstance(obj, (np.float32, np.float64)):
+        return float(obj)
+    if isinstance(obj, (np.int32, np.int64)):
+        return int(obj)
+    if isinstance(obj, dict):
+        return {k: make_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [make_serializable(v) for v in obj]
+    return obj
 
 def gen_proccessor(tokenizer, max_input_length):
     def process(examples):
@@ -38,7 +53,6 @@ def inference(args):
     accelerator = Accelerator()
     device = accelerator.device
     
-    # candidates_df = create_inference_data(args)
     inference_data_path = f"run_output/{args.run}/rag_selection_reward_modeling/{args.dataset}_{args.retriever_name}_{args.consistency_method}/{args.subsec}_inference_data.jsonl"
     candidates_df = jsonl_to_df(inference_data_path)
 
@@ -51,11 +65,18 @@ def inference(args):
     elif args.prompt_format == 'p_o_c':
         prompt_template = '{path} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
     elif args.prompt_format == 'x_o_c':
-        prompt_template = '{query} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
+        # prompt_template = '{query} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
+        prompt_template = '{query} {sep_token} {answer} {sep_token} {conf_score}'
+    elif args.prompt_format == 'x_o_mc':
+        prompt_template = '{query} {sep_token} {answer} {sep_token} {rag_method} {conf_score}'
     elif args.prompt_format == 'x_p_o_c':
         prompt_template = '{query} {sep_token} {path} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
+    elif args.prompt_format == 'x_g_o_c':
+        prompt_template = '{query} {sep_token} {generations} {sep_token} {answer} {sep_token} {conf_score}'
     elif args.prompt_format == 'x_p_o':
         prompt_template = '{query} {sep_token} {path} {sep_token} the answer is {answer}'
+    elif args.prompt_format == 'x_o':
+        prompt_template = '{query} {sep_token} {answer}'
 
     # --- Prepare input prompts -----
     def prepare_prompts(candidates_df, sep_token):
@@ -70,8 +91,9 @@ def inference(args):
                     sep_token=sep_token,
                     answer=row.pred_answer,
                     conf_score=row.confidence,
-                    path=' '.join(str(q) for q in row.search_queries if q)
-                    
+                    rag_method=row.method,
+                    path=' '.join(str(q) for q in row.search_queries if q),
+                    generations=' '.join(str(g) for g in row.generations if g),
                 )
             })
             qids.append(row.qid)
@@ -91,7 +113,7 @@ def inference(args):
     collator = DataCollatorWithPadding(tokenizer=tokenizer, max_length=args.max_tokens, pad_to_multiple_of=512)
     arguments = TrainingArguments(
         output_dir="temp",
-        per_device_eval_batch_size=32,
+        per_device_eval_batch_size=128,
         eval_accumulation_steps=1,
         do_predict=True,
     )
@@ -101,21 +123,22 @@ def inference(args):
         data_collator=collator,
         tokenizer=tokenizer
     )
+    scores = trainer.predict(inputs).predictions.squeeze().tolist()
     
     # --- Inference loop -------------
     all_grouped_scores, final_outputs = {}, {}
-    scores = trainer.predict(inputs).predictions.squeeze().tolist()
+    ordered_methods = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']    
 
     for qid, mid, score in zip(qids, mids, scores):
         if qid not in all_grouped_scores:
             all_grouped_scores[qid] = []
         all_grouped_scores[qid].append({"method": mid, "score": score})
     
-
     with open(output_file_path, 'w') as res_f:
-        for qid, scores in all_grouped_scores.items():
-            all_grouped_scores[qid] = sorted(scores, key=lambda x: x["score"], reverse=True)
+        for idx, (qid, scores) in enumerate(all_grouped_scores.items()):
+            all_scores = [round(item['score'], 2) for item in all_grouped_scores[qid]]
             
+            all_grouped_scores[qid] = sorted(scores, key=lambda x: x["score"], reverse=True)
             selected_answer = candidates_df[
                 (candidates_df["qid"] == qid) &
                 (candidates_df["method"] == all_grouped_scores[qid][0]["method"])
@@ -125,8 +148,19 @@ def inference(args):
                 (candidates_df["method"] == all_grouped_scores[qid][0]["method"])
             ]["em"].iloc[0]
             
+            # 
+            sub = candidates_df[candidates_df["qid"] == qid].set_index("method")
+            sub = sub.reindex(ordered_methods)
+            all_pred_answers = sub["pred_answer"].tolist()
+            all_ems = sub["em"].tolist()
+            all_confs = sub["confidence"].tolist()
+            
             item = {
                 "qid": qid,
+                "all_scores": all_scores,
+                "all_correctness": all_ems,
+                "all_confidences": all_confs,
+                "all_pred_answers": all_pred_answers,
                 "selected_method": all_grouped_scores[qid][0]["method"],
                 "selected_answer": selected_answer,
                 "em": str(em),
@@ -142,7 +176,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='answerdotai/ModernBERT-base')
-    parser.add_argument('--saved_model_name_or_path', type=str, default='models/rag_selection_reward_modeling/ModernBERT-large/x_o_c/checkpoint-316')
+    parser.add_argument('--saved_model_name_or_path', type=str, default='models/rag_selection_reward_modeling/ModernBERT-large/x_o_c/checkpoint-830')
     parser.add_argument('--cache_dir', type=str, default='./cache/')
     parser.add_argument('--max_new_tokens', type=int, default=128)
     parser.add_argument('--max_len_input', type=int, default=128)
@@ -155,7 +189,7 @@ if __name__ == "__main__":
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
-    parser.add_argument('--prompt_format', type=str, default='x_o_c', choices=['o_c', 'x_o_c', 'p_o_c', 'x_p_o_c', 'x_p_o'])
+    parser.add_argument('--prompt_format', type=str, default='x_o_c', choices=['x_o_c', 'o_c', 'x_g_o_c', 'x_p_o_c', 'p_o_c', 'x_p_o', 'x_o_mc'])
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
@@ -192,7 +226,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_4 (rag_methods_500)')
+    parser.add_argument('--run', type=str, default='run_3 (rag_methods_500)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')

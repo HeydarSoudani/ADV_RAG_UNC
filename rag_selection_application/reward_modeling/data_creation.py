@@ -7,7 +7,58 @@ import json
 import math
 import argparse
 import pandas as pd
+from itertools import combinations
 from utils.general_utils import set_seed
+import unicodedata as ud
+import re
+
+
+def clean_text(text: str) -> str:
+    if not text:
+        return text
+    
+    # Characters to remove
+    BIDI = {0x202A,0x202B,0x202C,0x202D,0x202E,0x2066,0x2067,0x2068,0x2069}
+    ZERO_WIDTH = {0x200B,0x200C,0x200D,0xFEFF}
+    SOFT_HYPHEN = {0x00AD}
+    
+    PUNCT_MAP = {
+        "“":"\"", "”":"\"", "‘":"'", "’":"'", "—":"-", "–":"-", "…":"..."
+    }
+    
+    def _is_allowed_char(ch: str) -> bool:
+        if ch in "\n\t":  # keep newlines/tabs
+            return True
+        c = ord(ch)
+        if c in BIDI or c in ZERO_WIDTH or c in SOFT_HYPHEN:
+            return False
+        cat = ud.category(ch)
+        if cat in ("Cc","Cf"):  # control/format chars
+            return False
+        return True
+    
+    # 1) Normalize Unicode
+    s = ud.normalize("NFKC", text)
+    
+    # 2) Standardize line endings
+    s = re.sub(r"\r\n?","\n", s)
+    
+    # 3) Simplify punctuation
+    s = s.translate(str.maketrans(PUNCT_MAP))
+    
+    # 4) Remove disallowed characters
+    s = "".join(ch for ch in s if _is_allowed_char(ch))
+    
+    # 5) Collapse odd whitespace
+    s = re.sub(r"[ \t\f\v\u00A0\u2000-\u200A\u202F\u205F\u3000]+", " ", s)
+    s = re.sub(r"[ \t]*\n[ \t]*", "\n", s)  # trim around newlines
+    s = re.sub(r"\n{3,}", "\n\n", s)  # limit blank lines
+    
+    # 6) Strip leading/trailing spaces
+    return s.strip()
+
+def pack(s):
+    return (s["ans"], s["em"], s["method"], s["conf"], s["gens"], s["sqs"])
 
 # Extract search_query values
 def extract_search_queries(lst):
@@ -38,7 +89,7 @@ def create_training_data(args):
         results_file = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_train/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"
         with open(results_file, "r") as f:
             data = [json.loads(line) for line in f]
-        df_temp = pd.DataFrame(data)[["qid", "query", "pred_answer", "em", "ue_scores"]]
+        df_temp = pd.DataFrame(data)[["qid", "query", "pred_answer", "em", "final_answer_list", "ue_scores"]]
         confidences = df_temp["ue_scores"].apply(lambda x: x["majority_voting"]["confidence"])
         
         # - Add path
@@ -54,9 +105,9 @@ def create_training_data(args):
         
         # --- Add tuple including search queries
         df_temp[rag_method[1]] = [
-            (pred, em, conf, search_queries_map.get(qid, []))
-            for pred, em, conf, qid in zip(
-                df_temp["pred_answer"], df_temp["em"], confidences, df_temp["qid"]
+            (pred, em, conf, gens, search_queries_map.get(qid, []))
+            for pred, em, conf, qid, gens in zip(
+                df_temp["pred_answer"], df_temp["em"], confidences, df_temp["qid"], df_temp["final_answer_list"]
             )
         ]
         df = df_temp[["qid", "query", rag_method[1]]]
@@ -72,40 +123,97 @@ def create_training_data(args):
     # --- Create perefrence pairs
     method_cols = [c for c in merged_df.columns if c not in ["qid", "query"]]
     records = []
-    for _, row in merged_df.iterrows():
-        qid, query = row["qid"], row["query"]
-        positives, negatives = [], []
+    
+    # === V1 =========
+    # for _, row in merged_df.iterrows():
+    #     qid, query = row["qid"], row["query"]
+    #     positives, negatives = [], []
 
+    #     for col in method_cols:
+    #         val = row.get(col, None)
+    #         if val is None or (isinstance(val, float) and math.isnan(val)):
+    #             continue
+    #         # Expecting val == (pred_answer, em, confidence)
+    #         try:
+    #             ans, em, conf, sqs = val
+    #         except Exception:
+    #             # If the cell isn't a tuple, skip it
+    #             continue
+
+    #         if em == 1:
+    #             positives.append((ans, em, conf, sqs))
+    #         elif em == 0:
+    #             negatives.append((ans, em, conf, sqs))
+
+    #     # create all positive x negative pairs for this qid
+    #     pid = 1
+    #     for p in positives:
+    #         for n in negatives:
+    #             records.append({
+    #                 "qid": qid,
+    #                 "pid": pid,
+    #                 "query": query,
+    #                 "positive_sample": p,   # (answer, 1, confidence, sqs)
+    #                 "negative_sample": n,   # (answer, 0, confidence, sqs)
+    #             })
+    #             pid += 1
+
+    # === V2 =========
+    W_EM = 0.5
+    W_CONF = 0.5
+    MIN_GAP = 0.4  # require |score_i - score_j| > 0.2
+
+    for _, row in merged_df.iterrows():
+        
+        qid, query = row["qid"], row["query"]
+        samples = []
         for col in method_cols:
             val = row.get(col, None)
             if val is None or (isinstance(val, float) and math.isnan(val)):
                 continue
-            # Expecting val == (pred_answer, em, confidence)
+            
             try:
-                ans, em, conf, sqs = val
+                if len(val) == 5:
+                    ans, em, conf, gens, sqs = val
+                elif len(val) == 3:
+                    ans, em, conf = val
+                    sqs, gens = None, None
+                else:
+                    continue
             except Exception:
-                # If the cell isn't a tuple, skip it
                 continue
+            
+            if conf is None or (isinstance(conf, float) and math.isnan(conf)):
+                continue
+                        
+            score = W_EM * float(em) + W_CONF * float(conf)
 
-            if em == 1:
-                positives.append((ans, em, conf, sqs))
-            elif em == 0:
-                negatives.append((ans, em, conf, sqs))
-
-        # create all positive x negative pairs for this qid
+            samples.append({
+                "method": col,
+                "ans": ans,
+                "em": int(em),
+                "conf": float(conf),
+                "sqs": sqs,
+                "gens": [clean_text(g) for g in gens],
+                "score": score,
+            })
+        
         pid = 1
-        for p in positives:
-            for n in negatives:
+        for a, b in combinations(samples, 2):
+            gap = abs(a["score"] - b["score"])
+            if gap > MIN_GAP:
+                pos, neg = (a, b) if a["score"] > b["score"] else (b, a)
                 records.append({
                     "qid": qid,
                     "pid": pid,
                     "query": query,
-                    "positive_sample": p,   # (answer, 1, confidence, sqs)
-                    "negative_sample": n,   # (answer, 0, confidence, sqs)
+                    "pair_type": "score_gap",
+                    "positive_sample": pack(pos),
+                    "negative_sample": pack(neg)
                 })
                 pid += 1
 
-    preference_df = pd.DataFrame.from_records(records, columns=["qid", "pid", "query", "positive_sample", "negative_sample"])
+    preference_df = pd.DataFrame.from_records(records, columns=["qid", "pid", "query", "pair_type", "positive_sample", "negative_sample"])
     preference_df.to_json(output_path, orient="records", lines=True, force_ascii=False)
     print(f"Saved preference dataset to {output_path}")
 
@@ -131,7 +239,7 @@ def create_inference_data(args):
         file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"
         with open(file_path, "r") as f:
             data = [json.loads(line) for line in f]
-        df_temp = pd.DataFrame(data)[["qid", "query", "pred_answer", "em", "ue_scores"]]
+        df_temp = pd.DataFrame(data)[["qid", "query", "pred_answer", "em", "final_answer_list", "ue_scores"]]
         confidences = df_temp["ue_scores"].apply(lambda x: x["majority_voting"]["confidence"])
         
         # - Add path
@@ -147,9 +255,9 @@ def create_inference_data(args):
         
         # - Add tuple including search queries
         df_temp[rag_method[1]] = [
-            (pred, em, conf, search_queries_map.get(qid, []))
-            for pred, em, conf, qid in zip(
-                df_temp["pred_answer"], df_temp["em"], confidences, df_temp["qid"]
+            (pred, em, conf, gens, search_queries_map.get(qid, []))
+            for pred, em, conf, qid, gens in zip(
+                df_temp["pred_answer"], df_temp["em"], confidences, df_temp["qid"], df_temp["final_answer_list"]
             )
         ]
         df = df_temp[["qid", "query", rag_method[1]]]
@@ -173,7 +281,7 @@ def create_inference_data(args):
                 continue
             # val is (pred_answer, em, confidence)
             try:
-                pred_answer, em, conf, sqs = val
+                pred_answer, em, conf, gens, sqs = val
             except Exception:
                 # If it isn't a tuple due to some NaN/object oddity, skip
                 continue
@@ -184,7 +292,8 @@ def create_inference_data(args):
                 "pred_answer": pred_answer,
                 "em": em,
                 "confidence": conf,
-                'search_queries': sqs
+                'search_queries': sqs,
+                "generations": gens,
             })
 
     candidates_df = pd.DataFrame(candidates)
@@ -212,7 +321,7 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--prompt_format', type=str, default='x_o_c', choices=['o_c', 'x_o_c', 'p_o_c', 'x_p_o_c', 'x_p_o'])
@@ -252,7 +361,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_4 (rag_methods_1k)')
+    parser.add_argument('--run', type=str, default='run_1 (rag_methods_2k)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -276,6 +385,27 @@ if __name__ == "__main__":
 
 
 
+
+
+
+
+# === V3 ===
+# EPS = 0.2  # tune
+# for i in range(len(samples)):
+#     for j in range(i+1, len(samples)):
+#         a, b = samples[i], samples[j]
+#         if abs(a["conf"] - b["conf"]) <= EPS and (a["em"] != b["em"]):
+#             # positive is the one with higher em/score
+#             pos, neg = (a, b) if a["em"] > b["em"] else (b, a)
+#             records.append({
+#                 "qid": qid,
+#                 "pid": pid,
+#                 "query": query,
+#                 "pair_type": "score_gap",
+#                 "positive_sample": pack(pos),
+#                 "negative_sample": pack(neg)
+#             })
+#             pid += 1
 
 
 
