@@ -68,7 +68,7 @@ def correctness_distribution_analyze(args):
 def rag_selection(args):
     rag_methods = [
         ('Qwen2.5-7B-Instruct', 'self_ask'),
-        # ('Qwen2.5-7B-Instruct', 'react'),
+        ('Qwen2.5-7B-Instruct', 'react'),
         ('Qwen2.5-7B-Instruct', 'search_o1'),
         ('ReSearch-Qwen-7B-Instruct', 'research'),
         ('SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo', 'search_r1')
@@ -94,12 +94,10 @@ def rag_selection(args):
     
     rag_columns = [rm[1] for rm in rag_methods]
     # weights_list = [25.6, 33.6, 36.0, 39.2, 44.0] # bamboogle
-    weights_list = [35.60, 36.80, 33.20, 38.60, 41.60] # popqa
+    # weights_list = [35.60, 36.80, 33.20, 38.60, 41.60] # popqa
     # weights_list = [33.00, 27.80, 29.00, 38.80, 41.40] # hotpotqa
-    
-    
-    rag_weights = {col: w for col, w in zip(rag_columns, weights_list)}
-    print(rag_weights)
+    # rag_weights = {col: w for col, w in zip(rag_columns, weights_list)}
+    # print(rag_weights)
     
     def select_best_answer(row):    
         candidates = [(row[col], col) for col in rag_columns if pd.notnull(row[col])]

@@ -62,6 +62,8 @@ def inference(args):
     # === Prompt format
     if args.prompt_format == 'o_c':
         prompt_template = 'The answer is {answer}, with confidence score {sep_token} {conf_score}'
+    elif args.prompt_format == 'x_o':
+        prompt_template = '{query} {sep_token} {answer}'
     elif args.prompt_format == 'p_o_c':
         prompt_template = '{path} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
     elif args.prompt_format == 'x_o_c':
@@ -92,8 +94,8 @@ def inference(args):
                     answer=row.pred_answer,
                     conf_score=row.confidence,
                     rag_method=row.method,
-                    path=' '.join(str(q) for q in row.search_queries if q),
-                    generations=' '.join(str(g) for g in row.generations if g),
+                    # path=' '.join(str(q) for q in row.search_queries if q),
+                    # generations=' '.join(str(g) for g in row.generations if g),
                 )
             })
             qids.append(row.qid)
@@ -127,7 +129,7 @@ def inference(args):
     
     # --- Inference loop -------------
     all_grouped_scores, final_outputs = {}, {}
-    ordered_methods = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']    
+    ordered_methods = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']
 
     for qid, mid, score in zip(qids, mids, scores):
         if qid not in all_grouped_scores:
@@ -137,23 +139,24 @@ def inference(args):
     with open(output_file_path, 'w') as res_f:
         for idx, (qid, scores) in enumerate(all_grouped_scores.items()):
             all_scores = [round(item['score'], 2) for item in all_grouped_scores[qid]]
-            
-            all_grouped_scores[qid] = sorted(scores, key=lambda x: x["score"], reverse=True)
-            selected_answer = candidates_df[
-                (candidates_df["qid"] == qid) &
-                (candidates_df["method"] == all_grouped_scores[qid][0]["method"])
-            ]["pred_answer"].iloc[0]
-            em = candidates_df[
-                (candidates_df["qid"] == qid) &
-                (candidates_df["method"] == all_grouped_scores[qid][0]["method"])
-            ]["em"].iloc[0]
-            
-            # 
             sub = candidates_df[candidates_df["qid"] == qid].set_index("method")
             sub = sub.reindex(ordered_methods)
             all_pred_answers = sub["pred_answer"].tolist()
             all_ems = sub["em"].tolist()
             all_confs = sub["confidence"].tolist()
+            
+            # v1
+            all_grouped_scores[qid] = sorted(scores, key=lambda x: x["score"], reverse=True) 
+            selected_method = all_grouped_scores[qid][0]["method"]
+            
+            # v2
+            # w1, w2 = 0.5, 0.5
+            # weighted_scores = [w1 * a + w2 * b for a, b in zip(all_scores, all_confs)]
+            # best_index = max(range(len(weighted_scores)), key=lambda i: weighted_scores[i])
+            # selected_method = ordered_methods[best_index]
+            
+            selected_answer = candidates_df[(candidates_df["qid"] == qid) & (candidates_df["method"] == selected_method)]["pred_answer"].iloc[0]
+            em = candidates_df[(candidates_df["qid"] == qid) & (candidates_df["method"] == selected_method)]["em"].iloc[0]
             
             item = {
                 "qid": qid,
@@ -161,7 +164,7 @@ def inference(args):
                 "all_correctness": all_ems,
                 "all_confidences": all_confs,
                 "all_pred_answers": all_pred_answers,
-                "selected_method": all_grouped_scores[qid][0]["method"],
+                "selected_method": selected_method,
                 "selected_answer": selected_answer,
                 "em": str(em),
             }
@@ -176,20 +179,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
     parser.add_argument('--model_name_or_path', type=str, default='answerdotai/ModernBERT-base')
-    parser.add_argument('--saved_model_name_or_path', type=str, default='models/rag_selection_reward_modeling/ModernBERT-large/x_o_c/checkpoint-830')
+    parser.add_argument('--saved_model_name_or_path', type=str, default='models/rag_selection_reward_modeling/ModernBERT-base/x_o_c/checkpoint-1690')
     parser.add_argument('--cache_dir', type=str, default='./cache/')
     parser.add_argument('--max_new_tokens', type=int, default=128)
     parser.add_argument('--max_len_input', type=int, default=128)
     parser.add_argument("--max_tokens", type=int, default=4096)
 
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
-    parser.add_argument('--prompt_format', type=str, default='x_o_c', choices=['x_o_c', 'o_c', 'x_g_o_c', 'x_p_o_c', 'p_o_c', 'x_p_o', 'x_o_mc'])
+    parser.add_argument('--prompt_format', type=str, default='x_o_c', choices=['x_o', 'x_o_c', 'o_c', 'x_g_o_c', 'x_p_o_c', 'p_o_c', 'x_p_o', 'x_o_mc'])
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
