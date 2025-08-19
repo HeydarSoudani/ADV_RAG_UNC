@@ -113,18 +113,22 @@ def ue_generation(args):
         rag_model = ReAct_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'search_o1':
         rag_model = SearchO1_RAG(generation_model, generation_tokenizer, device, args)
-    elif args.rag_method == 'search_r1':
-        rag_model = SearchR1_RAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == 'research':
         rag_model = ReSearch_RAG(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'search_r1':
+        rag_model = SearchR1_RAG(generation_model, generation_tokenizer, device, args)
     else:
         raise NotImplementedError
     
     # -
-    if args.consistency_method == 'self_consistency':
-        consistency_model = SelfConsistency(rag_model, args)
-    elif args.consistency_method == 'reasoning_consistency':
+    if args.consistency_method == 'fa_consistency':
+        consistency_model = FAConsistency(rag_model, args)
+    elif args.consistency_method == 'rrr_consistency':       # retrieval-retained reasoning consistency
+        consistency_model = RRRConsistency(rag_model, args)
+    elif args.consistency_method == 'reasoning_consistency': # reasoning consistency
         consistency_model = ReasoningConsistency(rag_model, args)
+    elif args.consistency_method == 'self_consistency':
+        consistency_model = SelfConsistency(rag_model, args)
     elif args.consistency_method == 'rag_consistency':
         consistency_model = RagConsistency(rag_model, secondary_model, secondary_tokenizer, device, args)
     else:
@@ -155,7 +159,7 @@ def ue_generation(args):
         cons_f = open(consistency_results_file_ranked, 'w', encoding='utf-8')
 
         trace_f = None
-        write_traces = args.consistency_method != 'self_consistency'
+        write_traces = args.consistency_method != 'fa_consistency'
         if write_traces and not are_traces_generated:
             masked_traces_results_file_ranked = (
                 f"{args.output_dir}/{args.consistency_method}_masked_traces_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl"
@@ -167,7 +171,7 @@ def ue_generation(args):
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
                 # print(qid)
-                # if i == 10:
+                # if i == 3:
                 #     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
@@ -206,7 +210,7 @@ def ue_generation(args):
                         
                     ## -- Convert masked trace to text
                     masked_traces_text = [
-                        rag_model.get_input_prompt_self_consistency(user_query, masked_trace)
+                        rag_model.get_input_prompt_without_final_answer(user_query, masked_trace)
                         for masked_trace in generated_masked_traces_with_docs
                     ]
                     final_answer_list = [
@@ -276,7 +280,7 @@ def merge_result_files(args):
             os.remove(shard_file)
             print(f"Deleted shard file: {shard_file}")
          
-    write_traces = args.consistency_method != 'self_consistency'   
+    write_traces = args.consistency_method != 'fa_consistency'   
     if write_traces:
         masked_traces_results_file_ranked = (
             f"{args.output_dir}/{args.consistency_method}_masked_traces_results_th{args.hallucination_threshold}_rank*.jsonl"
@@ -382,17 +386,17 @@ def correctness_evaluation_mv(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
     # parser.add_argument('--model_name_or_path', type=str, default="agentrl/ReSearch-Qwen-7B-Instruct")
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -402,8 +406,8 @@ if __name__ == "__main__":
     ])
     parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
     parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
-        'data/search_r1_files/bm25',          # For BM25 & Rerank
-        'data/search_r1_files/e5_Flat.index', # For E5
+        'data/search_r1_files/bm25',                # For BM25 & Rerank
+        'data/search_r1_files/e5_Flat.index',       # For E5
         'data/search_r1_files/reasonir_Flat.index', # For ReasonIR
     ])
     parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
@@ -421,7 +425,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='search_o1', choices=[
+    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
@@ -441,8 +445,8 @@ if __name__ == "__main__":
     parser.add_argument('--max_iter', type=int, default=5)
     
     # Consistency Generation Methods (answer list)
-    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
-        'self_consistency', 'reasoning_consistency', 'rag_consistency'
+    parser.add_argument('--consistency_method', type=str, default='fa_consistency', choices=[
+        'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
     parser.add_argument("--mask_left_boundary", type=float, default=0.1)
@@ -451,7 +455,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_1 (rag_methods_2k)')
+    parser.add_argument('--run', type=str, default='run_3 (rag_methods_500)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -469,12 +473,12 @@ if __name__ == "__main__":
     if args.rag_method in ['flare', 'dragin']:
         args.inference_results_file = f"{args.output_dir}/inference_results_th{args.hallucination_threshold}.jsonl"
         args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}.jsonl"
-        if args.consistency_method != "self_consistency":
+        if args.consistency_method != "fa_consistency":
             args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces_th{args.hallucination_threshold}.jsonl"
     else:
         args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
         args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results.jsonl"
-        if args.consistency_method != "self_consistency":
+        if args.consistency_method != "fa_consistency":
             args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces.jsonl"
         
     # === Prompt files =============
@@ -483,9 +487,9 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    # ue_generation(args)
-    merge_result_files(args)
-    evaluation_correlation(args)
+    ue_generation(args)
+    # merge_result_files(args)
+    # evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_calculation.py

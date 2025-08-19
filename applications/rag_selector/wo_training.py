@@ -2,7 +2,7 @@
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import json
 import random
 import argparse
@@ -63,7 +63,6 @@ def correctness_distribution_analyze(args):
     plt.savefig("rag_overlap_upsetplot.png", dpi=300, bbox_inches="tight")
 
     plt.show()
-    
 
 def rag_selection(args):
     rag_methods = [
@@ -99,7 +98,7 @@ def rag_selection(args):
     # rag_weights = {col: w for col, w in zip(rag_columns, weights_list)}
     # print(rag_weights)
     
-    def select_best_answer(row):    
+    def select_best_answer(row):
         candidates = [(row[col], col) for col in rag_columns if pd.notnull(row[col])]
         if not candidates:
             return pd.Series([None, None, None, None])
@@ -123,7 +122,51 @@ def rag_selection(args):
     accuracy = merged_df["best_em"].mean()
     print(f"Dataset Accuracy (based on EM): {accuracy:.4f}")
 
+def rubostness_analysis(args):
     
+    def load_scores(path):
+        data = {}
+        with open(path, "r") as f:
+            for line in f:
+                obj = json.loads(line)
+                qid = obj["qid"]
+                em = float(obj["em"])
+                data[qid] = em
+        return data
+    
+    # naive_selector_result_file = "run_output/run_3 (rag_methods_500)/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo/hotpotqa_dev/search_r1_rerank_l6/inference_results.jsonl"
+    # our_selector_result_file = "run_output/run_3 (rag_methods_500)/rag_selection_reward_modeling/hotpotqa_rerank_l6_rag_consistency/dev_inference_results_x_o_c_best_base.jsonl"  
+    
+    naive_selector_result_file = "run_output/run_3 (rag_methods_500)/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo/popqa_test/search_r1_rerank_l6/inference_results.jsonl"
+    our_selector_result_file = "run_output/run_3 (rag_methods_500)/rag_selection_reward_modeling/popqa_rerank_l6_rag_consistency/test_inference_results_x_o_c.jsonl"
+    
+    scores1 = load_scores(naive_selector_result_file)
+    scores2 = load_scores(our_selector_result_file)
+    
+    wins = losses = ties = 0
+    missing = 0
+
+    for qid, em1 in scores1.items():
+        if qid not in scores2:
+            missing += 1
+            continue
+
+        em2 = scores2[qid]
+        if em1 > em2:
+            wins += 1
+        elif em1 < em2:
+            losses += 1
+        else:
+            ties += 1
+            
+    total = wins + losses + ties
+
+    print("Results comparing file1 vs file2:")
+    print(f"Wins   (file1 > file2): {wins} ({wins/total:.2%})")
+    print(f"Losses (file1 < file2): {losses} ({losses/total:.2%})")
+    print(f"Ties   (file1 = file2): {ties} ({ties/total:.2%})")
+    print(f"Missing qids in file2 : {missing}")
+      
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -182,7 +225,8 @@ if __name__ == "__main__":
     ### === Run Steps =============
     set_seed(args.seed)
     # correctness_distribution_analyze(args)
-    rag_selection(args)
+    # rag_selection(args)
+    rubostness_analysis(args)
     
-    # python rag_selection_application/wo_training.py
-    # accelerate launch --multi_gpu rag_selection_application/wo_training.py
+    # python applications/rag_selector/wo_training.py
+    # accelerate launch --multi_gpu applications/rag_selector/wo_training.py

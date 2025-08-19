@@ -164,28 +164,28 @@ class DirectInference(BasicRAG):
         self.system_prompt = SYSTEM_PROMPT_DIRECT
         self.answer_template = '{answer}'
     
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         path = []
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": self.user_prompt_wo_context.format(examples=self.direct_examples_text, question=question)}
         ]
-        _, output_text = self.generator.generate(messages)
+        _, output_text = self.generator.generate(messages, temperature=generation_temp)
         path.append({'think': '', 'answer': output_text})
         pred_answer = output_text
         
         return pred_answer, path
 
     # --
-    def get_input_prompt_self_consistency(self, question, trace):
+    def get_input_prompt_without_final_answer(self, question, trace):
         prompt_text = self.user_prompt_wo_context.format(
             examples=self.direct_examples_text,
             question=question
         )
         return prompt_text
         
-    def partial_inference_self_consistency(self, question, trace):
-        prompt_text = self.get_input_prompt_self_consistency(question, trace)
+    def partial_inference_final_answer(self, question, trace):
+        prompt_text = self.get_input_prompt_without_final_answer(question, trace)
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": prompt_text}
@@ -212,7 +212,7 @@ class CoTInference(BasicRAG):
         else:
             return text.strip(), None
     
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         path = []
         messages = [
             {"role": "system", "content": self.system_prompt},
@@ -221,7 +221,7 @@ class CoTInference(BasicRAG):
                 question=question
             )}
         ]
-        _, output_text = self.generator.generate(messages)
+        _, output_text = self.generator.generate(messages, temperature=generation_temp)
         think, pred_answer = self.get_think_and_answer(output_text)
         path.append({'think': think, 'answer': pred_answer})
         
@@ -234,7 +234,7 @@ class CoTInference(BasicRAG):
         return pred_answer, path
   
     # --
-    def get_input_prompt_self_consistency(self, question, trace):
+    def get_input_prompt_without_final_answer(self, question, trace):
         prompt_text = self.user_prompt_wo_context.format(
             examples=self.cot_examples_text,
             question=question
@@ -242,8 +242,8 @@ class CoTInference(BasicRAG):
         prompt_text += f"{trace[-1].get('think', '')}" + " So the answer is:"
         return prompt_text
         
-    def partial_inference_self_consistency(self, question, trace):
-        prompt_text = self.get_input_prompt_self_consistency(question, trace)
+    def partial_inference_final_answer(self, question, trace):
+        prompt_text = self.get_input_prompt_without_final_answer(question, trace)
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": prompt_text}
@@ -255,7 +255,7 @@ class CoTInference(BasicRAG):
         )
         return answer_list
     
-    def get_input_prompt_reasoning_consistency(self, question, trace):
+    def get_input_prompt_without_last_step(self, question, trace):
         prompt_text = self.user_prompt_wo_context.format(
             examples=self.cot_examples_text,
             question=question
@@ -263,7 +263,7 @@ class CoTInference(BasicRAG):
         # prompt_text += f"{ trace[-1]['think']}"
         return prompt_text 
         
-    def partial_inference_reasoning_consistency(self, input_prompt_text):
+    def partial_inference_last_step(self, input_prompt_text):
         messages = [{"role": "user", "content": input_prompt_text}]
         _, output_text = self.generator.generate(messages, temperature=self.args.consistency_temperature)
         think, pred_answer = self.get_think_and_answer(output_text)
@@ -282,7 +282,7 @@ class CoTSingleRAG(BasicRAG):
         self.cot_examples_text = '\n\n'.join([f'Q: {exp["Q"]}\nA: {exp["A"]}' for exp in self.COT_EXAMPLES])
         self.system_prompt = SYSTEM_PROMPT_COT
     
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         path = []
         search_docs = self.retriever.search(question)
         messages = [
@@ -293,7 +293,7 @@ class CoTSingleRAG(BasicRAG):
                 question=question
             )}
         ]
-        _, output_text = self.generator.generate(messages)
+        _, output_text = self.generator.generate(messages, temperature=generation_temp)
         path.append({'search_query': question, 'docs': search_docs, 'think': output_text})
         
         # Regenerate the last sentence if it is needed
@@ -312,7 +312,7 @@ class FixLengthRAG(BasicRAG):
         super().__init__(args, device)
         self.system_prompt = SYSTEM_PROMPT_IRCOT
     
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         path, text = [], ""
         search_query = question
         while True:
@@ -330,7 +330,8 @@ class FixLengthRAG(BasicRAG):
             ]
             _, new_text = self.generator.generate(
                 messages,
-                max_new_tokens=self.args.generate_fix_length
+                max_new_tokens=self.args.generate_fix_length,
+                temperature=generation_temp
             )
             path.append({'search_query': search_query, 'docs': retrieved_docs, 'think': new_text})
             
@@ -357,7 +358,7 @@ class FixSentenceRAG(BasicRAG):
         super().__init__(args, device)
         self.system_prompt = SYSTEM_PROMPT_IRCOT
 
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         path, text = [], ""
         search_query = question
         while True:
@@ -374,7 +375,8 @@ class FixSentenceRAG(BasicRAG):
             ]
             _, new_text = self.generator.generate(
                 messages,
-                stopping_criteria=self.generator.ircot_stopping_criteria
+                stopping_criteria=self.generator.ircot_stopping_criteria,
+                temperature=generation_temp
             )
             path.append({'search_query': search_query, 'docs': retrieved_docs, 'think': new_text})
             
@@ -402,7 +404,7 @@ class IRCOT_RAG(BasicRAG):
         self.system_prompt = SYSTEM_PROMPT_IRCOT
         self.answer_template = '{answer}'
 
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         path = []
         
         # Initial retrieval
@@ -420,7 +422,11 @@ class IRCOT_RAG(BasicRAG):
         path.append({'think': '', 'search_query': search_query, 'docs': cur_search_docs})
         
         for idx in range(self.args.max_iter):
-            output, output_text = self.generator.generate(messages, self.generator.ircot_stopping_criteria)
+            output, output_text = self.generator.generate(
+                messages,
+                self.generator.ircot_stopping_criteria,
+                temperature=generation_temp
+            )
 
             if "the answer is:" in output_text:
                 break
@@ -476,7 +482,7 @@ class IRCOT_RAG(BasicRAG):
         return pred_answer, path
 
     # --
-    def get_input_prompt_self_consistency(self, question, trace):
+    def get_input_prompt_without_final_answer(self, question, trace):
         all_thinks = [step['think'] for step in trace[:-1]]
         all_thinks_txt = ' '.join(all_thinks).split('the answer is:')[0]
         
@@ -492,8 +498,8 @@ class IRCOT_RAG(BasicRAG):
         
         return prompt_text
     
-    def partial_inference_self_consistency(self, question, trace):
-        prompt_text = self.get_input_prompt_self_consistency(question, trace)
+    def partial_inference_final_answer(self, question, trace):
+        prompt_text = self.get_input_prompt_without_final_answer(question, trace)
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": prompt_text}
@@ -515,7 +521,7 @@ class IRCOT_RAG(BasicRAG):
         #     answer_list.append(output_text)
         # return answer_list
         
-    def get_input_prompt_reasoning_consistency(self, question, trace):
+    def get_input_prompt_without_last_step(self, question, trace):
         all_thinks = [step['think'] for step in trace[:-1]]
         all_thinks_txt = ' '.join(all_thinks).split('the answer is:')[0]
         
@@ -530,7 +536,7 @@ class IRCOT_RAG(BasicRAG):
         
         return prompt_text
     
-    def partial_inference_reasoning_consistency(self, input_prompt_text):
+    def partial_inference_last_step(self, input_prompt_text):
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": input_prompt_text}
@@ -551,7 +557,7 @@ class IRCOT_RAG(BasicRAG):
         
         return think, pred_answer
     
-    def partial_inference_rag_consistency(self, question, generated_trace):
+    def partial_inference_middle_step(self, question, generated_trace):
         # -- Generated path so far ---
         prev_thinks = [step['think'] for step in generated_trace]
         prev_thinks_txt = ' '.join(prev_thinks).split('the answer is:')[0]
@@ -753,7 +759,7 @@ class FLARE_RAG_V1(BasicRAG):
         # No hallucination
         return text, None, False
     
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         path, text = [], ''
         while True:
             old_len = len(text)
@@ -767,7 +773,9 @@ class FLARE_RAG_V1(BasicRAG):
                 {"role": "assistant", "content": text}
             ]
             new_text, tokens_text, logprobs = self.generator.generate_with_scores(
-                messages, max_new_tokens=self.args.max_new_tokens,
+                messages,
+                max_new_tokens=self.args.max_new_tokens,
+                temperature=generation_temp
             )
             ptext, curr, hallucination = self.modifier(new_text, tokens_text, logprobs)
             
@@ -799,7 +807,11 @@ class FLARE_RAG_V1(BasicRAG):
                     {"role": "user", "content": user_input_prompt},
                     {"role": "assistant", "content": f"{text} {ptext.strip()}"}
                 ]
-                _, new_text = self.generator.generate(messages, self.generator.ircot_stopping_criteria)
+                _, new_text = self.generator.generate(
+                    messages,
+                    self.generator.ircot_stopping_criteria,
+                    temperature=generation_temp
+                )
                 text = f"{text.strip()} {ptext.strip()} {new_text.strip()}"
                 path.append({
                     'think': f"{ptext.strip()} {new_text.strip()}",
@@ -836,7 +848,7 @@ class FLARE_RAG_V1(BasicRAG):
         return pred_answer, path
 
     # --
-    def get_input_prompt_self_consistency(self, question, trace):
+    def get_input_prompt_without_final_answer(self, question, trace):
         all_thinks = [step['think'] for step in trace[:-1]]
         all_thinks_txt = ' '.join(all_thinks).split('the answer is:')[0]
         
@@ -852,8 +864,8 @@ class FLARE_RAG_V1(BasicRAG):
         
         return prompt_text
         
-    def partial_inference_self_consistency(self, question, trace):
-        prompt_text = self.get_input_prompt_self_consistency(question, trace)
+    def partial_inference_final_answer(self, question, trace):
+        prompt_text = self.get_input_prompt_without_final_answer(question, trace)
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": prompt_text}
@@ -865,7 +877,7 @@ class FLARE_RAG_V1(BasicRAG):
         )
         return answer_list
     
-    def get_input_prompt_reasoning_consistency(self, question, trace):
+    def get_input_prompt_without_last_step(self, question, trace):
         all_thinks = [step['think'] for step in trace[:-1]]
         all_thinks_txt = ' '.join(all_thinks).split('the answer is:')[0]
         
@@ -880,7 +892,7 @@ class FLARE_RAG_V1(BasicRAG):
         
         return prompt_text
     
-    def partial_inference_reasoning_consistency(self, input_prompt_text):
+    def partial_inference_last_step(self, input_prompt_text):
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": input_prompt_text}
@@ -901,7 +913,7 @@ class FLARE_RAG_V1(BasicRAG):
         
         return think, pred_answer
     
-    def partial_inference_rag_consistency(self, question, generated_trace):
+    def partial_inference_middle_step(self, question, generated_trace):
         # -- Generated path so far ---
         prev_thinks = [step['think'] for step in generated_trace]
         prev_thinks_txt = ' '.join(prev_thinks).split('the answer is:')[0]
@@ -1147,7 +1159,7 @@ class DRAGIN_RAG(BasicRAG):
         last_n_sentence = ' '.join(last_n_tokens)
         return last_n_sentence
     
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         path, text = [], ""
         while True:
             old_len = len(text)
@@ -1207,7 +1219,11 @@ class DRAGIN_RAG(BasicRAG):
                     {"role": "user", "content": user_input_prompt},
                     {"role": "assistant", "content": f"{text} {ptext.strip()}"}
                 ]
-                _, new_text = self.generator.generate(messages, max_new_tokens=self.args.max_new_tokens)
+                _, new_text = self.generator.generate(
+                    messages,
+                    max_new_tokens=self.args.max_new_tokens,
+                    temperature=generation_temp
+                )
                 text = f"{text.strip()} {ptext.strip()} {new_text.strip()}"
                 path.append({
                     'think': f"{ptext.strip()} {new_text.strip()}",
@@ -1244,7 +1260,7 @@ class DRAGIN_RAG(BasicRAG):
         return pred_answer, path
 
     # --
-    def get_input_prompt_self_consistency(self, question, trace):
+    def get_input_prompt_without_final_answer(self, question, trace):
         all_thinks = [step['think'] for step in trace[:-1]]
         all_thinks_txt = ' '.join(all_thinks).split('the answer is:')[0]
         
@@ -1258,8 +1274,8 @@ class DRAGIN_RAG(BasicRAG):
         prompt_text = user_input_prompt + all_thinks_txt + " So the answer is:"
         return prompt_text
     
-    def partial_inference_self_consistency(self, question, trace):
-        prompt_text = self.get_input_prompt_self_consistency(question, trace)
+    def partial_inference_final_answer(self, question, trace):
+        prompt_text = self.get_input_prompt_without_final_answer(question, trace)
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": prompt_text}
@@ -1271,7 +1287,7 @@ class DRAGIN_RAG(BasicRAG):
         )
         return answer_list
     
-    def get_input_prompt_reasoning_consistency(self, question, trace):
+    def get_input_prompt_without_last_step(self, question, trace):
         all_thinks = [step['think'] for step in trace[:-1]]
         all_thinks_txt = ' '.join(all_thinks).split('the answer is:')[0]
         
@@ -1286,7 +1302,7 @@ class DRAGIN_RAG(BasicRAG):
         
         return prompt_text
     
-    def partial_inference_reasoning_consistency(self, input_prompt_text):
+    def partial_inference_last_step(self, input_prompt_text):
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": input_prompt_text}
@@ -1307,7 +1323,7 @@ class DRAGIN_RAG(BasicRAG):
         
         return think, pred_answer
     
-    def partial_inference_rag_consistency(self, question, generated_trace):
+    def partial_inference_middle_step(self, question, generated_trace):
         # -- Generated path so far ---
         prev_thinks = [step['think'] for step in generated_trace]
         prev_thinks_txt = ' '.join(prev_thinks).split('the answer is:')[0]
@@ -1450,7 +1466,7 @@ class SelfAsk_RAG(BasicRAG):
         pred = pred.rstrip(".?!")
         return pred
 
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         path, text = [], ""
         
         # Initial retrieval
@@ -1467,7 +1483,11 @@ class SelfAsk_RAG(BasicRAG):
         path.append({'think': '', 'search_query': search_query, 'docs': cur_search_docs})
 
         for idx in range(self.args.max_iter):
-            output, output_text = self.generator.generate(messages, self.generator.selfask_stopping_criteria)
+            output, output_text = self.generator.generate(
+                messages,
+                self.generator.selfask_stopping_criteria,
+                temperature=generation_temp
+            )
             
             if ("So the final answer is:" in output_text):
                 text += output_text
@@ -1527,7 +1547,7 @@ class SelfAsk_RAG(BasicRAG):
         return pred_answer, path
 
     # --
-    def get_input_prompt_self_consistency(self, question, trace):
+    def get_input_prompt_without_final_answer(self, question, trace):
         all_docs = [doc for step in trace[:-1] for doc in step['docs']]
         unq_docs = self.get_unique_docs(all_docs)
         prompt_text = self.user_prompt_self_ask.format(
@@ -1543,8 +1563,8 @@ class SelfAsk_RAG(BasicRAG):
         
         return prompt_text
 
-    def partial_inference_self_consistency(self, question, trace):
-        prompt_text = self.get_input_prompt_self_consistency(question, trace)
+    def partial_inference_final_answer(self, question, trace):
+        prompt_text = self.get_input_prompt_without_final_answer(question, trace)
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": prompt_text}
@@ -1556,7 +1576,7 @@ class SelfAsk_RAG(BasicRAG):
         )
         return answer_list
     
-    def get_input_prompt_reasoning_consistency(self, question, trace):
+    def get_input_prompt_without_last_step(self, question, trace):
         all_docs = [doc for step in trace[:-1] for doc in step['docs']]
         unq_docs = self.get_unique_docs(all_docs)
         prompt_text = self.user_prompt_self_ask.format(
@@ -1570,7 +1590,7 @@ class SelfAsk_RAG(BasicRAG):
         prompt_text += f"Intermediate answer: "
         return prompt_text
     
-    def partial_inference_reasoning_consistency(self, input_prompt_text):
+    def partial_inference_last_step(self, input_prompt_text):
         messages = [{"role": "user", "content": input_prompt_text}]
         _, output_text = self.generator.generate(
             messages,
@@ -1595,7 +1615,7 @@ class SelfAsk_RAG(BasicRAG):
         # print(intermediate_ans)
         return intermediate_ans, pred_answer
 
-    def partial_inference_rag_consistency(self, question, generated_trace):
+    def partial_inference_middle_step(self, question, generated_trace):
         # -- Generated path so far ---
         all_docs = [doc for step in generated_trace for doc in step['docs']]
         unq_docs = self.get_unique_docs(all_docs)
@@ -1945,7 +1965,7 @@ class ReAct_RAG(BasicRAG):
 
         return action_type, action_entity, docs, obs, done
 
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         self.page = None  # current Wikipedia page
         self.lookup_keyword = None  # current lookup keyword
         self.lookup_list = None  # list of paragraphs containing current lookup keyword
@@ -1963,7 +1983,8 @@ class ReAct_RAG(BasicRAG):
             ]
             _, thought_action = self.generator.generate(
                 messages,
-                self.generate_stopping_criteria([f"\n\nObservation {iter_num}:", f"\nObservation {iter_num}:", f"Observation {iter_num}:", f"Observation {iter_num}: ", f"\nObservation {iter_num}: "])
+                self.generate_stopping_criteria([f"\n\nObservation {iter_num}:", f"\nObservation {iter_num}:", f"Observation {iter_num}:", f"Observation {iter_num}: ", f"\nObservation {iter_num}: "]),
+                temperature=generation_temp
             )
             try:
                 thought, action = thought_action.strip().split(f"Action {iter_num}:")
@@ -1974,7 +1995,11 @@ class ReAct_RAG(BasicRAG):
                     {"role": "system", "content": ''},
                     {"role": "user", "content": input_prompt + f"Thought {iter_num}: {thought}\nAction {iter_num}:"}
                 ]
-                _, action = self.generator.generate(messages, self.generate_stopping_criteria(["]\n", "]\n\n", " ]\n", " ]\n\n"]))
+                _, action = self.generator.generate(
+                    messages,
+                    self.generate_stopping_criteria(["]\n", "]\n\n", " ]\n", " ]\n\n"]),
+                    temperature=generation_temp
+                )
             
             thought = thought.replace('\n', ' ').strip()
             action_text = self.clean_action(action).replace('\n', ' ').strip()
@@ -2021,7 +2046,6 @@ class ReAct_RAG(BasicRAG):
 
     # --
     def clean_output_finial_answer(self, text):
-        
         # Case 1: Remove everything after first \n
         if '\n' in text:
             text = text.split('\n', 1)[0]
@@ -2043,7 +2067,7 @@ class ReAct_RAG(BasicRAG):
 
         return cleaned
     
-    def get_input_prompt_self_consistency(self, question, trace):
+    def get_input_prompt_without_final_answer(self, question, trace):
         search_query = question
         instruct_exps = self.instruction + self.examples_text 
         input_prompt = instruct_exps + f"Question: {search_query}\n"
@@ -2068,8 +2092,8 @@ class ReAct_RAG(BasicRAG):
         
         return input_prompt
         
-    def partial_inference_self_consistency(self, question, trace):
-        input_prompt = self.get_input_prompt_self_consistency(question, trace)
+    def partial_inference_final_answer(self, question, trace):
+        input_prompt = self.get_input_prompt_without_final_answer(question, trace)
         messages = [
             {"role": "system", "content": ''},
             {"role": "user", "content": input_prompt + f"Action {len(trace)}: Finish["}
@@ -2094,7 +2118,7 @@ class ReAct_RAG(BasicRAG):
         
         return answer_list_
     
-    def get_input_prompt_reasoning_consistency(self, question, trace):
+    def get_input_prompt_without_last_step(self, question, trace):
         search_query = question
         instruct_exps = self.instruction + self.examples_text
         input_prompt = instruct_exps + f"Question: {search_query}\n"
@@ -2116,7 +2140,7 @@ class ReAct_RAG(BasicRAG):
             )
         return input_prompt
     
-    def partial_inference_reasoning_consistency(self, input_prompt_text, iter_num):
+    def partial_inference_last_step(self, input_prompt_text, iter_num):
         messages = [
             {"role": "system", "content": ''},
             {"role": "user", "content": input_prompt_text + f"Thought {iter_num}:"}
@@ -2165,7 +2189,7 @@ class ReAct_RAG(BasicRAG):
     
         return thought, pred_answer
         
-    def partial_inference_rag_consistency(self, question, generated_trace):
+    def partial_inference_middle_step(self, question, generated_trace):
         self.page = None  # current Wikipedia page
         self.lookup_keyword = None  # current lookup keyword
         self.lookup_list = None  # list of paragraphs containing current lookup keyword
@@ -2305,14 +2329,18 @@ class SearchO1_RAG(BasicRAG):
         rid_output_text_ = self.get_search_results(rid_output_text)
         return rid_output_text_
 
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         input_prompt = self.instruction + get_task_instruction_openqa(question)
         messages = [{"role": "user", "content": input_prompt}]
         
         path = []
         for idx in range(self.MAX_SEARCH_LIMIT):
             # -- One step generation
-            output, output_text = self.generator.generate(messages, self.generator.searcho1_stopping_criteria)
+            output, output_text = self.generator.generate(
+                messages,
+                self.generator.searcho1_stopping_criteria,
+                temperature=generation_temp
+            )
             
             if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.MAX_SEARCH_LIMIT):
                 break # Don't perform another retrieval or prompt construction
@@ -2353,7 +2381,7 @@ class SearchO1_RAG(BasicRAG):
         return pred_answer, path
 
     # --
-    def get_input_prompt_self_consistency(self, question, trace):
+    def get_input_prompt_without_final_answer(self, question, trace):
         input_prompt = self.instruction + get_task_instruction_openqa(question)
         for step in trace[:-1]:
             input_prompt += self.current_step_template.format(
@@ -2364,8 +2392,8 @@ class SearchO1_RAG(BasicRAG):
         input_prompt += trace[-1]['think']
         return input_prompt
     
-    def partial_inference_self_consistency(self, question, trace):
-        input_prompt = self.get_input_prompt_self_consistency(question, trace)
+    def partial_inference_final_answer(self, question, trace):
+        input_prompt = self.get_input_prompt_without_final_answer(question, trace)
         messages = [{"role": "user", "content": input_prompt}]
         answer_list = self.generator.generate_batch(
             messages,
@@ -2375,7 +2403,7 @@ class SearchO1_RAG(BasicRAG):
         answer_list_ = [self.get_boxed_answer(answer) for answer in answer_list]
         return answer_list_
     
-    def get_input_prompt_reasoning_consistency(self, question, trace):
+    def get_input_prompt_without_last_step(self, question, trace):
         input_prompt = self.instruction + get_task_instruction_openqa(question)
         for step in trace[:-1]:
             input_prompt += self.current_step_template.format(
@@ -2385,7 +2413,7 @@ class SearchO1_RAG(BasicRAG):
             )
         return input_prompt
 
-    def partial_inference_reasoning_consistency(self, input_prompt_text):
+    def partial_inference_last_step(self, input_prompt_text):
         messages = [{"role": "user", "content": input_prompt_text}]
         _, output_text = self.generator.generate(
             messages,
@@ -2396,7 +2424,7 @@ class SearchO1_RAG(BasicRAG):
         
         return last_think, pred_answer
 
-    def partial_inference_rag_consistency(self, question, generated_trace):
+    def partial_inference_middle_step(self, question, generated_trace):
         input_prompt = self.instruction + get_task_instruction_openqa(question)
         for step in generated_trace:
             input_prompt += self.current_step_template.format(
@@ -2502,7 +2530,7 @@ In the last part of the answer, the final exact answer is enclosed within \\boxe
         match = re.search(r"\\boxed\{(.*?)\}", text)
         return match.group(1).strip() if match else None   
     
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         input_prompt = question
         messages = [
             {'role': 'system', 'content': self.re_search_template_sys},
@@ -2511,7 +2539,11 @@ In the last part of the answer, the final exact answer is enclosed within \\boxe
         
         path = []
         while True:
-            output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
+            output_, output_text = self.generator.generate(
+                messages,
+                self.generator.searchr1_stopping_criteria,
+                temperature=generation_temp
+            )
 
             if output_[-1].item() in self.generator.curr_eos:
                 break
@@ -2542,7 +2574,7 @@ In the last part of the answer, the final exact answer is enclosed within \\boxe
         return pred_answer, path
 
     # --
-    def get_input_prompt_self_consistency(self, question, trace):
+    def get_input_prompt_without_final_answer(self, question, trace):
         prompt_text = f"{question}\n"
         for step in trace[:-1]:
             prompt_text += f"<think> {step['think']} </think>\n"
@@ -2553,8 +2585,8 @@ In the last part of the answer, the final exact answer is enclosed within \\boxe
         
         return prompt_text
     
-    def partial_inference_self_consistency(self, question, trace):
-        input_prompt = self.get_input_prompt_self_consistency(question, trace)
+    def partial_inference_final_answer(self, question, trace):
+        input_prompt = self.get_input_prompt_without_final_answer(question, trace)
         messages = [
             {'role': 'system', 'content': self.re_search_template_sys},
             {'role': 'user', 'content': input_prompt}
@@ -2579,7 +2611,7 @@ In the last part of the answer, the final exact answer is enclosed within \\boxe
         
         return answer_list_
     
-    def get_input_prompt_reasoning_consistency(self, question, trace):
+    def get_input_prompt_without_last_step(self, question, trace):
         prompt_text = f"{question}\n"
         for step in trace[:-1]:
             prompt_text += f"<think> {step['think']} </think>\n"
@@ -2588,7 +2620,7 @@ In the last part of the answer, the final exact answer is enclosed within \\boxe
 
         return prompt_text
 
-    def partial_inference_reasoning_consistency(self, input_prompt_text):
+    def partial_inference_last_step(self, input_prompt_text):
         messages = [
             {'role': 'system', 'content': self.re_search_template_sys},
             {'role': 'user', 'content': input_prompt_text}
@@ -2605,7 +2637,7 @@ In the last part of the answer, the final exact answer is enclosed within \\boxe
 
         return think, answer
 
-    def partial_inference_rag_consistency(self, question, generated_trace):
+    def partial_inference_middle_step(self, question, generated_trace):
         
         input_prompt = question
         input_prompt += ''.join(
@@ -2706,13 +2738,17 @@ If you find no further external knowledge needed, you can directly provide the a
         else:
             return None
 
-    def inference(self, question):
+    def inference(self, question, generation_temp=0.7):
         input_prompt = self.prompt.format(question=question)
         messages = [{"role": "user", "content": input_prompt}]
         
         path = []
         while True:
-            output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
+            output_, output_text = self.generator.generate(
+                messages,
+                self.generator.searchr1_stopping_criteria,
+                temperature=generation_temp
+            )
     
             if output_[-1].item() in self.generator.curr_eos:
                 break
@@ -2740,7 +2776,7 @@ If you find no further external knowledge needed, you can directly provide the a
         return pred_answer, path
     
     # --
-    def get_input_prompt_self_consistency(self, question, trace):
+    def get_input_prompt_without_final_answer(self, question, trace):
         prompt_text = self.prompt.format(question=question)
         for step in trace[:-1]:
             prompt_text += f"<think> {step['think']} </think>\n"
@@ -2751,9 +2787,9 @@ If you find no further external knowledge needed, you can directly provide the a
         
         return prompt_text
     
-    def partial_inference_self_consistency(self, question, trace):
+    def partial_inference_final_answer(self, question, trace):
         answer_list = []
-        input_prompt_text = self.get_input_prompt_self_consistency(question, trace)
+        input_prompt_text = self.get_input_prompt_without_final_answer(question, trace)
         messages = [{"role": "user", "content": input_prompt_text}]
         for i in range(self.args.n_generations):
             output_, output_text = self.generator.generate(
@@ -2767,7 +2803,7 @@ If you find no further external knowledge needed, you can directly provide the a
         
         return answer_list
     
-    def get_input_prompt_reasoning_consistency(self, question, trace):
+    def get_input_prompt_without_last_step(self, question, trace):
         prompt_text = self.prompt.format(question=question)
         for step in trace[:-1]:
             prompt_text += f"<think> {step['think']} </think>\n"
@@ -2776,7 +2812,7 @@ If you find no further external knowledge needed, you can directly provide the a
         # prompt_text += f"<think> {trace[-1]['think']} "
         return prompt_text 
         
-    def partial_inference_reasoning_consistency(self, input_prompt_text):
+    def partial_inference_last_step(self, input_prompt_text):
         messages = [{"role": "user", "content": input_prompt_text}]
         _, output_text = self.generator.generate(
             messages,
@@ -2789,7 +2825,7 @@ If you find no further external knowledge needed, you can directly provide the a
         think = think_.strip() if think_ else ''
         return think, answer
         
-    def partial_inference_rag_consistency(self, question, generated_trace):
+    def partial_inference_middle_step(self, question, generated_trace):
         input_prompt = self.prompt.format(question=question)
         generated_trace_text = ''.join(
             self.curr_step_template.format(

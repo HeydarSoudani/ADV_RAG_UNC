@@ -25,7 +25,7 @@ class RagConsistency:
         rag_model,
         secondary_model,
         secondary_tokenizer,
-        device, args, 
+        device, args
     ):
         self.args = args
         # === Static Retriever =====================
@@ -42,17 +42,19 @@ class RagConsistency:
         self.rag_model = rag_model
         self.secondary_model = secondary_model
         self.secondary_tokenizer = secondary_tokenizer
-        self.se_model = SemanticEquivalenceGenerator(args, device, self.rag_model.generator.generator, self.rag_model.generator.tokenizer)
         self.search_query_paraphraser = SearchQueryParaphraser(args, self.secondary_model, self.secondary_tokenizer)
-        self.think_paraphraser = ThinkParaphraser(args, self.secondary_model, self.secondary_tokenizer)
-        self.retrieval_perturber = RetrievalPerturber(args, self.retriever)
         self.critical_think_generator = CriticalThinkGenerator(args, self.secondary_model, self.secondary_tokenizer)
         self.answer_validator = AnswerValidator(args, self.secondary_model, self.secondary_tokenizer)
+        # self.se_model = SemanticEquivalenceGenerator(args, device, self.rag_model.generator.generator, self.rag_model.generator.tokenizer)
+        # self.think_paraphraser = ThinkParaphraser(args, self.secondary_model, self.secondary_tokenizer)
+        # self.retrieval_perturber = RetrievalPerturber(args, self.retriever)
+        
     
     def get_masked_traces(self, qid, question, prediction, trace):
         actions = ['query_paraphrasing', 'adding_critical_thought', 'answer_validation'] #  'answer_validation', 'doc_shuffling'
         # actions = ['adding_critical_thought']
         
+        # -- Read search-query indices
         masked_traces, answer_output_list = [], []    
         if self.args.rag_method == 'self_ask':
             has_search = len(trace) > 2
@@ -69,7 +71,7 @@ class RagConsistency:
             has_search = len(trace) > 1
             think_search_indices = range(0, len(trace)-1)
         
-        if has_search:            
+        if has_search:
             random_pairs = [(random.choice(think_search_indices), random.choice(actions)) for _ in range(self.args.n_generations)]
             pair_counts = Counter(random_pairs)
             selected_indices_group = [(index, repeat, action) for (index, action), repeat in pair_counts.items()]
@@ -147,7 +149,7 @@ class RagConsistency:
                                 new_trace[-1]['action_type'] = 'search'
                         
                         # After break point: ask RAG system to generate
-                        pred_answer, rest_of_trace = self.rag_model.partial_inference_rag_consistency(question, new_trace)
+                        pred_answer, rest_of_trace = self.rag_model.partial_inference_middle_step(question, new_trace)
                         
                         new_trace.extend(rest_of_trace)
                         masked_traces.append(new_trace)
@@ -155,8 +157,8 @@ class RagConsistency:
 
         else:
             # ==============================
-            # -- DO reasoning-consistency --
-            # ==============================        
+            # -- Do reasoning-consistency --
+            # ==============================
             #! 1) Create partial think
             if self.args.n_generations == 1:
                 interval = 0
@@ -189,11 +191,11 @@ class RagConsistency:
             answer_output_list, masked_traces = [], []
             for partial_trace in masked_traces_: 
                 last_think_first_part = partial_trace[-1].get('think', '')
-                input_prompt_text = self.rag_model.get_input_prompt_reasoning_consistency(question, partial_trace)
+                input_prompt_text = self.rag_model.get_input_prompt_without_last_step(question, partial_trace)
                 if self.args.rag_method == 'react':
-                    last_think_second_part, final_ans = self.rag_model.partial_inference_reasoning_consistency(input_prompt_text, len(partial_trace))
+                    last_think_second_part, final_ans = self.rag_model.partial_inference_last_step(input_prompt_text, len(partial_trace))
                 else:
-                    last_think_second_part, final_ans = self.rag_model.partial_inference_reasoning_consistency(input_prompt_text)
+                    last_think_second_part, final_ans = self.rag_model.partial_inference_last_step(input_prompt_text)
                 
                 new_trace = copy.deepcopy(trace)
                 new_trace[-1]['think'] = f"{last_think_first_part.strip()} {last_think_second_part.strip()}".strip()
@@ -203,7 +205,7 @@ class RagConsistency:
         
         # Convert mased trace to text
         masked_traces_text = [
-            self.rag_model.get_input_prompt_self_consistency(question, masked_trace)
+            self.rag_model.get_input_prompt_without_final_answer(question, masked_trace)
             for masked_trace in masked_traces
         ]
         

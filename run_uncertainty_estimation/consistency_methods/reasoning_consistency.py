@@ -1,67 +1,60 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-import math
 import copy
+import random
+from collections import Counter
+
 
 class ReasoningConsistency:
     def __init__(self, rag_model, args):
         self.args = args
         self.rag_model = rag_model
-    
+        
+    # this is like rag_consistency, but without applying actions
     def get_masked_traces(self, qid, question, prediction, trace):
         
-        if self.args.n_generations == 1:
-            interval = 0
+        # -- Read search-query indices
+        masked_traces, answer_output_list = [], []
+        if self.args.rag_method == 'self_ask':
+            has_search = len(trace) > 2
+            think_search_indices = range(1, len(trace)-1)
+        elif self.args.rag_method == 'react':
+            think_search_indices = [idx for idx, step in enumerate(trace[:-1]) if step['action_type']=='search']
+            has_search = len(think_search_indices) > 0
+        elif self.args.rag_method in ['flare', 'dragin']:
+            think_search_indices = [idx for idx, step in enumerate(trace[:-1]) if len(step['search_query']) > 0]
+            has_search = len(think_search_indices) > 0
         else:
-            assert self.args.n_generations > 1
-            assert self.args.mask_right_boundary >= self.args.mask_left_boundary, f"right_boundary: {self.args.mask_right_boundary} < left_boundary: {self.args.mask_left_boundary}"
-            interval = (self.args.mask_right_boundary - self.args.mask_left_boundary) / (self.args.n_generations - 1)
-        
-        #! 1) Create partial think
-        last_think = trace[-1].get('think', '')
-        if last_think:
-            words_in_last_think = last_think.split(" ")
-            mask_len = len(words_in_last_think)
-        
-            masked_last_thinks = []
-            for i in range(self.args.n_generations):
-                prefix_part_ratio = self.args.mask_left_boundary + i * interval
-                prefix_part_num_words = math.ceil(mask_len * prefix_part_ratio) + 1
-                prefix_part_str = " ".join(words_in_last_think[:prefix_part_num_words])
-                masked_last_thinks.append(prefix_part_str)
-        else:
-            masked_last_thinks = [' ']*self.args.n_generations
-        
-        masked_traces_ = []
-        for masked_last_think in masked_last_thinks:
-            new_trace = copy.deepcopy(trace)
-            new_trace[-1]['think'] = masked_last_think
-            masked_traces_.append(new_trace)
-        
-        #! 2) Generate rest
-        answer_output_list, masked_traces = [], []
-        for partial_trace in masked_traces_: 
-            last_think_first_part = partial_trace[-1].get('think', '')
-            input_prompt_text = self.rag_model.get_input_prompt_reasoning_consistency(question, partial_trace)
-            if self.args.rag_method == 'react':
-                last_think_second_part, final_ans = self.rag_model.partial_inference_reasoning_consistency(input_prompt_text, len(partial_trace))
-            else:
-                last_think_second_part, final_ans = self.rag_model.partial_inference_reasoning_consistency(input_prompt_text)
+            has_search = len(trace) > 1
+            think_search_indices = range(0, len(trace)-1)
             
-            new_trace = copy.deepcopy(trace)
-            new_trace[-1]['think'] = f"{last_think_first_part.strip()} {last_think_second_part.strip()}".strip()
-            new_trace[-1]['answer'] = final_ans
-            masked_traces.append(new_trace)
-            answer_output_list.append(final_ans)
+        if has_search:
+            random_points = [random.choice(think_search_indices) for _ in range(self.args.n_generations)]
+            point_counts = Counter(random_points)
+            selected_indices_group = [(index, repeat) for index, repeat in point_counts.items()]
+            print(selected_indices_group)
+            
+            for (selected_index, repeat) in selected_indices_group:
+                for i in range(repeat):
+                    new_trace = copy.deepcopy(trace[:selected_index])
+                    pred_answer, rest_of_trace = self.rag_model.partial_inference_middle_step(question, new_trace)
+                    new_trace.extend(rest_of_trace)
+                    masked_traces.append(new_trace)
+                    answer_output_list.append(pred_answer.strip() if pred_answer else '')
+        else:
+            # ==============================
+            # -- Do self-consistency -------
+            # ==============================
+            for _ in range(self.args.n_generations):
+                final_ans, new_trace = self.rag_model.inference(question, generation_temp=self.args.consistency_temperature)
+                masked_traces.append(new_trace)
+                answer_output_list.append(final_ans)
         
+        # Convert mased trace to text
         masked_traces_text = [
-            self.rag_model.get_input_prompt_self_consistency(question, masked_trace) + f"{masked_trace[-1]['think']}"
+            self.rag_model.get_input_prompt_without_final_answer(question, masked_trace)
             for masked_trace in masked_traces
         ]
         
         return masked_traces, masked_traces_text, answer_output_list
-            
-
-    
-        
