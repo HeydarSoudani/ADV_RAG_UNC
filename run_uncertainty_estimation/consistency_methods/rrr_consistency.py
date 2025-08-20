@@ -53,7 +53,9 @@ class RRRConsistency:
             new_trace[-1]['think'] = f"{last_think_first_part.strip()} {last_think_second_part.strip()}".strip()
             new_trace[-1]['answer'] = final_ans
             masked_traces.append(new_trace)
-            answer_output_list.append(final_ans)
+            
+            final_ans_ = final_ans.strip() if final_ans else final_ans
+            answer_output_list.append(final_ans_)
         
         masked_traces_text = [
             self.rag_model.get_input_prompt_without_final_answer(question, masked_trace) + f"{masked_trace[-1]['think']}"

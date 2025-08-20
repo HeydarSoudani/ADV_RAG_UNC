@@ -1,13 +1,10 @@
-from .ue_method import UEMethod
-from run_mcts.src.scoring_methods import ScoringMethod, LengthNormalizedScoring
+from run_uncertainty_estimation.src.scoring_methods import ScoringMethod, LengthNormalizedScoring
 
-class Confidence(UEMethod):
+class Confidence:
     def __init__(self, scoring_function : ScoringMethod = LengthNormalizedScoring()):#normalization, 
-        super().__init__()
         self.scoring_function = scoring_function
     
-    def __call__(self, sampled_gen_dict):
-        
+    def __call__(self, sampled_gen_dict, prediction, context:str):
         # Apply Score function
         scores_ = [self.scoring_function(logp) for logp in sampled_gen_dict['logprobs']]
         score = self.scoring_function(scores_)

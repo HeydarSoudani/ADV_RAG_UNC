@@ -12,7 +12,8 @@ class SelfConsistency:
         for _ in range(self.args.n_generations):
             final_ans, new_trace = self.rag_model.inference(question, generation_temp=self.args.consistency_temperature)
             masked_traces.append(new_trace)
-            answer_output_list.append(final_ans)
+            final_ans_ = final_ans.strip() if final_ans else final_ans
+            answer_output_list.append(final_ans_)
         
         masked_traces_text = [
             self.rag_model.get_input_prompt_without_final_answer(question, masked_trace)

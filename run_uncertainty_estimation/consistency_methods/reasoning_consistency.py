@@ -41,7 +41,8 @@ class ReasoningConsistency:
                     pred_answer, rest_of_trace = self.rag_model.partial_inference_middle_step(question, new_trace)
                     new_trace.extend(rest_of_trace)
                     masked_traces.append(new_trace)
-                    answer_output_list.append(pred_answer.strip() if pred_answer else '')
+                    final_ans_ = pred_answer.strip() if pred_answer else pred_answer
+                    answer_output_list.append(final_ans_)
         else:
             # ==============================
             # -- Do self-consistency -------
@@ -49,7 +50,8 @@ class ReasoningConsistency:
             for _ in range(self.args.n_generations):
                 final_ans, new_trace = self.rag_model.inference(question, generation_temp=self.args.consistency_temperature)
                 masked_traces.append(new_trace)
-                answer_output_list.append(final_ans)
+                final_ans_ = final_ans.strip() if final_ans else final_ans
+                answer_output_list.append(final_ans_)
         
         # Convert mased trace to text
         masked_traces_text = [

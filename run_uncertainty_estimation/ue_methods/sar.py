@@ -76,6 +76,7 @@ class SAR:
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     ):
         importance_vector = []
+        print(tokens)
         for i in range(len(tokens)):
             removed_answer_ids = tokens[:i] + tokens[i + 1:]
             removed_answer = tokenizer.decode(
@@ -93,7 +94,11 @@ class SAR:
             importance_vector.append(score)
 
         importance_vector = importance_vector / np.sum(importance_vector)
-        return np.dot(importance_vector, logprobs)
+        if len(importance_vector) == len(logprobs):
+            return np.dot(importance_vector, logprobs)
+        else:
+            min_len = min(len(importance_vector), len(logprobs))
+            return  np.dot(importance_vector[:min_len], logprobs[:min_len])
 
     def __call__(self, sampled_gen_dict, prediction, context):
         generated_texts = sampled_gen_dict["generated_texts"]

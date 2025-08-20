@@ -2,7 +2,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus=4
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=8
 #SBATCH --partition=gpu_h100
 #SBATCH --time=1:00:00
 #SBATCH --mem=80GB
@@ -26,7 +26,7 @@ retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
 rag_method="search_r1"
 query_formulation="real_words"
 hallucination_threshold=0.6
-consistency_method="rag_consistency"
+consistency_method="self_consistency"
 run="run_3 (rag_methods_500)"
 n_generations=10
 

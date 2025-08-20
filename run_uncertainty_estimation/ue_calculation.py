@@ -27,7 +27,6 @@ def ue_generation(args):
     # === MultiGPU setup =========================
     accelerator = Accelerator()
     device = accelerator.device
-    
     if accelerator.is_main_process:
         print("\n== UE Generation ...")
         print(f"""
@@ -60,7 +59,6 @@ def ue_generation(args):
                     query_ids.append(data['qid'])
                     rag_generations[data['qid']] = data
     sorted_query_ids = sorted(query_ids, key=lambda x: int(x.split('_')[1]))
-    # sorted_query_ids = ['test_73'] # 'test_5', 'test_24', 'test_27', 'test_47', 'test_52', 'test_64', 'test_69', 'test_73', 'test_74', 'test_76', 'test_83'
     
     # === Read existing (generated) samples ======
     generated_qids = []
@@ -174,7 +172,7 @@ def ue_generation(args):
                 # if i == 3:
                 #     break
                 sample = rag_generations[qid]
-                user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
+                user_query, prediction, trace = sample['query'], sample['pred_answer'].strip(), sample['path']
                 
                 ### --- 1.1) Generate traces list
                 if not are_traces_generated:
@@ -214,7 +212,7 @@ def ue_generation(args):
                         for masked_trace in generated_masked_traces_with_docs
                     ]
                     final_answer_list = [
-                        masked_trace[-1]['answer'].strip() if masked_trace[-1]['answer'] else ''
+                        masked_trace[-1]['answer'] if masked_trace[-1]['answer'] else ''
                         for masked_trace in generated_masked_traces_with_docs
                     ]
                     context = passages2string(get_unique_docs(generated_masked_traces_with_docs))
@@ -445,7 +443,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_iter', type=int, default=5)
     
     # Consistency Generation Methods (answer list)
-    parser.add_argument('--consistency_method', type=str, default='fa_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
         'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)

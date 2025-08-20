@@ -94,12 +94,12 @@ if __name__ == "__main__":
     if args.rag_method in ['flare', 'dragin']:
         args.inference_results_file = f"{args.output_dir}/inference_results_th{args.hallucination_threshold}.jsonl"
         args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}.jsonl"
-        if args.consistency_method == "rag_consistency":
+        if args.consistency_method != "fa_consistency":
             args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces_th{args.hallucination_threshold}.jsonl"
     else:
         args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
         args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results.jsonl"
-        if args.consistency_method == "rag_consistency":
+        if args.consistency_method != "fa_consistency":
             args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces.jsonl"
     
     # === Prompt files =============

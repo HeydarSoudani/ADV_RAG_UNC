@@ -153,7 +153,8 @@ class RagConsistency:
                         
                         new_trace.extend(rest_of_trace)
                         masked_traces.append(new_trace)
-                        answer_output_list.append(pred_answer.strip() if pred_answer else '')
+                        final_ans_ = pred_answer.strip() if pred_answer else pred_answer
+                        answer_output_list.append(final_ans_)
 
         else:
             # ==============================
@@ -196,12 +197,13 @@ class RagConsistency:
                     last_think_second_part, final_ans = self.rag_model.partial_inference_last_step(input_prompt_text, len(partial_trace))
                 else:
                     last_think_second_part, final_ans = self.rag_model.partial_inference_last_step(input_prompt_text)
-                
+               
                 new_trace = copy.deepcopy(trace)
                 new_trace[-1]['think'] = f"{last_think_first_part.strip()} {last_think_second_part.strip()}".strip()
                 new_trace[-1]['answer'] = final_ans
                 masked_traces.append(new_trace)
-                answer_output_list.append(final_ans)
+                final_ans_ = final_ans.strip() if final_ans else final_ans
+                answer_output_list.append(final_ans_)
         
         # Convert mased trace to text
         masked_traces_text = [

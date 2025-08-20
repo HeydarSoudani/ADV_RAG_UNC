@@ -69,13 +69,18 @@ class PTrue:
         
         prompt = self.tokenizer.apply_chat_template(chat, tokenize=False)
         prompt_tokens = self.tokenizer.encode(prompt, return_tensors="pt").to(self.model.device)
-        with torch.no_grad():
-            outputs = self.model(prompt_tokens)
+        self.model.eval()
+        with torch.inference_mode():
+            outputs = self.model(prompt_tokens, use_cache=False, output_attentions=False, output_hidden_states=False)
             logits = outputs.logits
+            logits = outputs.logits.detach().cpu()   # <<< move off GPU before softmax
+            del outputs
+            torch.cuda.empty_cache() 
 
+        idx = prompt_tokens[0][1:].cpu().view(-1, 1)  # just for gather()
         logprobs = torch.log_softmax(logits, dim=-1)
         logprobs = logprobs[0, :-1, :]
-        logprobs = torch.gather(logprobs, dim=1, index=prompt_tokens[0][1:].view(-1, 1))
+        logprobs = torch.gather(logprobs, dim=1, index=idx)
         logprobs = logprobs.view(-1).tolist()
         indices, texts = find_token_indices(prompt_tokens[0][1:], self.tokenizer, "true")
 

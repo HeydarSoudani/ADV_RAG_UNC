@@ -551,6 +551,7 @@ def find_token_indices(
     texts = []
     begin = 0
     found = False
+    tokens = tokens.detach().cpu().tolist()
     while begin < len(tokens):
         for end in range(begin + 1, len(tokens)):
             if target_text in tokenizer.decode(tokens[begin:end]):
