@@ -76,7 +76,6 @@ class SAR:
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     ):
         importance_vector = []
-        print(tokens)
         for i in range(len(tokens)):
             removed_answer_ids = tokens[:i] + tokens[i + 1:]
             removed_answer = tokenizer.decode(

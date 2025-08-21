@@ -174,16 +174,17 @@ class MARS:
         generated_tokens_texts = sampled_gen_dict["tokens_text"]
         logprobs = sampled_gen_dict["logprobs"]
         
-        total_score = 0.0
+        scores = []
         for i, generated_text in enumerate(generated_texts):
             probs = np.exp(np.array(logprobs[i]))
+            # probs = torch.exp(torch.tensor(logprobs[i]))
             tokens_text = generated_tokens_texts[i]
             importance_scores, phrases = self.get_importance_vector_MARS(self.mars_model, self.mars_tokenizer, question, generated_text)
-            score_, merged_importance_vector = self.compute_token_nll_importance_phrase(probs, tokens_text, importance_scores, phrases)
-            total_score += score_
+            score, merged_importance_vector = self.compute_token_nll_importance_phrase(probs, tokens_text, importance_scores, phrases)
+            scores.append(score)
         
-        score = total_score / len(generated_texts)
+        mars_score = np.sum(scores) / len(scores)
         return {
-            "confidence": score,
-            "uncertainty": -score
+            "confidence": mars_score,
+            "uncertainty": -mars_score
         } 

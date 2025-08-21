@@ -23,7 +23,7 @@ from run_uncertainty_estimation.ue_methods import *
 from run_rag_methods.src.retrievers_local import load_docs
 
 def ue_generation(args):
-    are_traces_generated = False
+    are_traces_generated = True
     # === MultiGPU setup =========================
     accelerator = Accelerator()
     device = accelerator.device
@@ -172,7 +172,8 @@ def ue_generation(args):
                 # if i == 3:
                 #     break
                 sample = rag_generations[qid]
-                user_query, prediction, trace = sample['query'], sample['pred_answer'].strip(), sample['path']
+                user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
+                prediction = prediction.strip() if prediction else prediction 
                 
                 ### --- 1.1) Generate traces list
                 if not are_traces_generated:
@@ -212,14 +213,14 @@ def ue_generation(args):
                         for masked_trace in generated_masked_traces_with_docs
                     ]
                     final_answer_list = [
-                        masked_trace[-1]['answer'] if masked_trace[-1]['answer'] else ''
+                        masked_trace[-1]['answer'].strip() if masked_trace[-1]['answer'] else None
                         for masked_trace in generated_masked_traces_with_docs
                     ]
                     context = passages2string(get_unique_docs(generated_masked_traces_with_docs))
 
                 ### --- 2) Calculate UE scores
                 ue_scores = uncertainty_estimator_model.estimate(
-                    user_query,
+                    qid, user_query,
                     prediction,
                     context=context,
                     input_prompt_texts = masked_traces_text,
@@ -338,6 +339,9 @@ def evaluation_correlation(args):
         for ue_metric, conf_list in uncertainty_obj.items():
             print(f"{ue_metric}: {get_auroc(correctness_list, conf_list)}")
 
+def evaluation_correlation_combined(args):
+    pass
+
 def correctness_evaluation_mv(args):
     em_mv_full_evaluation, em_mv_sub_evaluation = [], []
     em_org_full_evaluation, em_org_sub_evaluation = [], []
@@ -391,10 +395,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -485,9 +489,9 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    ue_generation(args)
-    # merge_result_files(args)
-    # evaluation_correlation(args)
+    # ue_generation(args)
+    merge_result_files(args)
+    evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     
     # python run_uncertainty_estimation/ue_calculation.py

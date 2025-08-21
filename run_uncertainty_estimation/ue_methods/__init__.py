@@ -10,7 +10,7 @@ from .semantic_entropy import SemanticEntropy
 from .sar import SAR
 from .mars import MARS
 from .lars import LARS
-from .self_detection import SelfDetection
+# from .self_detection import SelfDetection
 
 
 __all__ = [
@@ -25,5 +25,6 @@ __all__ = [
     "SemanticEntropy",
     "SAR",
     "MARS",
-    "SelfDetection"
+    "LARS",
+    # "SelfDetection"
 ]
