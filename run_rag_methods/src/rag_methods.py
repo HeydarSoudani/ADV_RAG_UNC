@@ -1620,11 +1620,13 @@ class SelfAsk_RAG(BasicRAG):
         all_docs = [doc for step in generated_trace for doc in step['docs']]
         unq_docs = self.get_unique_docs(all_docs)
         
-        text = f"Follow up: {generated_trace[1].get('search_query', '')}\n"
-        for step in generated_trace[2:]:
-            text += f"Intermediate answer: {step.get('think', '')}\n"
-            text += f"Follow up: {step.get('search_query', '')}\n"
-        text += f"Intermediate answer: "
+        text = ""
+        if len(generated_trace) > 1:
+            text += f"Follow up: {generated_trace[1].get('search_query', '')}\n"
+            for step in generated_trace[2:]:
+                text += f"Intermediate answer: {step.get('think', '')}\n"
+                text += f"Follow up: {step.get('search_query', '')}\n"
+            text += f"Intermediate answer: "
         
         user_input_prompt = self.user_prompt_self_ask.format(
             documents = self.documents2string(unq_docs),
@@ -2346,7 +2348,7 @@ class SearchO1_RAG(BasicRAG):
                 break # Don't perform another retrieval or prompt construction
             
             # -- Extract info
-            tmp_think = self.get_reasoning_think(output_text).replace("\n", ' ').replace("\n\n", ' ')
+            tmp_think = self.get_reasoning_think(output_text).replace("\n", ' ').replace("\n\n", ' ') if self.get_reasoning_think(output_text) else ''
             tmp_query = self.get_search_query(output_text)
             if tmp_query:
                 search_docs = self.retriever.search(tmp_query)
@@ -2444,7 +2446,7 @@ class SearchO1_RAG(BasicRAG):
             
             # -- Extract info
             if output_text:
-                tmp_think = self.get_reasoning_think(output_text).replace("\n", ' ').replace("\n\n", ' ')
+                tmp_think = self.get_reasoning_think(output_text).replace("\n", ' ').replace("\n\n", ' ') if self.get_reasoning_think(output_text) else ''
                 tmp_query = self.get_search_query(output_text)
                 if tmp_query:
                     search_docs = self.retriever.search(tmp_query)

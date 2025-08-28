@@ -233,7 +233,7 @@ def subsample_generation(args):
                     qids.append(match.group(1))
         return qids
 
-    sample_size = 1000
+    sample_size = 500
     src_file = args.inference_results_file
     
     # Subsampling qids
@@ -243,7 +243,7 @@ def subsample_generation(args):
     
     # dst file
     model_ = args.model_name_or_path.split('/')[-1]
-    run_ = f"run_2 (rag_methods_{sample_size})"
+    run_ = f"run_3 (rag_methods_{sample_size})"
     dst_output_dir = f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}" \
         if args.rag_method in ['direct_inference', 'cot_inference'] \
         else f"run_output/{run_}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"
@@ -306,7 +306,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='ircot', choices=[
+    parser.add_argument('--rag_method', type=str, default='direct_inference', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
@@ -354,8 +354,8 @@ if __name__ == "__main__":
     # rag_generation(args)
     # merge_result_files(args)
     # get_num_retrieval(args)
-    # evaluate(args)
-    subsample_generation(args)
+    evaluate(args)
+    # subsample_generation(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py

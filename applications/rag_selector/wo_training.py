@@ -15,8 +15,8 @@ from utils.general_utils import set_seed
 
 def correctness_distribution_analyze(args):
     rag_methods = [
-        # ('Qwen2.5-7B-Instruct', 'ircot'),
-        # ('Qwen2.5-7B-Instruct', 'flare', 0.08),
+        ('Qwen2.5-7B-Instruct', 'ircot'),
+        ('Qwen2.5-7B-Instruct', 'flare', 0.08),
         # ('Qwen2.5-7B-Instruct', 'dragin', 0.6),
         ('Qwen2.5-7B-Instruct', 'self_ask'),
         ('Qwen2.5-7B-Instruct', 'react'),
@@ -66,6 +66,9 @@ def correctness_distribution_analyze(args):
 
 def rag_selection(args):
     rag_methods = [
+        ('Qwen2.5-7B-Instruct', 'ircot'),
+        ('Qwen2.5-7B-Instruct', 'flare', 0.08),
+        # ('Qwen2.5-7B-Instruct', 'dragin', 0.6),
         ('Qwen2.5-7B-Instruct', 'self_ask'),
         ('Qwen2.5-7B-Instruct', 'react'),
         ('Qwen2.5-7B-Instruct', 'search_o1'),
@@ -76,11 +79,22 @@ def rag_selection(args):
     # === Load data
     dfs = []
     for rag_method in rag_methods:
-        file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"
+        if rag_method[1] in ['flare', 'dragin']:
+            # file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/inference_results_th{rag_method[2]}.jsonl"
+            file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results_th{rag_method[2]}.jsonl"
+        else:
+            # file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/inference_results.jsonl"
+            file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"
+        
         with open(file_path, "r") as f:
             data = [json.loads(line) for line in f]
         df_temp = pd.DataFrame(data)[["qid", "pred_answer", "em", "ue_scores"]]
-        confidences = df_temp["ue_scores"].apply(lambda x: x["majority_voting"]["confidence"])
+        
+        if args.consistency_method == 'rag_consistency':
+            confidences = df_temp["ue_scores"].apply(lambda x: x["majority_voting"]["confidence"])
+        else:
+            confidences = df_temp["ue_scores"].apply(lambda x: x["majority_voting"]["most_confident_answer"][1])
+        
         df_temp[rag_method[1]] = list(zip(df_temp["pred_answer"], df_temp["em"], confidences))
         df = df_temp[["qid", rag_method[1]]]
         dfs.append(df)
@@ -172,7 +186,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='musique', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
@@ -204,8 +218,8 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
-        'self_consistency', 'reasoning_consistency', 'rag_consistency'
+    parser.add_argument('--consistency_method', type=str, default='rrr_consistency', choices=[
+        'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
     parser.add_argument("--mask_left_boundary", type=float, default=0.1)
@@ -214,7 +228,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_4 (rag_methods_500)')
+    parser.add_argument('--run', type=str, default='run_3 (rag_methods_500)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -224,9 +238,9 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    # correctness_distribution_analyze(args)
+    correctness_distribution_analyze(args)
     # rag_selection(args)
-    rubostness_analysis(args)
+    # rubostness_analysis(args)
     
     # python applications/rag_selector/wo_training.py
     # accelerate launch --multi_gpu applications/rag_selector/wo_training.py

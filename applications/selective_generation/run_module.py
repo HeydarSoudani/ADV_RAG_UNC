@@ -60,7 +60,6 @@ def compute_rc_rag_metrics(correctness, confidence, threshold):
         "Counts": {"AK": N_AK, "AD": N_AD, "UK": N_UK, "UD": N_UD}
     }
 
-
 # Src: Don’t Hallucinate, Abstain: Identifying LLM Knowledge Gaps via Multi-LLM Collaboration
 def abstention_metrics(
     correctness: Iterable[int | bool],
@@ -125,6 +124,82 @@ def abstention_metrics(
         "answer_if_above": answer_if_above,
     }
 
+def accuracy_rejection_curve(
+    correctness: Iterable[int],
+    certainty: Iterable[float],
+    include_terminal: bool = True,
+    terminal_accuracy: float = 1.0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Build the Accuracy–Rejection curve.
+
+    Args:
+        correctness: Iterable of 0/1 values (1 = correct prediction, 0 = incorrect).
+        certainty:   Iterable of certainty/confidence scores (higher = more certain).
+        include_terminal: If True, append the terminal point at rejection=1.0.
+        terminal_accuracy: Accuracy value to use at rejection=1.0 (no kept samples).
+                           A common convention is 1.0.
+
+    Returns:
+        rejection: np.ndarray of rejection rates in [0, 1].
+        accuracy:  np.ndarray of accuracy measured on the kept set (highest certainty)
+                   after rejecting a given fraction (rejection rate).
+    """
+    c = np.asarray(correctness, dtype=float)
+    s = np.asarray(certainty, dtype=float)
+    assert c.shape == s.shape, "correctness and certainty must have the same length"
+    n = c.size
+    if n == 0:
+        return np.array([0.0]), np.array([np.nan])
+
+    # Sort examples by ascending certainty (least certain first to be rejected first)
+    order = np.argsort(s, kind="stable")
+    c_sorted = c[order]
+
+    # For each possible rejection k (0..n), keep the n-k most certain examples:
+    # accuracy on kept = sum(correct[k:]) / (n - k). We get these efficiently with suffix sums.
+    suffix_correct = np.cumsum(c_sorted[::-1])[::-1]  # suffix sums, length n
+    kept_counts = np.arange(n, 0, -1)                 # n, n-1, ..., 1
+
+    # Points for k = 0..n-1 (at least one kept)
+    rejections = np.arange(0, n, dtype=float) / n
+    accuracies = suffix_correct / kept_counts
+
+    # Optionally add terminal point at rejection = 1.0 with a chosen accuracy convention
+    if include_terminal:
+        rejections = np.append(rejections, 1.0)
+        accuracies = np.append(accuracies, terminal_accuracy)
+
+    return rejections, accuracies
+
+def auarc(
+    correctness: Iterable[int],
+    certainty: Iterable[float],
+    include_terminal: bool = True,
+    terminal_accuracy: float = 1.0,
+) -> float:
+    """
+    Compute AUARC (Area Under the Accuracy–Rejection Curve) via trapezoidal rule.
+
+    The curve is constructed by rejecting increasingly uncertain examples and
+    computing accuracy on the remaining (kept) set.
+
+    Args:
+        correctness: Iterable of 0/1 values (1 = correct, 0 = incorrect).
+        certainty:   Iterable of certainty/confidence scores (higher = more certain).
+        include_terminal: Whether to include the terminal point at rejection=1.0.
+        terminal_accuracy: Accuracy assigned at rejection=1.0 (when nothing is kept).
+                           Common convention is 1.0.
+
+    Returns:
+        AUARC as a float in [0, 1].
+    """
+    rej, acc = accuracy_rejection_curve(
+        correctness, certainty, include_terminal=include_terminal, terminal_accuracy=terminal_accuracy
+    )
+    # Numerical integration with trapezoidal rule over rejection ∈ [0, 1]
+    return float(np.trapz(acc, rej))
+
 
 def selective_generation(args):
     
@@ -152,15 +227,19 @@ def selective_generation(args):
         accuracy_coverage_file = f"{args.output_dir}/selective_generation_plots/{args.consistency_method}_results_accuracy_coverage.png"
         reliability_file = f"{args.output_dir}/selective_generation_plots/{args.consistency_method}_results_reliability.png"
     os.makedirs(f"{args.output_dir}/selective_generation_plots", exist_ok=True)
-            
-              
+          
     scores, labels = [], []
     with open(consistency_results_file, "r", encoding="utf-8") as f:
         for line in f:
             if not line.strip():
                 continue
             obj = json.loads(line)
-            scores.append(float(obj["ue_scores"]["majority_voting"]["confidence"]))
+            if args.consistency_method == 'rag_consistency':
+                scores.append(float(obj["ue_scores"]["majority_voting"]["confidence"]))
+            else:
+                scores.append(float(obj["ue_scores"]["p_true"]["confidence"]))
+                # scores.append(float(obj["ue_scores"]["majority_voting"]["most_confident_answer"][1]))
+            
             labels.append(int(obj["em"]))
     scores, labels = np.array(scores), np.array(labels) 
     # print(scores)
@@ -170,10 +249,9 @@ def selective_generation(args):
     threshold = 0.8
     # metrics = compute_rc_rag_metrics(labels, scores, threshold)
     # print(metrics)
-    
-    metrics = abstention_metrics(labels, scores, threshold)
-    print(metrics['counts'])
-    print(metrics['metrics'])
+    # metrics = abstention_metrics(labels, scores, threshold)
+    # print(metrics['counts'])
+    # print(metrics['metrics'])
     
     # # scores: np.ndarray in [0,1], labels: np.ndarray in {0,1}
     # rc = compute_risk_coverage(scores, labels)
@@ -187,6 +265,12 @@ def selective_generation(args):
     # plot_reliability(rel, reliability_file)
 
 
+    auarc_score = auarc(labels, scores)
+    print("AUARC:", auarc_score)
+    
+    
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -198,10 +282,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -251,7 +335,7 @@ if __name__ == "__main__":
     
     # Consistency Generation Methods (answer list)
     parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
-        'self_consistency', 'reasoning_consistency', 'rag_consistency'
+        'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
     parser.add_argument("--mask_left_boundary", type=float, default=0.1)

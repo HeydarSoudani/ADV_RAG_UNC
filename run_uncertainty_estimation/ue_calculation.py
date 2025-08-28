@@ -23,7 +23,7 @@ from run_uncertainty_estimation.ue_methods import *
 from run_rag_methods.src.retrievers_local import load_docs
 
 def ue_generation(args):
-    are_traces_generated = True
+    are_traces_generated = True # when yo generated the paths and want to add UE results
     # === MultiGPU setup =========================
     accelerator = Accelerator()
     device = accelerator.device
@@ -306,7 +306,17 @@ def get_auroc(correctness, confidence):
     return auroc
 
 def evaluation_correlation(args):
-    
+    print("\n== Correlation Evaluation ...")
+    print(f"""
+        Model name:    {args.model_name_or_path}
+        Secondary M.:  {args.secondary_model_name_or_path}
+        Dataset:       {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
+        Retriever:     {args.retriever_name} / ({args.retrieval_model_path})
+        RAG Method:    {args.rag_method}
+        Con. Method:   {args.consistency_method}
+        Run:           {args.run}
+        Seed:          {args.seed}
+    """.replace('            ', ''))
     # accelerator = Accelerator()
     # device = accelerator.device
     # secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, torch_dtype=torch.bfloat16).to(device)
@@ -331,16 +341,52 @@ def evaluation_correlation(args):
             
             ue_scores = data['ue_scores']
             for ue_metric, ue_value in ue_scores.items():
-                if ue_metric in uncertainty_obj.keys():
-                    uncertainty_obj[ue_metric].append(ue_value['confidence'])
+                # conf_score = ue_value['confidence']
+                if args.consistency_method == 'rag_consistency':
+                    conf_score = ue_value['confidence']
                 else:
-                    uncertainty_obj[ue_metric] = [ue_value['confidence']]
+                    conf_score = ue_value['most_confident_answer'][1] if ue_metric == "majority_voting" else ue_value['confidence']
+                
+                if ue_metric in uncertainty_obj.keys():
+                    uncertainty_obj[ue_metric].append(conf_score)
+                else:
+                    uncertainty_obj[ue_metric] = [conf_score]
 
         for ue_metric, conf_list in uncertainty_obj.items():
             print(f"{ue_metric}: {get_auroc(correctness_list, conf_list)}")
 
+eps = 1e-12
+landa_1 = 0.7
+landa_2 = 0.3
 def evaluation_correlation_combined(args):
-    pass
+    second_consistency = 'fa_consistency'
+    if args.rag_method in ['flare', 'dragin']:
+        second_consistency_results_file = f"{args.output_dir}/{second_consistency}_results_th{args.hallucination_threshold}.jsonl"
+    else:
+        second_consistency_results_file = f"{args.output_dir}/{second_consistency}_results.jsonl"
+        
+    second_uncertainty_obj = {}    
+    with open(second_consistency_results_file, 'r') as infile:
+        for line in infile:
+            data = json.loads(line)
+            conf = data['ue_scores']['majority_voting']['confidence']
+            second_uncertainty_obj[data['qid']] = conf
+    
+    correctness_list, conf_list = [], []
+    with open(args.consistency_results_file, 'r') as infile:
+        for line in infile:
+            data = json.loads(line)
+            correctness = data['em']
+            correctness_list.append(correctness)
+            conf = data['ue_scores']['majority_voting']['confidence']
+            agg_conf = landa_1 * conf + landa_2 * second_uncertainty_obj[data['qid']]
+            # agg_conf = 1.0 / ((1.0 / (conf+eps)) + (0.0 / (second_uncertainty_obj[data['qid']]+eps)))
+            conf_list.append(agg_conf)
+    
+    print(f"AUROC: {get_auroc(correctness_list, conf_list)}")
+
+
+
 
 def correctness_evaluation_mv(args):
     em_mv_full_evaluation, em_mv_sub_evaluation = [], []
@@ -395,10 +441,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -436,18 +482,18 @@ if __name__ == "__main__":
     ])
     parser.add_argument('--generate_fix_length', type=int, default=25)
     parser.add_argument('--modifier_method', type=str, default='token', choices=['token', 'entity'])          # for FLARE
-    parser.add_argument('--query_formulation', type=str, default='real_words', choices=[                          # for FLARE & DRAGIN
+    parser.add_argument('--query_formulation', type=str, default='direct', choices=[                      # for FLARE & DRAGIN
         'direct', 'forward_all',
         'real_words', 'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens',
     ])
     parser.add_argument('--sentence_solver', type=str, default='avg', choices=['avg', 'max', 'min'])          # for FLARE
-    parser.add_argument('--hallucination_threshold', type=float, default=0.6)                                # for FLARE & DRAGIN
+    parser.add_argument('--hallucination_threshold', type=float, default=0.08)                                 # for FLARE & DRAGIN
     parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
     parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
     parser.add_argument('--max_iter', type=int, default=5)
     
     # Consistency Generation Methods (answer list)
-    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
         'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
@@ -490,9 +536,10 @@ if __name__ == "__main__":
     ### === Run Steps =============
     set_seed(args.seed)
     # ue_generation(args)
-    merge_result_files(args)
-    evaluation_correlation(args)
+    # merge_result_files(args)
+    # evaluation_correlation(args)
     # correctness_evaluation_mv(args)
+    evaluation_correlation_combined(args)
     
     # python run_uncertainty_estimation/ue_calculation.py
     # accelerate launch --multi_gpu run_uncertainty_estimation/ue_calculation.py
