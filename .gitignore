@@ -129,5 +129,6 @@ wandb/
 archive/
 models/
 cache/
+analysis/
 
 
