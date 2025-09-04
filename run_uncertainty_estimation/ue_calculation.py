@@ -355,6 +355,7 @@ def evaluation_correlation(args):
         for ue_metric, conf_list in uncertainty_obj.items():
             print(f"{ue_metric}: {get_auroc(correctness_list, conf_list)}")
 
+
 eps = 1e-12
 landa_1 = 0.7
 landa_2 = 0.3

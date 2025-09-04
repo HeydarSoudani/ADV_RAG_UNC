@@ -201,6 +201,119 @@ def auarc(
     return float(np.trapz(acc, rej))
 
 
+
+
+def accuracy_rejection_curve(
+    correctness: Iterable[int],
+    certainty: Iterable[float],
+    include_terminal: bool = True,
+    terminal_accuracy: float = 1.0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    c = np.asarray(correctness, dtype=float)
+    s = np.asarray(certainty, dtype=float)
+    assert c.shape == s.shape, "correctness and certainty must have the same length"
+    n = c.size
+    if n == 0:
+        return np.array([0.0]), np.array([np.nan])
+
+    # Sort by ascending certainty (reject least certain first)
+    order = np.argsort(s, kind="stable")
+    c_sorted = c[order]
+
+    # Accuracy on the kept set after rejecting k items (k = 0..n-1)
+    suffix_correct = np.cumsum(c_sorted[::-1])[::-1]  # length n
+    kept_counts = np.arange(n, 0, -1)                 # n, n-1, ..., 1
+
+    rejections = np.arange(0, n, dtype=float) / n
+    accuracies = suffix_correct / kept_counts
+
+    if include_terminal:
+        rejections = np.append(rejections, 1.0)
+        accuracies = np.append(accuracies, terminal_accuracy)
+
+    return rejections, accuracies
+
+def auarc(
+    correctness: Iterable[int],
+    certainty: Iterable[float],
+    include_terminal: bool = True,
+    terminal_accuracy: float = 1.0,
+) -> float:
+    rej, acc = accuracy_rejection_curve(
+        correctness, certainty,
+        include_terminal=include_terminal,
+        terminal_accuracy=terminal_accuracy
+    )
+    return float(np.trapz(acc, rej))
+
+def _auarc_random_baseline_on_grid(
+    correctness: Iterable[int],
+    rej_grid: np.ndarray,
+    include_terminal: bool,
+    terminal_accuracy: float,
+) -> float:
+    """Expected AUARC if rejections are random (accuracy stays at baseline)."""
+    baseline_acc = float(np.mean(correctness)) if len(correctness) > 0 else np.nan
+    acc_rand = np.full_like(rej_grid, baseline_acc, dtype=float)
+    if include_terminal:
+        acc_rand[-1] = terminal_accuracy
+    return float(np.trapz(acc_rand, rej_grid))
+
+def _auarc_oracle(
+    correctness: Iterable[int],
+    include_terminal: bool = True,
+    terminal_accuracy: float = 1.0,
+) -> float:
+    """
+    AUARC with perfect ranking: all incorrect are rejected before any correct.
+    We realize this by giving incorrects lower certainty than corrects.
+    """
+    c = np.asarray(correctness, dtype=float)
+    # certainty: 0 for incorrect, 1 for correct (ties within groups don't matter)
+    s_oracle = c
+    return auarc(c, s_oracle, include_terminal=include_terminal, terminal_accuracy=terminal_accuracy)
+
+def normalized_auarc(
+    correctness: Iterable[int],
+    certainty: Iterable[float],
+    include_terminal: bool = True,
+    terminal_accuracy: float = 1.0,
+    eps: float = 1e-12,
+) -> Tuple[float, float, float]:
+    """
+    Normalizes AUARC to isolate uncertainty quality:
+
+        NormAUARC = (AUARC - AUARC_random) / (AUARC_oracle - AUARC_random)
+
+    Returns:
+        norm_auarc, raw_auarc, baseline_auarc_random
+    """
+    # Raw AUARC and its grid
+    rej, acc = accuracy_rejection_curve(
+        correctness, certainty,
+        include_terminal=include_terminal,
+        terminal_accuracy=terminal_accuracy
+    )
+    raw = float(np.trapz(acc, rej))
+
+    # Random baseline on the SAME grid
+    au_rand = _auarc_random_baseline_on_grid(
+        correctness, rej, include_terminal=include_terminal, terminal_accuracy=terminal_accuracy
+    )
+
+    # Oracle (perfect ranking) AUARC (grid-invariant because it uses the same construction)
+    au_oracle = _auarc_oracle(
+        correctness, include_terminal=include_terminal, terminal_accuracy=terminal_accuracy
+    )
+
+    denom = max(au_oracle - au_rand, eps)
+    norm = (raw - au_rand) / denom
+    # optional: clamp to [0,1] for numerical robustness
+    norm = float(np.clip(norm, 0.0, 1.0))
+    return norm, raw, au_rand
+
+
+
 def selective_generation(args):
     
     print("\n== Selective Generation ...")
@@ -237,8 +350,8 @@ def selective_generation(args):
             if args.consistency_method == 'rag_consistency':
                 scores.append(float(obj["ue_scores"]["majority_voting"]["confidence"]))
             else:
-                scores.append(float(obj["ue_scores"]["p_true"]["confidence"]))
-                # scores.append(float(obj["ue_scores"]["majority_voting"]["most_confident_answer"][1]))
+                # scores.append(float(obj["ue_scores"]["p_true"]["confidence"]))
+                scores.append(float(obj["ue_scores"]["majority_voting"]["most_confident_answer"][1]))
             
             labels.append(int(obj["em"]))
     scores, labels = np.array(scores), np.array(labels) 
@@ -267,9 +380,9 @@ def selective_generation(args):
 
     auarc_score = auarc(labels, scores)
     print("AUARC:", auarc_score)
+    auarc_score = normalized_auarc(labels, scores)
+    print("AUARC:", auarc_score)
     
-    
-
 
 
 if __name__ == "__main__":
@@ -323,18 +436,18 @@ if __name__ == "__main__":
     ])
     parser.add_argument('--generate_fix_length', type=int, default=25)
     parser.add_argument('--modifier_method', type=str, default='token', choices=['token', 'entity'])          # for FLARE
-    parser.add_argument('--query_formulation', type=str, default='real_words', choices=[                          # for FLARE & DRAGIN
+    parser.add_argument('--query_formulation', type=str, default='direct', choices=[                          # for FLARE & DRAGIN
         'direct', 'forward_all',
         'real_words', 'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens',
     ])
     parser.add_argument('--sentence_solver', type=str, default='avg', choices=['avg', 'max', 'min'])          # for FLARE
-    parser.add_argument('--hallucination_threshold', type=float, default=0.6)                                # for FLARE & DRAGIN
+    parser.add_argument('--hallucination_threshold', type=float, default=0.08)                                # for FLARE & DRAGIN
     parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
     parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
     parser.add_argument('--max_iter', type=int, default=5)
     
     # Consistency Generation Methods (answer list)
-    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='reasoning_consistency', choices=[
         'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)

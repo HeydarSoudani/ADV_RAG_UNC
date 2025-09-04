@@ -2,7 +2,7 @@
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 import json
 import math
 import argparse
@@ -499,8 +499,8 @@ def create_training_data_v2(args):
 
 def create_inference_data(args):
     rag_methods = [
-        # ('Qwen2.5-7B-Instruct', 'ircot'),
-        # ('Qwen2.5-7B-Instruct', 'flare', 0.08),
+        ('Qwen2.5-7B-Instruct', 'ircot'),
+        ('Qwen2.5-7B-Instruct', 'flare', 0.08),
         # ('Qwen2.5-7B-Instruct', 'dragin', 0.6),
         ('Qwen2.5-7B-Instruct', 'self_ask'),
         ('Qwen2.5-7B-Instruct', 'react'),
@@ -516,7 +516,11 @@ def create_inference_data(args):
     dfs = []
     for rag_method in rag_methods:
         # - Read main file
-        file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"
+        if rag_method[1] in ['flare', 'dragin']:
+            file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results_th{rag_method[2]}.jsonl"
+        else:
+            file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"
+        
         with open(file_path, "r") as f:
             data = [json.loads(line) for line in f]
         df_temp = pd.DataFrame(data)[["qid", "query", "pred_answer", "em", "final_answer_list", "ue_scores"]]
@@ -598,10 +602,10 @@ if __name__ == "__main__":
     parser.add_argument("--max_tokens", type=int, default=4096)
 
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--prompt_format', type=str, default='x_o_c', choices=['o_c', 'x_o_c', 'p_o_c', 'x_p_o_c', 'x_p_o'])
@@ -641,7 +645,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_1 (rag_methods_2k)')
+    parser.add_argument('--run', type=str, default='run_3 (rag_methods_500)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -650,12 +654,12 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    create_training_data(args) 
+    # create_training_data(args) 
     # create_training_data_v2(args) 
-    # create_inference_data(args)
+    create_inference_data(args)
     
-    # python rag_selection_application/reward_modeling/data_creation.py
-    # accelerate launch --multi_gpu rag_selection_application/reward_modeling/data_creation.py
+    # python applications/rag_selector/reward_modeling/data_creation.py
+    # accelerate launch --multi_gpu applications/rag_selector/reward_modeling/data_creation.py
 
 
 

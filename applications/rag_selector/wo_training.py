@@ -9,6 +9,7 @@ import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 from upsetplot import UpSet, from_indicators
+from scipy.stats import wilcoxon
 
 from utils.general_utils import set_seed
 
@@ -64,10 +65,53 @@ def correctness_distribution_analyze(args):
 
     plt.show()
 
+
+
+def wilcoxon_sig_test(acc_list_wo_ft, file2_ft):
+    def load_accuracy_data(file_path):
+        with open(file_path, 'r') as file:
+            data = [int(json.loads(line)["is_correct"]) for line in file]
+        return data
+
+    def load_accuracy_data_ft_file(file_path):
+        with open(file_path, 'r') as file:
+            data = [int(json.loads(line)["em"]) for line in file]
+        return data
+
+    def calculate_accuracy(labels):
+        accuracy = (sum(labels) / len(labels))*100
+        return accuracy
+    
+    accuracy_data_llm2 = load_accuracy_data_ft_file(file2_ft)
+
+    # Ensure the order of results is the same based on query_id
+    # query_ids = sorted(accuracy_data_llm1.keys())
+    # accuracy_llm1 = [accuracy_data_llm1[query_id] for query_id in query_ids]
+    # accuracy_llm2 = [accuracy_data_llm2[query_id] for query_id in query_ids]
+
+    llm1_acc = calculate_accuracy(acc_list_wo_ft)
+    print(f'LLM1 Accuracy: {llm1_acc:.2f}')
+    llm2_acc = calculate_accuracy(accuracy_data_llm2)
+    print(f'LLM2 Accuracy: {llm2_acc:.2f}')
+
+    # Perform the Wilcoxon signed-rank test
+    stat, p_value = wilcoxon(acc_list_wo_ft, accuracy_data_llm2)
+
+    # Output the test statistic and p-value
+    print(f"Wilcoxon test statistic: {stat}, p-value: {p_value}")
+    
+    # Interpretation
+    if p_value < 0.01:
+        print("The difference in performance is statistically significant.")
+    else:
+        print("The difference in performance is not statistically significant.")
+    
+
+
 def rag_selection(args):
     rag_methods = [
-        ('Qwen2.5-7B-Instruct', 'ircot'),
-        ('Qwen2.5-7B-Instruct', 'flare', 0.08),
+        # ('Qwen2.5-7B-Instruct', 'ircot'),
+        # ('Qwen2.5-7B-Instruct', 'flare', 0.08),
         # ('Qwen2.5-7B-Instruct', 'dragin', 0.6),
         ('Qwen2.5-7B-Instruct', 'self_ask'),
         ('Qwen2.5-7B-Instruct', 'react'),
@@ -132,9 +176,15 @@ def rag_selection(args):
         return pd.Series([ans, em, method, conf])
         
     merged_df[["best_answer", "best_em", "best_method", "best_confidence"]] = merged_df.apply(select_best_answer, axis=1)
-
     accuracy = merged_df["best_em"].mean()
     print(f"Dataset Accuracy (based on EM): {accuracy:.4f}")
+
+
+    # ----
+    
+    file2_path_ft = f"run_output/{args.run}/rag_selection_reward_modeling/{args.dataset}_{args.retriever_name}_{args.consistency_method}/{args.subsec}_inference_results_x_o_c.jsonl"
+    wilcoxon_sig_test(list(merged_df["best_em"]), file2_path_ft)
+
 
 def rubostness_analysis(args):
     
@@ -184,9 +234,8 @@ def rubostness_analysis(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
@@ -218,7 +267,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='rrr_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
         'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
@@ -238,8 +287,8 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    correctness_distribution_analyze(args)
-    # rag_selection(args)
+    # correctness_distribution_analyze(args)
+    rag_selection(args)
     # rubostness_analysis(args)
     
     # python applications/rag_selector/wo_training.py

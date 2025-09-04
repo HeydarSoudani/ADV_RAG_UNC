@@ -2,7 +2,7 @@
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 import json
 import torch
 import argparse
@@ -17,6 +17,7 @@ from transformers import (
     TrainingArguments,
     DataCollatorWithPadding
 )
+from sklearn.metrics import roc_auc_score
 
 from utils.general_utils import set_seed
 
@@ -129,7 +130,8 @@ def inference(args):
     
     # --- Inference loop -------------
     all_grouped_scores, final_outputs = {}, {}
-    ordered_methods = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']
+    ordered_methods  = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']
+    # ordered_methods = ['ircot', 'flare', 'self_ask', 'react', 'search_o1', 'research', 'search_r1']
 
     for qid, mid, score in zip(qids, mids, scores):
         if qid not in all_grouped_scores:
@@ -174,7 +176,44 @@ def inference(args):
     # print(final_outputs)
     # with open(args.output_addr, 'w') as f:
     #     json.dump(final_outputs, f, indent=4)
+
+def get_auroc(correctness, confidence):
+    try:
+        auroc = roc_auc_score(correctness, confidence)
+    except:
+        print("Auroc couldn't be calculated because there is only one class. Returning 0.5 as auroc.")
+        auroc = 0.5
+    return auroc
+
+def evaluation_correlation(args):
+    print("\n== Correlation Evaluation ...")
+    print(f"""
+        Dataset:       {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
+        Retriever:     {args.retriever_name} / ({args.retrieval_model_path})
+        RAG Method:    {args.rag_method}
+        Con. Method:   {args.consistency_method}
+        Run:           {args.run}
+        Seed:          {args.seed}
+    """.replace('            ', ''))
+    result_file_path = f"run_output/{args.run}/rag_selection_reward_modeling/{args.dataset}_{args.retriever_name}_{args.consistency_method}/{args.subsec}_inference_results_{args.prompt_format}.jsonl"
+    title2idx = {
+        'self_ask': 0,
+        'react': 1,
+        'search_o1': 2,
+        'research': 3,
+        'search_r1': 4
+    }
+    method_idx = title2idx[args.rag_method]
     
+    correctness_list, conf_list = [], []
+    with open(result_file_path, 'r') as infile:
+        for line in infile:
+            data = json.loads(line)
+            correctness_list.append(data['all_correctness'][method_idx])
+            conf_list.append(data['all_scores'][method_idx])
+        
+        print(f"AUROC: {get_auroc(correctness_list, conf_list)}")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
@@ -186,10 +225,10 @@ if __name__ == "__main__":
     parser.add_argument("--max_tokens", type=int, default=4096)
 
     # Dataset
-    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--prompt_format', type=str, default='x_o_c', choices=['x_o', 'x_o_c', 'o_c', 'x_g_o_c', 'x_p_o_c', 'p_o_c', 'x_p_o', 'x_o_mc'])
@@ -218,6 +257,15 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_k1", type=float, default=0.9)
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
+    # RAG methods (input)
+    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
+        'direct_inference', 'cot_inference', 'cot_single_retrieval',
+        'fix_length_retrieval', 'fix_sentence_retrieval',
+        'ircot', 'flare', 'dragin',
+        'self_ask', 'react', 'search_o1',
+        'research', 'search_r1'
+    ])
+    
     # Consistency Generation Methods (answer list) ---
     parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
@@ -239,9 +287,11 @@ if __name__ == "__main__":
     
     ### === Run Steps =============
     set_seed(args.seed)
-    inference(args)
+    # inference(args)
+    evaluation_correlation(args)
     
     
-    # python rag_selection_application/reward_modeling/inference.py
-    # accelerate launch --multi_gpu rag_selection_application/reward_modeling/inference.py
+    
+    # python applications/rag_selector/reward_modeling/inference.py
+    # accelerate launch --multi_gpu applications/rag_selector/reward_modeling/inference.py
 
