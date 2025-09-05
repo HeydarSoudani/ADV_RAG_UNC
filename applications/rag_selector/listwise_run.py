@@ -85,53 +85,21 @@ def _shuffle_within_equal_blocks(labels_row, perm_row):
             new_perm_row[a:b] = perm_row[shuffle]
     return new_perm_row
 
-def listmle_loss(scores: torch.Tensor,
-                 labels: torch.Tensor,
-                 tie_mode: str = "random") -> torch.Tensor:
-    """
-    ListMLE loss (Plackett–Luce MLE).
-    scores: [B, K]
-    labels: [B, K]  (higher label = better)
-    tie_mode:
-        - "random": randomly shuffle within equal-label blocks (recommended for ties).
-        - "stable": keep argsort order (your current behavior).
-    Skips degenerate lists (all same label).
-    """
+def listmle_loss(scores, labels, tie_mode: str = "stable"):
     B, K = labels.shape
-
-    # sort by labels desc to get "ground-truth permutation"
-    perm = torch.argsort(labels, dim=-1, descending=True, stable=True)  # stable keeps determinism before tie handling
-
-    if tie_mode == "random":
-        # Apply per-row random shuffle within equal-label blocks
-        new_perm_rows = []
-        for b in range(B):
-            new_perm_rows.append(_shuffle_within_equal_blocks(labels[b], perm[b]))
-        perm = torch.stack(new_perm_rows, dim=0)
-    elif tie_mode == "stable":
-        pass
-    else:
-        raise ValueError(f"Unknown tie_mode: {tie_mode}")
-
-    # Gather scores by that permutation
-    s_sorted = torch.gather(scores, 1, perm)  # [B, K]
-
-    # Compute log denominators: log ∑_{t=j..K} exp(s_sorted_t)
-    # Use flip + logcumsumexp for stability and O(K)
-    lse_suffix = torch.logcumsumexp(s_sorted.flip(-1), dim=-1).flip(-1)
-
-    # Per-list log-likelihood: sum_j (s_{πj} - logsumexp_{t>=j} s_{πt})
-    ll = (s_sorted - lse_suffix).sum(dim=-1)  # [B]
-
-    # Valid lists: not all equal labels (equivalently, min<label> or max<label> differs)
-    lbl_sum = labels.sum(dim=-1)
-    all_equal = (labels == labels[:, :1]).all(dim=-1)
-    valid = (~all_equal)
+    perm = torch.argsort(labels, dim=-1, descending=True)
+    s_sorted = torch.gather(scores, 1, perm)               # [B, K]
+    lse = torch.logcumsumexp(s_sorted.flip(-1), dim=-1).flip(-1)
+    ll = (s_sorted - lse).sum(dim=-1)                      # [B]
+    sum_labels = labels.sum(dim=-1)                        # [B]
+    valid = (sum_labels > 0) & (sum_labels < K)            # bool [B]
 
     if valid.any():
-        return (-(ll[valid])).mean()
+        return -(ll[valid]).mean()
     else:
-        return scores.new_tensor(0.0)
+        # Return a zero that's connected to the graph
+        return scores.sum() * 0.0
+
 
 def lambda_ndcg_loss(scores: torch.Tensor,
                      labels: torch.Tensor,
@@ -572,7 +540,7 @@ def training(args):
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics,
-        loss_name="lambda_ndcg",   # listmle / listnet / lambda_ndcg / lambda_ndcg_at1
+        loss_name="listmle",   # listmle / listnet / lambda_ndcg / lambda_ndcg_at1
     )
     trainer.train()
     

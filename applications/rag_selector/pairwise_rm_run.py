@@ -70,7 +70,7 @@ def clean_text(text: str) -> str:
     return s.strip()
 
 def pack(s):
-    return (s["ans"], s["conf"], s["method"], s["correctness"])
+    return (s["prediction"], s["confidence_score"], s["method"], s["correctness"], s['search_queries'], s['generations'])
 
 def merge_rag_systems_data(args, subsec='train'):
     if subsec == 'train':
@@ -95,21 +95,38 @@ def merge_rag_systems_data(args, subsec='train'):
         file_path = f"run_output/{run}/{rag_method[0]}/{args.dataset}_{dataset_subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"    
         with open(file_path, "r") as f:
             data = [json.loads(line) for line in f]
-        df_temp = pd.DataFrame(data)[["qid", "query", "pred_answer", correctness_m, "ue_scores"]]
+        df_temp = pd.DataFrame(data)[["qid", "query", "pred_answer", correctness_m, "final_answer_list", "ue_scores"]]
         
         if args.consistency_method == 'rag_consistency':
             confidences = df_temp["ue_scores"].apply(lambda x: x["majority_voting"]["confidence"])
         else:
             confidences = df_temp["ue_scores"].apply(lambda x: x["majority_voting"]["most_confident_answer"][1])
         
-        df_temp[rag_method[1]] = list(zip(df_temp["pred_answer"], df_temp[correctness_m], confidences))
+        # - Add path
+        search_queries_map = {}
+        path_file = f"run_output/{run}/{rag_method[0]}/{args.dataset}_{dataset_subsec}/{rag_method[1]}_{args.retriever_name}/inference_results.jsonl"
+        if os.path.exists(path_file):
+            with open(path_file, "r") as f:
+                corr_data = [json.loads(line) for line in f]
+            for item in corr_data:
+                if "path" in item and isinstance(item["path"], list):
+                    sqs = [d.get("search_query") for d in item["path"] if isinstance(d, dict) and "search_query" in d]
+                    search_queries_map[item["qid"]] = sqs
+        
+        # df_temp[rag_method[1]] = list(zip(df_temp["pred_answer"], df_temp[correctness_m], confidences))
+        # --- Add tuple including search queries
+        df_temp[rag_method[1]] = [
+            (pred, em, conf, gens, search_queries_map.get(qid, []))
+            for pred, em, conf, qid, gens in zip(
+                df_temp["pred_answer"], df_temp[correctness_m], confidences, df_temp["qid"], df_temp["final_answer_list"]
+            )
+        ]
         df = df_temp[["qid", "query", rag_method[1]]]
         dfs.append(df)
     
     merged_df = dfs[0]
     for df in dfs[1:]:
         merged_df = merged_df.merge(df, on=["qid", "query"], how="outer")
-    
     merged_df = merged_df.sort_values(by="qid", key=lambda x: x.str.extract(r"(\d+)").squeeze().astype(int)).reset_index(drop=True)
     
     return merged_df
@@ -120,17 +137,17 @@ def get_prompt_template(prompt_format):
     elif prompt_format == 'x_o':
         prompt_template = '{query} {sep_token} {answer}'
     elif prompt_format == 'p_o_c':
-        prompt_template = '{path} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
+        prompt_template = '{search_queries} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
     elif prompt_format == 'x_o_c':
         prompt_template = '{query} {sep_token} {answer} {sep_token} {conf_score}'
     elif prompt_format == 'x_o_mc':
         prompt_template = '{query} {sep_token} {answer} {sep_token} {rag_method} {conf_score}'
     elif prompt_format == 'x_p_o_c':
-        prompt_template = '{query} {sep_token} {path} {sep_token} {answer} {sep_token} {conf_score}'
+        prompt_template = '{query} {sep_token} {search_queries} {sep_token} {answer} {sep_token} {conf_score}'
     elif prompt_format == 'x_g_o_c':
         prompt_template = '{query} {sep_token} {generations} {sep_token} {answer} {sep_token} {conf_score}'
     elif prompt_format == 'x_p_o':
-        prompt_template = '{query} {sep_token} {path} {sep_token} the answer is {answer}'
+        prompt_template = '{query} {sep_token} {search_queries} {sep_token} the answer is {answer}'
 
     return prompt_template
 
@@ -182,7 +199,13 @@ def data_creation(args):
             if val is None or (isinstance(val, float) and math.isnan(val)):
                 continue
             try:
-                ans, correctness, conf = val
+                if len(val) == 5:
+                    pred, correctness, conf, gens, sqs = val
+                elif len(val) == 3:
+                    pred, correctness, conf = val
+                    sqs, gens = None, None
+                else:
+                    continue
             except Exception:
                 continue
             
@@ -190,7 +213,12 @@ def data_creation(args):
                 continue
                         
             score = W_EM * float(correctness) + W_CONF * float(conf)
-            samples.append({"method": col, "ans": ans, "correctness": int(correctness), "conf": float(conf), "score": score})
+            samples.append({
+                "method": col, "prediction": pred,
+                "correctness": int(correctness), "confidence_score": float(conf),
+                "score": score,
+                "search_queries": sqs, "generations": gens
+            })
         
         pid = 1
         for a, b in combinations(samples, 2):
@@ -215,22 +243,48 @@ def data_creation(args):
     return dataset_dict
 
 def training(args):
+    # === Load model ============
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+    
     # === Load dataset ==========
     prompt_template = get_prompt_template(args.prompt_format)
     RAG_METHODS = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']
     dataset = data_creation(args)
     
+    # === Printing Samples ======
     print('---')
-    print(f"Train sample: {dataset['train'][0]}")
-    print('---')
-    print(f"Test sample:  {dataset['test'][0]}")
-    print('---')
+    selected_train_sample = dataset['train'][0]
+    selected_train_sample_pos_tuple = ast.literal_eval(selected_train_sample['positive_sample'])
+    selected_train_sample_pos_str = prompt_template.format(
+            sep_token=tokenizer.sep_token,
+            query=selected_train_sample["query"],
+            answer=selected_train_sample_pos_tuple[0],
+            conf_score=selected_train_sample_pos_tuple[1],
+            rag_method=selected_train_sample_pos_tuple[2],
+            search_queries=' '.join(str(g) for g in selected_train_sample_pos_tuple[4] if g),
+            generations=' '.join(str(g) for g in selected_train_sample_pos_tuple[5] if g),
+        )
+    print(f"Train sample: {selected_train_sample}")
+    print(f'Train Prompt:\n{selected_train_sample_pos_str}')
     
-    # === Load model ============
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+    print('\n---')
+    selected_test_sample = dataset['test'][0]
+    selected_test_sample_rag_tuple = ast.literal_eval(selected_test_sample[RAG_METHODS[0]])
+    selected_test_sample_rag_str = prompt_template.format(
+            sep_token=tokenizer.sep_token,
+            query=selected_test_sample["query"],
+            answer=selected_test_sample_rag_tuple[0],
+            conf_score=selected_test_sample_rag_tuple[2],
+            rag_method=RAG_METHODS[0],
+            search_queries=' '.join(str(g) for g in selected_test_sample_rag_tuple[4] if g),
+            generations=' '.join(str(g) for g in selected_test_sample_rag_tuple[3] if g),
+        )
+    print(f"Test sample:  {dataset['test'][0]}")
+    print(f'Test Prompt:\n{selected_test_sample_rag_str}')
+    print('---\n')
     
     # === Functions =============
-    def preprocess_function(example, idx=None, max_length=256):
+    def preprocess_function(example, idx=None, max_length=512):
         # -------- TRAIN MODE: pairwise pos/neg --------
         if "positive_sample" in example and "negative_sample" in example:
             positive_sample_tuple = ast.literal_eval(example['positive_sample'])
@@ -242,6 +296,8 @@ def training(args):
                 answer=positive_sample_tuple[0],
                 conf_score=positive_sample_tuple[1],
                 rag_method=positive_sample_tuple[2],
+                search_queries=' '.join(str(g) for g in positive_sample_tuple[4] if g),
+                generations=' '.join(str(g) for g in positive_sample_tuple[5] if g),
             )
             neg_sample = prompt_template.format(
                 sep_token=tokenizer.sep_token,
@@ -249,6 +305,8 @@ def training(args):
                 answer=negative_sample_tuple[0],
                 conf_score=negative_sample_tuple[1],
                 rag_method=negative_sample_tuple[2],
+                search_queries=' '.join(str(g) for g in negative_sample_tuple[4] if g),
+                generations=' '.join(str(g) for g in negative_sample_tuple[5] if g),
             )
             pos_encoded = tokenizer(pos_sample, max_length=max_length, padding=False, truncation=True)
             neg_encoded = tokenizer(neg_sample, max_length=max_length, padding=False, truncation=True)
@@ -272,7 +330,9 @@ def training(args):
                         query=example["query"],
                         answer=example_k_tuple[0],
                         conf_score=example_k_tuple[2],
-                        rag_method=k
+                        rag_method=k,
+                        search_queries=' '.join(str(g) for g in example_k_tuple[4] if g),
+                        generations=' '.join(str(g) for g in example_k_tuple[3] if g),
                     )
                     sample_encoded = tokenizer(sample, max_length=max_length, padding=False, truncation=True)
                     cand_ids.append(sample_encoded["input_ids"])
@@ -485,7 +545,7 @@ if __name__ == "__main__":
     parser.add_argument('--saved_model_name_or_path', type=str, default='models/rag_selector/checkpoint-800')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--cache_dir', type=str, default='./cache/')
-    parser.add_argument("--max_input_tokens", type=int, default=4096)
+    parser.add_argument("--max_input_tokens", type=int, default=512)
     parser.add_argument('--max_new_tokens', type=int, default=128)
 
     # Dataset
@@ -495,7 +555,7 @@ if __name__ == "__main__":
     parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
-    parser.add_argument('--prompt_format', type=str, default='x_o_mc', choices=['o_c', 'x_o_c', 'p_o_c', 'x_p_o_c', 'x_p_o'])
+    parser.add_argument('--prompt_format', type=str, default='x_p_o_c', choices=['o_c', 'x_o_c', 'p_o_c', 'x_p_o_c', 'x_g_o_c', 'x_p_o'])
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
