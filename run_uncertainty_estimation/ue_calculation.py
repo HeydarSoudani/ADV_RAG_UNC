@@ -387,8 +387,6 @@ def evaluation_correlation_combined(args):
     print(f"AUROC: {get_auroc(correctness_list, conf_list)}")
 
 
-
-
 def correctness_evaluation_mv(args):
     em_mv_full_evaluation, em_mv_sub_evaluation = [], []
     em_org_full_evaluation, em_org_sub_evaluation = [], []
