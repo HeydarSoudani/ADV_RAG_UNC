@@ -13,7 +13,6 @@ from scipy.stats import wilcoxon
 
 from utils.general_utils import set_seed
 
-
 def correctness_distribution_analyze(args):
     rag_methods = [
         ('Qwen2.5-7B-Instruct', 'ircot'),
@@ -65,8 +64,6 @@ def correctness_distribution_analyze(args):
 
     plt.show()
 
-
-
 def wilcoxon_sig_test(acc_list_wo_ft, file2_ft):
     def load_accuracy_data(file_path):
         with open(file_path, 'r') as file:
@@ -105,8 +102,6 @@ def wilcoxon_sig_test(acc_list_wo_ft, file2_ft):
         print("The difference in performance is statistically significant.")
     else:
         print("The difference in performance is not statistically significant.")
-    
-
 
 def rag_selection(args):
     rag_methods = [
@@ -178,13 +173,15 @@ def rag_selection(args):
     merged_df[["best_answer", "best_em", "best_method", "best_confidence"]] = merged_df.apply(select_best_answer, axis=1)
     accuracy = merged_df["best_em"].mean()
     print(f"Dataset Accuracy (based on EM): {accuracy:.4f}")
+    
+    # output_file_wo_training = f"run_output/{args.run}/rag_selection_reward_modeling/{args.dataset}_{args.retriever_name}_{args.consistency_method}/{args.subsec}_inference_results_wo_training.jsonl"
+    # merged_df.to_json(output_file_wo_training, orient="records", lines=True, force_ascii=False)
 
 
     # ----
     
-    file2_path_ft = f"run_output/{args.run}/rag_selection_reward_modeling/{args.dataset}_{args.retriever_name}_{args.consistency_method}/{args.subsec}_inference_results_x_o_c.jsonl"
+    file2_path_ft = f"run_output/{args.run}/rag_selection_reward_modeling/{args.dataset}_{args.retriever_name}_rag_consistency/{args.subsec}_inference_results_x_o_c.jsonl"
     wilcoxon_sig_test(list(merged_df["best_em"]), file2_path_ft)
-
 
 def rubostness_analysis(args):
     
@@ -230,7 +227,7 @@ def rubostness_analysis(args):
     print(f"Losses (file1 < file2): {losses} ({losses/total:.2%})")
     print(f"Ties   (file1 = file2): {ties} ({ties/total:.2%})")
     print(f"Missing qids in file2 : {missing}")
-      
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -267,7 +264,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # Consistency Generation Methods (answer list) ---
-    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='rrr_consistency', choices=[
         'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
@@ -291,5 +288,5 @@ if __name__ == "__main__":
     rag_selection(args)
     # rubostness_analysis(args)
     
-    # python applications/rag_selector/wo_training.py
-    # accelerate launch --multi_gpu applications/rag_selector/wo_training.py
+    # python applications/rag_selector/simple_conf_based_selection.py
+    # accelerate launch --multi_gpu applications/rag_selector/simple_conf_based_selection.py

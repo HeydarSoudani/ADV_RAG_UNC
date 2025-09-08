@@ -17,7 +17,7 @@ from transformers import Trainer, TrainingArguments, AutoModel, AutoTokenizer
 from datasets import Dataset, DatasetDict, load_dataset
 
 from utils.general_utils import set_seed
-from applications.rag_selector.pairwise_rm_run import merge_rag_systems_data, get_prompt_template
+from applications.rag_selector.confidence_in_input.pairwise_rm_run import merge_rag_systems_data, get_prompt_template
 
 # -- --------------------------------------
 def listnet_loss(scores: torch.Tensor,
