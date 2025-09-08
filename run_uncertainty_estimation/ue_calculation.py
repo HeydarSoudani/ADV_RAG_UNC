@@ -22,6 +22,7 @@ from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquival
 from run_uncertainty_estimation.ue_methods import *
 from run_rag_methods.src.retrievers_local import load_docs
 
+
 def ue_generation(args):
     are_traces_generated = True # when yo generated the paths and want to add UE results
     # === MultiGPU setup =========================
@@ -355,7 +356,6 @@ def evaluation_correlation(args):
         for ue_metric, conf_list in uncertainty_obj.items():
             print(f"{ue_metric}: {get_auroc(correctness_list, conf_list)}")
 
-
 eps = 1e-12
 landa_1 = 0.7
 landa_2 = 0.3
@@ -385,7 +385,6 @@ def evaluation_correlation_combined(args):
             conf_list.append(agg_conf)
     
     print(f"AUROC: {get_auroc(correctness_list, conf_list)}")
-
 
 def correctness_evaluation_mv(args):
     em_mv_full_evaluation, em_mv_sub_evaluation = [], []
@@ -532,7 +531,7 @@ if __name__ == "__main__":
     args.query_decomposition_prompt_file = "run_mcts_two_actions/prompts/query_decomposition_prompt_template.txt"
     args.semantic_equivalence_prompt_file = "run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
     
-    ### === Run Steps =============
+    # === Run Steps ================
     set_seed(args.seed)
     # ue_generation(args)
     # merge_result_files(args)
