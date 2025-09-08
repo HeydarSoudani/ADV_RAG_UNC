@@ -15,255 +15,11 @@ from transformers import Trainer, TrainingArguments, AutoModel, AutoTokenizer
 from datasets import Dataset, DatasetDict
 
 from utils.general_utils import set_seed
-from applications.rag_selector.confidence_in_input.pairwise_run import merge_rag_systems_data
-
-def join_skip_none(xs):
-    if not xs:
-        return ""
-    return ", ".join(str(x) for x in xs if x is not None and str(x) != "")
-
-# -- --------------------------------------
-def listnet_loss(scores: torch.Tensor,
-                 labels: torch.Tensor,
-                 target_variant: str = "softmax_labels") -> torch.Tensor:
-    """
-    scores: [B, K] (higher is better)
-    labels: [B, K] (binary or graded)
-    target_variant:
-        - "uniform_pos"     : uniform over positives (your current behavior)
-        - "softmax_labels"  : ListNet top-1 with softmax over labels (classic)
-        - "proportional"    : labels / sum(labels) (for nonnegative graded labels)
-    """
-    # Valid examples: at least one positive (or nonzero sum)
-    if target_variant == "uniform_pos":
-        pos_counts = (labels > 0).sum(dim=-1, keepdim=True)  # [B,1]
-        valid = (pos_counts > 0)
-        target = torch.where(labels > 0,
-                             1.0 / pos_counts.clamp(min=1.0),
-                             torch.zeros_like(labels))
-    elif target_variant == "softmax_labels":
-        # Works with graded labels (can be any real; consider scaling if very large)
-        valid = (labels.sum(dim=-1, keepdim=True) > 0)
-        target = F.softmax(labels, dim=-1)
-    elif target_variant == "proportional":
-        # For nonnegative labels; distribute mass proportional to label value
-        lbl = labels.clamp(min=0)
-        sums = lbl.sum(dim=-1, keepdim=True)
-        valid = (sums > 0)
-        target = lbl / sums.clamp(min=1.0)
-    else:
-        raise ValueError(f"Unknown target_variant: {target_variant}")
-
-    log_probs = F.log_softmax(scores, dim=-1)           # [B, K]
-    per_example = -(target * log_probs).sum(dim=-1)     # [B]
-
-    if valid.any():
-        return per_example[valid.squeeze(-1)].mean()
-    else:
-        # No valid lists in batch -> return zero (or torch.tensor(0., device=scores.device))
-        return scores.new_tensor(0.0)
-
-def listmle_loss(scores, labels, tie_mode: str = "stable"):
-    B, K = labels.shape
-    perm = torch.argsort(labels, dim=-1, descending=True)
-    s_sorted = torch.gather(scores, 1, perm)               # [B, K]
-    lse = torch.logcumsumexp(s_sorted.flip(-1), dim=-1).flip(-1)
-    ll = (s_sorted - lse).sum(dim=-1)                      # [B]
-    sum_labels = labels.sum(dim=-1)                        # [B]
-    valid = (sum_labels > 0) & (sum_labels < K)            # bool [B]
-
-    if valid.any():
-        return -(ll[valid]).mean()
-    else:
-        # Return a zero that's connected to the graph
-        return scores.sum() * 0.0
-
-def lambda_ndcg_loss(scores: torch.Tensor,
-                     labels: torch.Tensor,
-                     sigma: float = 1.0,
-                     use_exp_gains: bool = True,
-                     eps: float = 1e-12) -> torch.Tensor:
-    """
-    LambdaRank-style pairwise logistic loss weighted by ΔNDCG.
-
-    scores: [B, K] or [K]
-    labels: [B, K] or [K]  (binary or graded; larger = better)
-    sigma : slope for pairwise logistic (RankNet)
-    use_exp_gains: if True, gains = 2^labels - 1 (standard DCG); else gains = labels
-    """
-    if scores.dim() == 1:
-        scores = scores.unsqueeze(0)
-    if labels.dim() == 1:
-        labels = labels.unsqueeze(0)
-
-    scores = scores.float()
-    labels = labels.float()
-    B, K = scores.shape
-
-    if K < 2:
-        return scores.sum() * 0.0  # 0, but connected to graph
-
-    # Pairwise diffs S_ij = s_i - s_j (B,K,K)
-    S = scores.unsqueeze(-1) - scores.unsqueeze(-2)
-
-    # Off-diagonal mask
-    eye = torch.eye(K, device=scores.device, dtype=torch.bool)
-    mask_offdiag = ~eye  # (K,K) bool
-
-    # Gains for DCG
-    gains = (2.0 ** labels - 1.0) if use_exp_gains else labels.clamp_min(0.0)
-
-    # ----- Compute ΔNDCG weights with no grad -----
-    with torch.no_grad():
-        # Ideal DCG (IDCG)
-        ideal_order = torch.argsort(labels, dim=-1, descending=True)
-        pos_idx = torch.arange(K, device=scores.device, dtype=torch.float)
-        ideal_discounts = 1.0 / torch.log2(2.0 + pos_idx)              # (K,)
-        ideal_gains = torch.gather(gains, -1, ideal_order)             # (B,K)
-        idcg = (ideal_gains * ideal_discounts).sum(dim=-1, keepdim=True) + eps  # (B,1)
-
-        # Predicted ranks by current scores (0-based ranks)
-        pred_order = torch.argsort(scores, dim=-1, descending=True)    # (B,K)
-        pred_ranks = torch.empty_like(scores)                          # float (B,K)
-        src = pos_idx.unsqueeze(0).expand(B, K)                        # (B,K)
-        pred_ranks.scatter_(-1, pred_order, src)
-
-        discounts = 1.0 / torch.log2(2.0 + pred_ranks)                 # (B,K)
-
-        # ΔDCG for swapping i and j: (g_i - g_j) * (disc_j - disc_i)
-        gi = gains.unsqueeze(-1)                                       # (B,K,1)
-        gj = gains.unsqueeze(-2)                                       # (B,1,K)
-        di = discounts.unsqueeze(-1)                                   # (B,K,1)
-        dj = discounts.unsqueeze(-2)                                   # (B,1,K)
-        delta_dcg = (gi - gj) * (dj - di)                              # (B,K,K)
-        delta_ndcg = (delta_dcg.abs() / idcg.unsqueeze(-1))            # (B,K,K)
-
-        # Only consider pairs where rel_i > rel_j
-        rel_diff = labels.unsqueeze(-1) - labels.unsqueeze(-2)         # (B,K,K)
-        pos_pairs = (rel_diff > 0) & mask_offdiag                      # bool (B,K,K)
-
-    # Pairwise logistic loss weighted by ΔNDCG
-    # softplus(-x) = log(1 + exp(-x)) = -log(sigmoid(x))
-    pair_loss = F.softplus(-sigma * S) * delta_ndcg * pos_pairs.float()
-
-    # Normalize per-list by number of positive pairs
-    denom = pos_pairs.float().sum(dim=(1, 2)).clamp_min(1.0)           # (B,)
-    loss_per_list = pair_loss.sum(dim=(1, 2)) / denom                  # (B,)
-    return loss_per_list.mean()
-
-def lambda_ndcg_at1_loss(scores: torch.Tensor,
-                         labels: torch.Tensor,
-                         sigma: float = 1.0,
-                         use_exp_gains: bool = True,
-                         eps: float = 1e-12) -> torch.Tensor:
-    """
-    LambdaRank-style pairwise logistic loss focused on NDCG@1 (i.e., Acc@1).
-    scores: [B, K] or [K]
-    labels: [B, K] or [K] (binary or graded; larger = better)
-    Returns a scalar loss.
-    """
-    if scores.dim() == 1:
-        scores = scores.unsqueeze(0)
-    if labels.dim() == 1:
-        labels = labels.unsqueeze(0)
-
-    scores = scores.float()
-    labels = labels.float()
-    B, K = scores.shape
-    if K < 2:
-        return scores.sum() * 0.0
-
-    # Gains
-    gains = (2.0 ** labels - 1.0) if use_exp_gains else labels.clamp_min(0.0)
-
-    # Current predicted top indices and values
-    top_idx = torch.argmax(scores, dim=-1)                          # [B]
-    top_scores = scores.gather(1, top_idx.unsqueeze(1)).squeeze(1)  # [B]
-    top_gains  = gains.gather(1,  top_idx.unsqueeze(1)).squeeze(1)  # [B]
-
-    # Best possible gain at rank 1 (IDCG@1); for binary it’s 1 if any positive else 0
-    idcg1 = gains.max(dim=-1, keepdim=False).values + eps           # [B]
-
-    # For each item i, compare against current top
-    # Pairwise diffs s_i - s_top
-    S_it = scores - top_scores.unsqueeze(1)                         # [B, K]
-
-    # Only include items strictly better than the current top (rel_i > rel_top)
-    better_than_top = (gains > top_gains.unsqueeze(1))              # [B, K]
-
-    # ΔNDCG@1 weight for replacing the top with i: (g_i - g_top)/IDCG@1
-    delta_ndcg1 = (gains - top_gains.unsqueeze(1)) / idcg1.unsqueeze(1)  # [B, K]
-    delta_ndcg1 = torch.clamp(delta_ndcg1, min=0.0)                 # only positive deltas matter
-
-    # Exclude the top item itself from loss (its delta is 0 anyway)
-    eye_mask = torch.zeros_like(scores, dtype=torch.bool)
-    eye_mask.scatter_(1, top_idx.unsqueeze(1), True)
-    mask = better_than_top & (~eye_mask)                            # [B, K]
-
-    # Pairwise logistic loss: softplus(-sigma * (s_i - s_top))
-    per_item_loss = F.softplus(-sigma * S_it) * delta_ndcg1 * mask.float()  # [B, K]
-
-    # Normalize per list by count of valid pairs (items better than current top)
-    denom = mask.float().sum(dim=-1).clamp_min(1.0)                 # [B]
-    loss_per_list = per_item_loss.sum(dim=-1) / denom               # [B]
-
-    # If a list has no positives at all, idcg1≈eps and mask is all False -> contributes 0 (no signal)
-    return loss_per_list.mean()
-
-
-def ndcg_at_k_np(scores, labels, k=None):
-    # scores/labels: [B,K] numpy
-    B, K = scores.shape
-    k = k or K
-    ndcgs = []
-    for b in range(B):
-        order = np.argsort(-scores[b])
-        top = order[:k]
-        gains = (2**labels[b] - 1.0)
-        dcg = np.sum(gains[top] / np.log2(np.arange(2, k+2)))
-        ideal_order = np.argsort(-labels[b])[:k]
-        idcg = np.sum(gains[ideal_order] / np.log2(np.arange(2, k+2))) + 1e-12
-        ndcgs.append(dcg / idcg)
-    return float(np.mean(ndcgs))
-
-def mrr_np(scores, labels):
-    # labels are binary or graded; treat any >0 as relevant for MRR
-    B, K = scores.shape
-    mrrs = []
-    for b in range(B):
-        order = np.argsort(-scores[b])
-        rel = (labels[b] > 0).astype(np.float32)
-        rr = 0.0
-        for rank, idx in enumerate(order, start=1):
-            if rel[idx] > 0:
-                rr = 1.0 / rank
-                break
-        mrrs.append(rr)
-    return float(np.mean(mrrs))
-
-def acc1_np(scores, labels):
-    """
-    Top-1 accuracy: 1 if the highest-scoring candidate is relevant (label>0), else 0.
-    Supports multiple correct or no correct candidates.
-    """
-    top_pred = np.argmax(scores, axis=1)        # [B]
-    hits = labels[np.arange(len(labels)), top_pred] > 0
-    return float(np.mean(hits))
-
-
-### ==== Main Functions =================== 
-def data_creation(args):
-    train_df = merge_rag_systems_data(args, subsec='train')
-    test_df = merge_rag_systems_data(args, subsec='test')
-    train_df_str = train_df.astype(str)
-    train_ds = Dataset.from_pandas(train_df_str)
-    test_df_str = test_df.astype(str)
-    test_ds = Dataset.from_pandas(test_df_str)
-    
-    dataset_dict = DatasetDict({"train": train_ds, "test": test_ds})
-    print(dataset_dict)
-    
-    return dataset_dict
+from applications.rag_selector.confidence_in_input.listwise_run import (
+    join_skip_none, data_creation,
+    listnet_loss, listmle_loss, lambda_ndcg_loss, lambda_ndcg_at1_loss,
+    ndcg_at_k_np, mrr_np, acc1_np
+)
 
 def training(args):
     # === Load dataset ==========
@@ -278,35 +34,35 @@ def training(args):
     
     # === Load model ============
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
-
+    
     # === Functions =============
     def preprocess_function(example, max_length=5000):
         ctx = example["query"]
-        ids_list, attn_list, typeids_list, labels_list = [], [], [], []
+        ids_list, attn_list, typeids_list, labels_list, conf_list = [], [], [], [], []
         for method in RAG_METHODS:
             method_item_tuple = ast.literal_eval(example[method])
             prediction = method_item_tuple[0]
-            confidence_score = method_item_tuple[2]
             generations = join_skip_none(method_item_tuple[3]) if len(method_item_tuple) > 3 else ''
             search_queries = join_skip_none(method_item_tuple[4]) if len(method_item_tuple) > 4 else ''
             
-            # resp = f"{prediction} {confidence_score}"
-            resp = f"{prediction} {confidence_score} {generations} {search_queries}"
-        
+            resp = f"{prediction} {generations} {search_queries}"
             enc = tokenizer(ctx, resp, truncation=True, max_length=max_length, padding=False)
+            
             ids_list.append(enc["input_ids"])
             attn_list.append(enc["attention_mask"])
             typeids_list.append(enc.get("token_type_ids", [0] * len(enc["input_ids"])))
             labels_list.append(method_item_tuple[1])
+            conf_list.append(method_item_tuple[2])
         
         return {
             "input_ids": ids_list,          # list of lists
             "attention_mask": attn_list,    # list of lists
-            "token_type_ids": typeids_list,   # List[List[int]] (for BERT)
+            "token_type_ids": typeids_list, # List[List[int]] (for BERT)
             "labels": labels_list,          # list[float|int]
+            "confidence": conf_list,        # list[float]  <-- NEW
             "num_candidates": len(ids_list),
         }
-       
+    
     @dataclass
     class ListwiseDataCollator:
         tokenizer: Any
@@ -319,6 +75,8 @@ def training(args):
             for f in features:
                 if len(f["input_ids"]) != K or len(f["attention_mask"]) != K or len(f["labels"]) != K:
                     raise ValueError("All samples must have the same number of candidates (fixed K).")
+                if "confidence" not in f or len(f["confidence"]) != K:
+                    raise ValueError("Each sample must include `confidence` with length K.")
 
             # --- Determine max sequence length (L_max) in this batch ---
             L_max = 0
@@ -339,6 +97,7 @@ def training(args):
             attention_mask = torch.zeros((B, K, L_max), dtype=torch.long)
             token_type_ids = torch.zeros((B, K, L_max), dtype=torch.long)  # BERT: segment IDs
             labels         = torch.empty((B, K), dtype=self.dtype_labels)
+            confidence     = torch.empty((B, K), dtype=torch.float)
 
             # --- Fill tensors ---
             for i, f in enumerate(features):
@@ -360,14 +119,15 @@ def training(args):
                     # else: leave zeros
 
                     labels[i, k] = float(f["labels"][k])
+                    confidence[i, k] = float(f["confidence"][k])
 
             return {
                 "input_ids": input_ids,           # (B, K, L_max)
                 "attention_mask": attention_mask, # (B, K, L_max)
-                # "token_type_ids": token_type_ids, # (B, K, L_max)
                 "labels": labels,                 # (B, K)
+                "confidence": confidence,         # (B, K)
             }
-      
+    
     class RewardTrainer(Trainer):
         def __init__(self, *args, loss_name: str = "listmle", **kwargs):
             super().__init__(*args, **kwargs)
@@ -448,19 +208,27 @@ def training(args):
     class BertRewardRanker(nn.Module):
         """
         Expects:
-        input_ids:       [B, K, L]
-        attention_mask:  [B, K, L]
-        token_type_ids:  [B, K, L] (optional; used if provided)
+            input_ids:       [B, K, L]
+            attention_mask:  [B, K, L]
+            confidence:      [B, K] 
         Returns:
-        scores:          [B, K]
+            scores:          [B, K]
         """
-        def __init__(self, model_name: str = "bert-base-uncased", head_hidden: int = 256, dropout: float = 0.1):
+        def __init__(
+            self,
+            model_name: str = "bert-base-uncased",
+            head_hidden: int = 256,
+            dropout: float = 0.1,
+            use_mean_pool: bool = False,
+        ):
             super().__init__()
             self.bert = AutoModel.from_pretrained(model_name)
+            self.use_mean_pool = use_mean_pool
             h = self.bert.config.hidden_size
+            in_features = h + 1
             self.head = nn.Sequential(
                 nn.Dropout(dropout),
-                nn.Linear(h, head_hidden),
+                nn.Linear(in_features, head_hidden),
                 nn.ReLU(),
                 nn.Linear(head_hidden, 1),
             )
@@ -470,30 +238,47 @@ def training(args):
             input_ids: torch.Tensor,
             attention_mask: torch.Tensor,
             token_type_ids: torch.Tensor = None,
+            confidence: torch.Tensor = None,
             **kwargs,
         ) -> torch.Tensor:
-            # 
+            if confidence is None:
+                raise ValueError("`confidence` tensor is required (shape [B, K]).")
+            
             B, K, L = input_ids.shape
             flat_ids   = input_ids.reshape(B * K, L)
             flat_mask  = attention_mask.reshape(B * K, L)
 
             bert_kwargs = dict(input_ids=flat_ids, attention_mask=flat_mask, return_dict=True)
             if token_type_ids is not None:
-                bert_kwargs["token_type_ids"] = token_type_ids.reshape(B*K, L)
+                bert_kwargs["token_type_ids"] = token_type_ids.reshape(B * K, L)
 
             out = self.bert(**bert_kwargs)
-            rep = out.pooler_output if getattr(out, "pooler_output", None) is not None \
-                else out.last_hidden_state[:, 0, :]
-            scores = self.head(rep).reshape(B, K).contiguous()
-            return scores
+            
+            if self.use_mean_pool: # mean pooling over valid tokens
+                last_hidden = out.last_hidden_state                    # [B*K, L, H]
+                mask = flat_mask.unsqueeze(-1).float()                 # [B*K, L, 1]
+                pooled = (last_hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-6)
+            else: # CLS pooler if available, else raw CLS
+                pooled = getattr(out, "pooler_output", None)
+                if pooled is None:
+                    pooled = out.last_hidden_state[:, 0, :]            # [B*K, H]
+            
+            # Concatenate confidence feature
+            conf_flat = confidence.reshape(B * K)                      # [B*K]
+            conf_flat = conf_flat.to(dtype=pooled.dtype, device=pooled.device).unsqueeze(-1)  # [B*K, 1]
 
+            x = torch.cat([pooled, conf_flat], dim=-1)                 # [B*K, H+1]
+            scores = self.head(x).reshape(B, K).contiguous()           # [B, K]
+            return scores
+            
+    
     # === Training ... ===========
     model_ = args.model_name_or_path.split('/')[-1]
-    model_output_dir = f'models/rag_selection/listwise_input/{model_}'
+    model_output_dir = f'models/rag_selection/listwise_representation/{model_}'
     model = BertRewardRanker(args.model_name_or_path)
     tokenized_dataset = dataset.map(preprocess_function)
     data_collator = ListwiseDataCollator(tokenizer)
-    
+
     training_args = TrainingArguments(
         output_dir=model_output_dir,
         do_train=True,
@@ -527,9 +312,7 @@ def training(args):
         loss_name="listmle",   # listmle / listnet / lambda_ndcg / lambda_ndcg_at1
     )
     trainer.train()
-    
-def inference(args):
-    pass
+
 
 
 if __name__ == "__main__":
@@ -603,4 +386,4 @@ if __name__ == "__main__":
     training(args)
     
     
-# python applications/rag_selector/confidence_in_input/listwise_run.py
+# python applications/rag_selector/confidence_in_representation/listwise_run.py

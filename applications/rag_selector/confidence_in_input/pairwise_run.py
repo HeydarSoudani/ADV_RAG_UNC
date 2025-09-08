@@ -2,7 +2,7 @@
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 import re
 import ast
 import math
@@ -11,26 +11,24 @@ import torch
 import argparse
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 import torch.nn as nn
+from tqdm import tqdm
 import unicodedata as ud
 import torch.nn.functional as F
 from dataclasses import dataclass
 from itertools import combinations
 from typing import List, Dict, Any, Optional
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict
 import transformers
 from transformers import (
-    AutoModelForSequenceClassification,
-    AutoTokenizer,
     Trainer,
     TrainingArguments,
-    TrainerCallback,
-    DataCollatorWithPadding
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
 )
-from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 
 from utils.general_utils import set_seed
+from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 
 # -- --------------------------------------
 def clean_text(text: str) -> str:
@@ -113,7 +111,7 @@ def merge_rag_systems_data(args, subsec='train'):
                     sqs = [d.get("search_query") for d in item["path"] if isinstance(d, dict) and "search_query" in d]
                     search_queries_map[item["qid"]] = sqs
         
-        # df_temp[rag_method[1]] = list(zip(df_temp["pred_answer"], df_temp[correctness_m], confidences))
+        
         # --- Add tuple including search queries
         df_temp[rag_method[1]] = [
             (pred, em, conf, gens, search_queries_map.get(qid, []))
@@ -148,6 +146,8 @@ def get_prompt_template(prompt_format):
         prompt_template = '{query} {sep_token} {generations} {sep_token} {answer} {sep_token} {conf_score}'
     elif prompt_format == 'x_p_o':
         prompt_template = '{query} {sep_token} {search_queries} {sep_token} the answer is {answer}'
+    elif prompt_format == 'x_o_p_g':
+        prompt_template = '{query} {sep_token} {answer} {sep_token} {search_queries} {sep_token} {generations}'
 
     return prompt_template
 
@@ -171,9 +171,7 @@ def add_correctness(args):
         
         with open(file_path, "r") as fin, open(new_result_file_path, "w") as fout:
             for idx, line in enumerate(tqdm(fin)):
-                # if idx == 5:
-                #     break
-                
+
                 sample = json.loads(line)
                 question, gt_answers, prediction = sample['query'], sample['gt_answers'], sample['pred_answer']
                 llm_as_judge = int(any([se_model.check_answers_equiv(question, ga, prediction) for ga in gt_answers]))
@@ -243,13 +241,13 @@ def data_creation(args):
     return dataset_dict
 
 def training(args):
-    # === Load model ============
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
-    
     # === Load dataset ==========
     prompt_template = get_prompt_template(args.prompt_format)
     RAG_METHODS = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']
     dataset = data_creation(args)
+    
+    # === Load model ============
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
     
     # === Printing Samples ======
     print('---')
@@ -284,17 +282,19 @@ def training(args):
     print('---\n')
     
     # === Functions =============
-    def preprocess_function(example, idx=None, max_length=512):
+    def preprocess_function(example, idx=None, max_length=5000):
         # -------- TRAIN MODE: pairwise pos/neg --------
         if "positive_sample" in example and "negative_sample" in example:
             positive_sample_tuple = ast.literal_eval(example['positive_sample'])
             negative_sample_tuple = ast.literal_eval(example['negative_sample'])
+            pos_conf = positive_sample_tuple[1]
+            neg_conf = negative_sample_tuple[1]
             
             pos_sample = prompt_template.format(
                 sep_token=tokenizer.sep_token,
                 query=example["query"],
                 answer=positive_sample_tuple[0],
-                conf_score=positive_sample_tuple[1],
+                conf_score=pos_conf,
                 rag_method=positive_sample_tuple[2],
                 search_queries=' '.join(str(g) for g in positive_sample_tuple[4] if g),
                 generations=' '.join(str(g) for g in positive_sample_tuple[5] if g),
@@ -303,7 +303,7 @@ def training(args):
                 sep_token=tokenizer.sep_token,
                 query=example["query"],
                 answer=negative_sample_tuple[0],
-                conf_score=negative_sample_tuple[1],
+                conf_score=neg_conf,
                 rag_method=negative_sample_tuple[2],
                 search_queries=' '.join(str(g) for g in negative_sample_tuple[4] if g),
                 generations=' '.join(str(g) for g in negative_sample_tuple[5] if g),
@@ -316,7 +316,7 @@ def training(args):
                 "pos_input_ids": pos_encoded["input_ids"],
                 "pos_attention_mask": pos_encoded["attention_mask"],
                 "neg_input_ids": neg_encoded["input_ids"],
-                "neg_attention_mask": neg_encoded["attention_mask"]
+                "neg_attention_mask": neg_encoded["attention_mask"],
             }
             
         # -------- EVAL MODE: multi-candidate per query --------
@@ -345,8 +345,8 @@ def training(args):
                 "cand_input_ids": cand_ids,
                 "cand_attention_mask": cand_masks,
                 "cand_methods": cand_methods,
-                "cand_answers": cand_answers,      # optional but handy for debugging
-                "cand_is_correct": cand_is_correct # 0/1 list, one per candidate
+                "cand_answers": cand_answers,      
+                "cand_is_correct": cand_is_correct
             }
     
     @dataclass
@@ -490,7 +490,7 @@ def training(args):
     
     # === Training ... ==========
     model_ = args.model_name_or_path.split('/')[-1]
-    model_output_dir = f'models/rag_selection_reward_modeling/point_wise/{model_}'
+    model_output_dir = f'models/rag_selection/pairwise_input/{model_}'
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_name_or_path, num_labels=1,
         cache_dir=args.cache_dir, reference_compile=False
@@ -616,7 +616,6 @@ if __name__ == "__main__":
     # add_correctness(args)
     training(args)
     
-    # python applications/rag_selector/pairwise_rm_run.py
-    # accelerate launch --multi_gpu applications/rag_selector/pairwise_rm_run.py
-
+    # python applications/rag_selector/confidence_in_input/pairwise_run.py
+    # accelerate launch --multi_gpu applications/rag_selector/confidence_in_input/pairwise_run.py
 
