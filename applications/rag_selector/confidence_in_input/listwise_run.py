@@ -15,7 +15,11 @@ from transformers import Trainer, TrainingArguments, AutoModel, AutoTokenizer
 from datasets import Dataset, DatasetDict
 
 from utils.general_utils import set_seed
-from applications.rag_selector.confidence_in_input.pairwise_run import merge_rag_systems_data
+from applications.rag_selector.confidence_in_input.pairwise_run import (
+    merge_rag_systems_data,
+    drop_all_same_correctness,
+    get_prompt_template
+)
 
 def join_skip_none(xs):
     if not xs:
@@ -252,17 +256,28 @@ def acc1_np(scores, labels):
 
 
 ### ==== Main Functions =================== 
-def data_creation(args):
-    train_df = merge_rag_systems_data(args, subsec='train')
-    test_df = merge_rag_systems_data(args, subsec='test')
-    train_df_str = train_df.astype(str)
-    train_ds = Dataset.from_pandas(train_df_str)
-    test_df_str = test_df.astype(str)
-    test_ds = Dataset.from_pandas(test_df_str)
+def data_creation(args, train=True, test=True):
+    if train:
+        train_df = merge_rag_systems_data(args, subsec='train')
+        rag_methods = [c for c in train_df.columns if c not in ("qid", "query", "gt_answers")]
+        # 1) Remove sample with all 0 or all 1
+        train_df = drop_all_same_correctness(train_df, rag_methods)
+        train_df_str = train_df.astype(str)
+        train_ds = Dataset.from_pandas(train_df_str)
     
-    dataset_dict = DatasetDict({"train": train_ds, "test": test_ds})
+    if test:
+        test_df = merge_rag_systems_data(args, subsec='test')
+        test_df_str = test_df.astype(str)
+        test_ds = Dataset.from_pandas(test_df_str)
+    
+    if train and test:
+        dataset_dict = DatasetDict({"train": train_ds, "test": test_ds})
+    elif train and not test:
+        dataset_dict = DatasetDict({"train": train_ds})
+    elif not train and test:
+        dataset_dict = DatasetDict({"test": test_ds})
+    
     print(dataset_dict)
-    
     return dataset_dict
 
 def training(args):
@@ -549,6 +564,7 @@ if __name__ == "__main__":
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
+    parser.add_argument('--prompt_format', type=str, default='x_p_o_c', choices=['o_c', 'x_o_c', 'p_o_c', 'x_p_o_c', 'x_g_o_c', 'x_p_o'])
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[

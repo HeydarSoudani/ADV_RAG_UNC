@@ -332,6 +332,7 @@ if __name__ == "__main__":
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
+    parser.add_argument('--prompt_format', type=str, default='x_p_o_c', choices=['o_c', 'x_o_c', 'p_o_c', 'x_p_o_c', 'x_g_o_c', 'x_p_o'])
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[

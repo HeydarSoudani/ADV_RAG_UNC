@@ -14,6 +14,7 @@ import pandas as pd
 import torch.nn as nn
 from tqdm import tqdm
 import unicodedata as ud
+from collections.abc import Sequence
 import torch.nn.functional as F
 from dataclasses import dataclass
 from itertools import combinations
@@ -77,7 +78,7 @@ def merge_rag_systems_data(args, subsec='train'):
         correctness_m = 'llm_as_judge'
     else:
         run = 'run_3 (rag_methods_500)'
-        dataset_subsec = 'dev'
+        dataset_subsec = subsec
         correctness_m = 'em'
     
     rag_methods = [
@@ -129,6 +130,23 @@ def merge_rag_systems_data(args, subsec='train'):
     
     return merged_df
 
+# - Filtering function -----
+def extract_correctness(x):
+    # robustly get the 3rd element if x is a tuple/list-like
+    if isinstance(x, Sequence) and not isinstance(x, (str, bytes)) and len(x) > 2:
+        return x[1]
+    return np.nan
+
+def drop_all_same_correctness(df: pd.DataFrame, rag_cols):
+    # build a correctness-only frame
+    corr = df[rag_cols].applymap(extract_correctness)
+    # rows where all correctness are 0 or all are 1
+    all0 = corr.fillna(-1).eq(0).all(axis=1)
+    all1 = corr.fillna(-1).eq(1).all(axis=1)
+    # keep everything else
+    return df.loc[~(all0 | all1)].reset_index(drop=True)
+
+# - ------------------------
 def get_prompt_template(prompt_format):
     if prompt_format == 'o_c':
         prompt_template = 'The answer is {answer}, with confidence score {sep_token} {conf_score}'
@@ -185,10 +203,19 @@ def add_correctness(args):
 def data_creation(args):
     train_df = merge_rag_systems_data(args, subsec='train')
     test_df = merge_rag_systems_data(args, subsec='test')
-
+    rag_methods = [c for c in train_df.columns if c not in ("qid", "query")]
+    
+    # --- Filtering ------------------------
+    # 1) Remove sample with all 0 or all 1
+    print(len(train_df))
+    train_df = drop_all_same_correctness(train_df, rag_methods)
+    print(len(train_df))
+    
+    # --------------------------------------
+    
     # --- Train set: create perefrence pairs
     W_EM, W_CONF, MIN_GAP = 0.5, 0.5, 0.4
-    rag_methods = [c for c in train_df.columns if c not in ("qid", "query")]
+    
     records = []
     for _, row in train_df.iterrows():
         qid, query, samples = row["qid"], row["query"], []
