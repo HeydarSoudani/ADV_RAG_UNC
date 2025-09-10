@@ -34,13 +34,13 @@ def training(args):
     selected_train_sample_pos_tuple = ast.literal_eval(selected_train_sample['positive_sample'])
     selected_train_sample_pos_str = prompt_template.format(
             sep_token=getattr(tokenizer, "pad_token", " "),
-            query=selected_train_sample["query"],
-            answer=selected_train_sample_pos_tuple[0],
-            conf_score=selected_train_sample_pos_tuple[1],
-            search_queries=' '.join(str(g) for g in selected_train_sample_pos_tuple[3] if g),
-            thinks=' '.join(str(g) for g in selected_train_sample_pos_tuple[4] if g),
-            docs=' '.join(str(g) for g in selected_train_sample_pos_tuple[5][:args.n_docs_prompt] if g),
-            generations=' '.join(str(g) for g in selected_train_sample_pos_tuple[6] if g),
+            query=selected_train_sample_pos_tuple[0],
+            answer=selected_train_sample_pos_tuple[1],
+            conf_score=selected_train_sample_pos_tuple[2],
+            search_queries=' '.join(str(g) for g in selected_train_sample_pos_tuple[4] if g),
+            thinks=' '.join(str(g) for g in selected_train_sample_pos_tuple[5] if g),
+            docs=' '.join(str(g) for g in selected_train_sample_pos_tuple[6][:args.n_docs_prompt] if g),
+            generations=' '.join(str(g) for g in selected_train_sample_pos_tuple[7] if g),
         )
     # print(f"Train sample: {selected_train_sample}")
     print(f'Train Prompt:\n{selected_train_sample_pos_str}')
@@ -67,18 +67,18 @@ def training(args):
         if "positive_sample" in example and "negative_sample" in example:
             positive_sample_tuple = ast.literal_eval(example['positive_sample'])
             negative_sample_tuple = ast.literal_eval(example['negative_sample'])
-            pos_conf = positive_sample_tuple[1]
-            neg_conf = negative_sample_tuple[1]
+            pos_conf = positive_sample_tuple[2]
+            neg_conf = negative_sample_tuple[2]
             
             pos_sample = prompt_template.format(
                 sep_token=tokenizer.sep_token,
-                query=example["query"],
-                answer=positive_sample_tuple[0],
+                query=positive_sample_tuple[0],
+                answer=positive_sample_tuple[1],
                 conf_score=pos_conf,
-                search_queries=' '.join(str(g) for g in positive_sample_tuple[3] if g),
-                thinks=' '.join(str(g) for g in positive_sample_tuple[4] if g),
-                docs=' '.join(str(g) for g in positive_sample_tuple[5][:args.n_docs_prompt] if g),
-                generations=' '.join(str(g) for g in positive_sample_tuple[6] if g),
+                search_queries=' '.join(str(g) for g in positive_sample_tuple[4] if g),
+                thinks=' '.join(str(g) for g in positive_sample_tuple[5] if g),
+                docs=' '.join(str(g) for g in positive_sample_tuple[6][:args.n_docs_prompt] if g),
+                generations=' '.join(str(g) for g in positive_sample_tuple[7] if g),
             )
             neg_sample = prompt_template.format(
                 sep_token=tokenizer.sep_token,
@@ -287,7 +287,7 @@ def training(args):
             "eval_groups_counted": int(total),
         }
     
-    class PairwiseRewardRanker(nn.Module):
+    class PairwiseRewardRankerWithConf(nn.Module):
         """
         Pairwise + single scoring model with confidence concatenation.
 
@@ -391,19 +391,17 @@ def training(args):
                 loss = -F.logsigmoid(diff).mean()
                 logits = torch.stack([pos_scores, neg_scores], dim=1)  # [B, 2]
                 return SequenceClassifierOutput(loss=loss, logits=logits)
-                # return {"loss": loss, "logits": logits}
 
             # ---------- Eval / predict ----------
             if input_ids is None:
                 raise ValueError("Model.forward needs either pairwise (pos/neg) tensors or flat input_ids for eval.")
             scores = self._score(input_ids, attention_mask, token_type_ids, confidence)  # [N]
             return SequenceClassifierOutput(logits=scores.unsqueeze(-1))
-            # return {"logits": scores}
 
     # === Training ... ==========
     model_ = args.model_name_or_path.split('/')[-1]
     model_output_dir = f'models/rag_selection/pairwise_representation/{model_}'
-    model = PairwiseRewardRanker(args.model_name_or_path)
+    model = PairwiseRewardRankerWithConf(args.model_name_or_path)
     tokenized_dataset = dataset.map(preprocess_function, with_indices=True)
     data_collator = PairwiseDataCollator(tokenizer)
     
@@ -416,7 +414,7 @@ def training(args):
         gradient_accumulation_steps=4,
         learning_rate=2e-5,
         weight_decay=0.0,
-        num_train_epochs=10,
+        num_train_epochs=8,
         greater_is_better=True,
         load_best_model_at_end=True,
         lr_scheduler_type="linear",
@@ -451,11 +449,12 @@ def inference(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
+    parser.add_argument('--model_name_or_path', type=str, default='google/embeddinggemma-300m', choices=[
+        'answerdotai/ModernBERT-large', 'BAAI/bge-large-en-v1.5', 'google/embeddinggemma-300m'
+    ])
     parser.add_argument('--semantic_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
-    parser.add_argument('--model_name_or_path', type=str, default='answerdotai/ModernBERT-base')
-    # parser.add_argument('--model_name_or_path', type=str, default='google/embeddinggemma-300m')
-    parser.add_argument('--saved_model_name_or_path', type=str, default='models/rag_selector/checkpoint-800')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--saved_model_name_or_path', type=str, default='models/rag_selector/checkpoint-800')
     parser.add_argument('--cache_dir', type=str, default='./cache/')
     parser.add_argument("--data_cache_dir", type=str, default="./data/rag_selection")
     parser.add_argument("--max_input_tokens", type=int, default=512)
@@ -468,9 +467,9 @@ if __name__ == "__main__":
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
-    parser.add_argument('--prompt_format', type=str, default='x_o_g_sq', choices=[
-        'x_o', 'x_o_sq', 'x_o_th', 'x_o_dc', 'x_o_g', 'x_o_g_sq', 'x_o_sq_dc', 'x_o_sq_th_dc',
-        'x_o_c', 'x_o_c_sq', 'x_o_c_th', 'x_o_c_dc', 'x_o_c_g', 'x_o_c_g_sq', 'x_o_c_sq_dc', 'x_o_c_sq_th_dc',
+    parser.add_argument('--prompt_format', type=str, default='x_o_g_dc', choices=[
+        'x_o', 'x_o_sq', 'x_o_th', 'x_o_dc', 'x_o_g', 'x_o_g_sq', 'x_o_g_dc', 'x_o_sq_dc', 'x_o_sq_th_dc',
+        'x_o_c', 'x_o_c_sq', 'x_o_c_th', 'x_o_c_dc', 'x_o_c_g', 'x_o_c_g_sq', 'x_o_c_g_dc', 'x_o_c_sq_dc', 'x_o_c_sq_th_dc',
     ])
     parser.add_argument('--n_docs_prompt', type=int, default=2)
     

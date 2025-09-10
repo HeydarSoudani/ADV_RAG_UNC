@@ -119,10 +119,7 @@ __MACOSX
 .locks
 ckpts
 
-data/processed_files/
-data/row_files/
-data/search_r1_files/
-data/rag_selection/
+data/
 script_logging/
 run_output/
 test/
