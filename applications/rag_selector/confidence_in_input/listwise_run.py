@@ -266,7 +266,7 @@ def data_creation(args, train=True, test=True):
         train_ds = Dataset.from_pandas(train_df_str)
     
     if test:
-        test_df = merge_rag_systems_data(args, subsec='test')
+        test_df = merge_rag_systems_data(args, subsec=args.subsec)
         test_df_str = test_df.astype(str)
         test_ds = Dataset.from_pandas(test_df_str)
     

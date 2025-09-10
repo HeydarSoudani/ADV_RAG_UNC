@@ -6,10 +6,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 import re
 import ast
 import math
-import json
+import json, hashlib
 import torch
+from pathlib import Path
+import random
 import argparse
 import numpy as np
+import transformers
 import pandas as pd
 import torch.nn as nn
 from tqdm import tqdm
@@ -19,19 +22,60 @@ import torch.nn.functional as F
 from dataclasses import dataclass
 from itertools import combinations
 from typing import List, Dict, Any, Optional
-from datasets import Dataset, DatasetDict
-import transformers
-from transformers import (
-    Trainer,
-    TrainingArguments,
-    AutoTokenizer,
-    AutoModelForSequenceClassification,
-)
+from datasets import Dataset, DatasetDict, load_from_disk
+from transformers import Trainer, TrainingArguments, AutoModelForSequenceClassification, AutoTokenizer
+
+
+# pd.set_option("display.max_rows", None)   # show all rows
+# pd.set_option("display.max_columns", None)  # show all columns
+# pd.set_option("display.width", None)      # no line wrapping
+# pd.set_option("display.max_colwidth", None)  # full cell content
 
 from utils.general_utils import set_seed
 from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 
 # -- --------------------------------------
+def get_prompt_template(prompt_format):
+    if prompt_format == 'x_o':
+        prompt_template = '{query}{sep_token}{answer}'
+    elif prompt_format == 'x_o_sq':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{search_queries}'
+    elif prompt_format == 'x_o_th':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{thinks}'
+    elif prompt_format == 'x_o_dc':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{docs}'
+    elif prompt_format == 'x_o_g':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{generations}'
+    elif prompt_format == 'x_o_g_sq':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{generations}{sep_token}{search_queries}'
+    elif prompt_format == 'x_o_g_dc':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{generations}{sep_token}{docs}'
+    elif prompt_format == 'x_o_sq_dc':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{search_queries}{sep_token}{docs}'
+    elif prompt_format == 'x_o_sq_th_dc':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{search_queries}{sep_token}{thinks}{sep_token}{docs}'
+    
+    elif prompt_format == 'x_o_c':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{conf_score}'
+    elif prompt_format == 'x_o_c_sq':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{conf_score}{sep_token}{search_queries}'
+    elif prompt_format == 'x_o_c_th':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{conf_score}{sep_token}{thinks}'
+    elif prompt_format == 'x_o_c_dc':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{conf_score}{sep_token}{docs}'
+    elif prompt_format == 'x_o_c_g':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{conf_score}{sep_token}{generations}'
+    elif prompt_format == 'x_o_c_g_sq':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{conf_score}{sep_token}{generations}{sep_token}{search_queries}'
+    elif prompt_format == 'x_o_c_g_dc':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{conf_score}{sep_token}{generations}{sep_token}{docs}'
+    elif prompt_format == 'x_o_c_sq_dc':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{conf_score}{sep_token}{search_queries}{sep_token}{docs}'
+    elif prompt_format == 'x_o_c_sq_th_dc':
+        prompt_template = '{query}{sep_token}{answer}{sep_token}{conf_score}{sep_token}{search_queries}{sep_token}{thinks}{sep_token}{docs}'
+
+    return prompt_template
+
 def clean_text(text: str) -> str:
     if not text:
         return text
@@ -71,6 +115,9 @@ def clean_text(text: str) -> str:
 def pack(s):
     return (s["prediction"], s["confidence_score"], s["method"], s["correctness"], s['search_queries'], s['generations'])
 
+def pack_cluster(s):
+    return (s["prediction"], s["sum_confidence_score"], s["correctness"], s["all_search_queries"], s["all_thinks"], s["all_docs"], s["all_generations"])
+
 def merge_rag_systems_data(args, subsec='train'):
     if subsec == 'train':
         run = 'run_1 (rag_methods_2k)'
@@ -102,7 +149,7 @@ def merge_rag_systems_data(args, subsec='train'):
             confidences = df_temp["ue_scores"].apply(lambda x: x["majority_voting"]["most_confident_answer"][1])
         
         # - Add path
-        search_queries_map = {}
+        search_queries_map, thinks_map, docs_map = {}, {}, {}
         path_file = f"run_output/{run}/{rag_method[0]}/{args.dataset}_{dataset_subsec}/{rag_method[1]}_{args.retriever_name}/inference_results.jsonl"
         if os.path.exists(path_file):
             with open(path_file, "r") as f:
@@ -110,14 +157,29 @@ def merge_rag_systems_data(args, subsec='train'):
             for item in corr_data:
                 if "path" in item and isinstance(item["path"], list):
                     sqs = [d.get("search_query") for d in item["path"] if isinstance(d, dict) and "search_query" in d]
+                    thinks = [d.get("think") for d in item["path"] if isinstance(d, dict) and "think" in d]
                     search_queries_map[item["qid"]] = sqs
-        
-        
+                    thinks_map[item["qid"]] = thinks
+                    
+                    docs = []
+                    for d in item["path"]:
+                        if isinstance(d, dict) and "docs" in d:
+                            for doc in d["docs"]:
+                                docs.append(doc)
+                    unique_docs = {doc["id"]: doc['contents'] for doc in docs if "id" in doc}.values()
+                    docs_map[item["qid"]] = list(unique_docs)
+
         # --- Add tuple including search queries
         df_temp[rag_method[1]] = [
-            (pred, em, conf, gens, search_queries_map.get(qid, []))
-            for pred, em, conf, qid, gens in zip(
-                df_temp["pred_answer"], df_temp[correctness_m], confidences, df_temp["qid"], df_temp["final_answer_list"]
+            (
+                pred, conf, correctness,
+                search_queries_map.get(qid, []), thinks_map.get(qid, []), docs_map.get(qid, []),
+                gens,
+            )
+            for qid, pred, conf, correctness, gens in zip(
+                df_temp["qid"], df_temp["pred_answer"],
+                confidences, df_temp[correctness_m],
+                df_temp["final_answer_list"]
             )
         ]
         df = df_temp[["qid", "query", rag_method[1]]]
@@ -130,94 +192,10 @@ def merge_rag_systems_data(args, subsec='train'):
     
     return merged_df
 
-# - Filtering function -----
-def extract_correctness(x):
-    # robustly get the 3rd element if x is a tuple/list-like
-    if isinstance(x, Sequence) and not isinstance(x, (str, bytes)) and len(x) > 2:
-        return x[1]
-    return np.nan
-
-def drop_all_same_correctness(df: pd.DataFrame, rag_cols):
-    # build a correctness-only frame
-    corr = df[rag_cols].applymap(extract_correctness)
-    # rows where all correctness are 0 or all are 1
-    all0 = corr.fillna(-1).eq(0).all(axis=1)
-    all1 = corr.fillna(-1).eq(1).all(axis=1)
-    # keep everything else
-    return df.loc[~(all0 | all1)].reset_index(drop=True)
-
-# - ------------------------
-def get_prompt_template(prompt_format):
-    if prompt_format == 'o_c':
-        prompt_template = 'The answer is {answer}, with confidence score {sep_token} {conf_score}'
-    elif prompt_format == 'x_o':
-        prompt_template = '{query} {sep_token} {answer}'
-    elif prompt_format == 'p_o_c':
-        prompt_template = '{search_queries} {sep_token} the answer is {answer}, with confidence score {sep_token} {conf_score}'
-    elif prompt_format == 'x_o_c':
-        prompt_template = '{query} {sep_token} {answer} {sep_token} {conf_score}'
-    elif prompt_format == 'x_o_mc':
-        prompt_template = '{query} {sep_token} {answer} {sep_token} {rag_method} {conf_score}'
-    elif prompt_format == 'x_p_o_c':
-        prompt_template = '{query} {sep_token} {search_queries} {sep_token} {answer} {sep_token} {conf_score}'
-    elif prompt_format == 'x_g_o_c':
-        prompt_template = '{query} {sep_token} {generations} {sep_token} {answer} {sep_token} {conf_score}'
-    elif prompt_format == 'x_p_o':
-        prompt_template = '{query} {sep_token} {search_queries} {sep_token} the answer is {answer}'
-    elif prompt_format == 'x_o_p_g':
-        prompt_template = '{query} {sep_token} {answer} {sep_token} {search_queries} {sep_token} {generations}'
-
-    return prompt_template
-
-
-### ==== Main Functions =================== 
-def add_correctness(args):
-    rag_methods = [
-        ('Qwen2.5-7B-Instruct', 'self_ask'),
-        ('Qwen2.5-7B-Instruct', 'react'),
-        ('Qwen2.5-7B-Instruct', 'search_o1'),
-        ('ReSearch-Qwen-7B-Instruct', 'research'),
-        ('SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo', 'search_r1')
-    ]
-    model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, dtype=torch.bfloat16).to(args.device)
-    tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
-    se_model = SemanticEquivalenceGenerator(args, args.device, model, tokenizer)
-    
-    for rag_method in rag_methods:
-        file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"
-        new_result_file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results_new.jsonl"
-        
-        with open(file_path, "r") as fin, open(new_result_file_path, "w") as fout:
-            for idx, line in enumerate(tqdm(fin)):
-
-                sample = json.loads(line)
-                question, gt_answers, prediction = sample['query'], sample['gt_answers'], sample['pred_answer']
-                llm_as_judge = int(any([se_model.check_answers_equiv(question, ga, prediction) for ga in gt_answers]))
-                
-                item = {
-                    **sample,
-                    'llm_as_judge': llm_as_judge
-                }
-                fout.write(json.dumps(item) + "\n")
-
-def data_creation(args):
-    train_df = merge_rag_systems_data(args, subsec='train')
-    test_df = merge_rag_systems_data(args, subsec='test')
-    rag_methods = [c for c in train_df.columns if c not in ("qid", "query")]
-    
-    # --- Filtering ------------------------
-    # 1) Remove sample with all 0 or all 1
-    print(len(train_df))
-    train_df = drop_all_same_correctness(train_df, rag_methods)
-    print(len(train_df))
-    
-    # --------------------------------------
-    
-    # --- Train set: create perefrence pairs
+def create_perefrence_pairs_v1(df, rag_methods):
     W_EM, W_CONF, MIN_GAP = 0.5, 0.5, 0.4
-    
     records = []
-    for _, row in train_df.iterrows():
+    for _, row in df.iterrows():
         qid, query, samples = row["qid"], row["query"], []
         for col in rag_methods:
             val = row.get(col, None)
@@ -255,29 +233,241 @@ def data_creation(args):
                     "positive_sample": pack(pos), "negative_sample": pack(neg)
                 })
                 pid += 1         
-    train_preference_df = pd.DataFrame.from_records(records, columns=["qid", "pid", "query", "positive_sample", "negative_sample"])
     
-    train_preference_df_str = train_preference_df.astype(str)
-    train_preference_ds = Dataset.from_pandas(train_preference_df_str)
+    preference_df = pd.DataFrame.from_records(records, columns=["qid", "pid", "query", "positive_sample", "negative_sample"])
+    preference_df_str = preference_df.astype(str)
+    preference_ds = Dataset.from_pandas(preference_df_str)
     
-    # --- Test set: create perefrence pairs
-    test_df_str = test_df.astype(str)
+    return preference_ds
+ 
+def clustered_samples(args, df, rag_methods):
+    
+    class ClusteringModel:
+        def __init__(self, model, tokenizer, device, args):
+            self.se_model = SemanticEquivalenceGenerator(args, device, model, tokenizer)
+            self.device = device
+            self.args = args
+            self.rng = random.Random(args.seed)
+            
+        def get_clusters(self, question, candidates):
+            clusters = []
+            for cand in candidates:
+                pred = cand[0]
+                placed = False
+
+                for cluster in clusters:
+                    rep_pred = cluster[0][0]
+                    if self.se_model.check_answers_equiv(question, pred, rep_pred):
+                        cluster.append(cand)
+                        placed = True
+                        break
+
+                if not placed:
+                    clusters.append([cand])
+
+            return clusters
+        
+        def summarize_clusters(self, clusters) -> List[Dict[str, Any]]:
+            summaries, all_sqs, all_thinks, all_docs, all_generations = [], [], [], [], []
+            for cluster in clusters:
+                if not cluster:
+                    continue
+                
+                confidence_sum = sum(c[1] for c in cluster)
+                
+                positives = [c[0] for c in cluster if int(c[2]) == 1]
+                if positives:
+                    correctness = 1
+                    pred_representative = self.rng.choice(positives)
+                else:
+                    correctness = 0
+                    pred_representative = self.rng.choice([c[0] for c in cluster])
+
+                # 
+                for c in cluster:
+                    all_sqs.extend(c[3])
+                    all_thinks.extend(c[4])
+                    all_docs.extend(c[5])
+                    all_generations.extend(c[6])
+
+                summaries.append((
+                    pred_representative, confidence_sum, correctness,
+                    all_sqs, all_thinks, all_docs, all_generations
+                ))
+
+            return summaries
+            
+        def select_final_answer(self, clusters_summaries: List[Dict[str, Any]]) -> Dict[str, Any]:
+            if not clusters_summaries:
+                return {"prediction": None, "correctness": None, "chosen_cluster": None}
+            
+            max_conf = max(c["confidence_sum"] for c in clusters_summaries)
+            top_clusters = [c for c in clusters_summaries if c["confidence_sum"] == max_conf]
+            chosen_cluster = self.rng.choice(top_clusters)
+            prediction, _, _ = chosen_cluster["representative"]
+            return prediction, chosen_cluster["correctness"], max_conf
+        
+        def inference(self, question, candidates):
+            clusters = self.get_clusters(question, candidates)
+            clusters_summaries = self.summarize_clusters(clusters)
+            # prediction, correctness, max_conf = self.select_final_answer(clusters_summaries)
+            return clusters_summaries
+    
+    model = transformers.AutoModelForCausalLM.from_pretrained(args.semantic_model_name_or_path, dtype=torch.bfloat16).to(args.device)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(args.semantic_model_name_or_path)
+    cluster_based_rag_selector = ClusteringModel(model, tokenizer, args.device, args)
+    new_rows = []
+    for i, row in tqdm(df.iterrows()):
+        # if i == 60:
+        #     break
+        qid, query = row["qid"], row["query"]
+        candidates = []
+        for key, val in row.items():
+            if key in rag_methods:
+                candidates.append((val[0], val[1], val[2], val[3], val[4], val[5], val[6]))  # (pred, conf, correctness, sq, thinks, docs, gens)
+        
+        clusters_summaries = cluster_based_rag_selector.inference(query, candidates)
+        new_rows.append({"qid": qid, "query": query, "clusters": clusters_summaries})
+    
+    new_df = pd.DataFrame(new_rows)
+    return new_df
+
+def create_perefrence_pairs_v2(clustered_df):
+    W_EM, W_CONF, MIN_GAP = 0.5, 0.5, 0.5
+    records = []
+    for _, row in clustered_df.iterrows():
+        qid, query, clusters, samples = row["qid"], row["query"], row["clusters"], []
+        if len(clusters) < 2:
+            continue
+        
+        for cluster in clusters:
+            prediction, sum_conf, correctness, sq, thinks, docs, gens = cluster
+            # score = W_EM * float(correctness) + W_CONF * float(sum_conf)
+            samples.append({
+                "prediction": prediction,
+                "sum_confidence_score": float(sum_conf), "correctness": int(correctness),
+                "all_search_queries": sq, "all_thinks": thinks, "all_docs": docs, "all_generations": gens,
+                # "score": score
+            })
+        
+        pid = 1
+        for a, b in combinations(samples, 2):
+            # gap = abs(a["score"] - b["score"])
+            if (a['sum_confidence_score'] < b['sum_confidence_score']) and (a['correctness'] > b['correctness']):
+                pos, neg = (a, b)
+            elif (a['sum_confidence_score'] > b['sum_confidence_score']) and (a['correctness'] < b['correctness']):
+                pos, neg = (b, a)
+            elif (a['correctness'] != b['correctness']) and (abs(a["sum_confidence_score"] - b["sum_confidence_score"]) < MIN_GAP):
+                pos, neg = (a, b) if a["correctness"] > b["correctness"] else (b, a)
+                records.append({
+                    "qid": qid, "pid": pid, "query": query,
+                    "positive_sample": pack_cluster(pos), "negative_sample": pack_cluster(neg)
+                })
+                pid += 1    
+    
+    preference_df = pd.DataFrame.from_records(records, columns=["qid", "pid", "query", "positive_sample", "negative_sample"])
+    preference_df_str = preference_df.astype(str)
+    preference_ds = Dataset.from_pandas(preference_df_str)
+    return preference_ds
+
+
+# - Filtering function -----
+def extract_correctness(x):
+    # robustly get the 3rd element if x is a tuple/list-like
+    if isinstance(x, Sequence) and not isinstance(x, (str, bytes)) and len(x) > 2:
+        return x[2]
+    return np.nan
+
+def drop_all_same_correctness(df: pd.DataFrame, rag_cols):
+    # build a correctness-only frame
+    corr = df[rag_cols].applymap(extract_correctness)
+    # rows where all correctness are 0 or all are 1
+    all0 = corr.fillna(-1).eq(0).all(axis=1)
+    all1 = corr.fillna(-1).eq(1).all(axis=1)
+    # keep everything else
+    return df.loc[~(all0 | all1)].reset_index(drop=True)
+
+
+### ==== Main Functions =================== 
+def add_correctness(args):
+    rag_methods = [
+        ('Qwen2.5-7B-Instruct', 'self_ask'),
+        ('Qwen2.5-7B-Instruct', 'react'),
+        ('Qwen2.5-7B-Instruct', 'search_o1'),
+        ('ReSearch-Qwen-7B-Instruct', 'research'),
+        ('SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo', 'search_r1')
+    ]
+    model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, dtype=torch.bfloat16).to(args.device)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
+    se_model = SemanticEquivalenceGenerator(args, args.device, model, tokenizer)
+    for rag_method in rag_methods:
+        file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"
+        new_result_file_path = f"run_output/{args.run}/{rag_method[0]}/{args.dataset}_{args.subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results_new.jsonl"
+        
+        with open(file_path, "r") as fin, open(new_result_file_path, "w") as fout:
+            for idx, line in enumerate(tqdm(fin)):
+                sample = json.loads(line)
+                question, gt_answers, prediction = sample['query'], sample['gt_answers'], sample['pred_answer']
+                llm_as_judge = int(any([se_model.check_answers_equiv(question, ga, prediction) for ga in gt_answers]))
+                
+                item = {
+                    **sample,
+                    'llm_as_judge': llm_as_judge
+                }
+                fout.write(json.dumps(item) + "\n")
+
+def data_creation(args):
+    
+    ### === Merge data ====================== 
+    train_df = merge_rag_systems_data(args, subsec='train')
+    test_df = merge_rag_systems_data(args, subsec=args.subsec)
+    rag_methods = [c for c in train_df.columns if c not in ("qid", "query")]
+    
+    ### === Train data ======================
+    ## 1) Filtering: Remove sample with all 0 or all 1
+    train_df = drop_all_same_correctness(train_df, rag_methods)
+    # train_preference_ds = create_perefrence_pairs_v1(train_df, rag_methods)
+
+    ## 2) Filtering: Semantically cluster candidates
+    clustered_train_df = clustered_samples(args, train_df, rag_methods)
+    train_preference_ds = create_perefrence_pairs_v2(clustered_train_df)
+    
+    ### === Test data ======================
+    clustered_test_df = clustered_samples(args, test_df, rag_methods)
+    test_df_str = clustered_test_df.astype(str)
     test_ds = Dataset.from_pandas(test_df_str)
     
     dataset_dict = DatasetDict({"train": train_preference_ds, 'test': test_ds})
     return dataset_dict
 
+def build_or_load_dataset(args, cache_root: str = "./data_cache"):
+    cache_root = Path(getattr(args, "data_cache_dir", cache_root))
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cache_dir = cache_root / f"pw_dataset"
+
+    if cache_dir.exists():
+        ds = load_from_disk(str(cache_dir))
+        # (Optional) quick sanity check that splits exist
+        if isinstance(ds, DatasetDict) and "train" in ds and "test" in ds:
+            print(f"[cache] Loaded dataset from {cache_dir}")
+            return ds
+
+    # No cache → create and save
+    ds = data_creation(args)
+    ds.save_to_disk(str(cache_dir))
+    print(f"[cache] Saved dataset to {cache_dir}")
+    return ds
+
+
 def training(args):
-    # === Load dataset ==========
-    prompt_template = get_prompt_template(args.prompt_format)
-    RAG_METHODS = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']
-    dataset = data_creation(args)
-    
-    # === Load model ============
+    # === Load dataset & model ==
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+    prompt_template = get_prompt_template(args.prompt_format)
+    # dataset = data_creation(args)
+    dataset = build_or_load_dataset(args)
     
     # === Printing Samples ======
-    print('---')
+    print('------')
     selected_train_sample = dataset['train'][0]
     selected_train_sample_pos_tuple = ast.literal_eval(selected_train_sample['positive_sample'])
     selected_train_sample_pos_str = prompt_template.format(
@@ -285,28 +475,29 @@ def training(args):
             query=selected_train_sample["query"],
             answer=selected_train_sample_pos_tuple[0],
             conf_score=selected_train_sample_pos_tuple[1],
-            rag_method=selected_train_sample_pos_tuple[2],
-            search_queries=' '.join(str(g) for g in selected_train_sample_pos_tuple[4] if g),
-            generations=' '.join(str(g) for g in selected_train_sample_pos_tuple[5] if g),
+            search_queries=' '.join(str(g) for g in selected_train_sample_pos_tuple[3] if g),
+            thinks=' '.join(str(g) for g in selected_train_sample_pos_tuple[4] if g),
+            docs=' '.join(str(g) for g in selected_train_sample_pos_tuple[5][:args.n_docs_prompt] if g),
+            generations=' '.join(str(g) for g in selected_train_sample_pos_tuple[6] if g),
         )
-    print(f"Train sample: {selected_train_sample}")
+    # print(f"Train sample: {selected_train_sample}")
     print(f'Train Prompt:\n{selected_train_sample_pos_str}')
-    
-    print('\n---')
+    print('\n---\n')
     selected_test_sample = dataset['test'][0]
-    selected_test_sample_rag_tuple = ast.literal_eval(selected_test_sample[RAG_METHODS[0]])
+    selected_test_sample_rag = ast.literal_eval(selected_test_sample['clusters'])[0]
     selected_test_sample_rag_str = prompt_template.format(
             sep_token=tokenizer.sep_token,
             query=selected_test_sample["query"],
-            answer=selected_test_sample_rag_tuple[0],
-            conf_score=selected_test_sample_rag_tuple[2],
-            rag_method=RAG_METHODS[0],
-            search_queries=' '.join(str(g) for g in selected_test_sample_rag_tuple[4] if g),
-            generations=' '.join(str(g) for g in selected_test_sample_rag_tuple[3] if g),
+            answer=selected_test_sample_rag[0],
+            conf_score=selected_test_sample_rag[1],
+            search_queries=' '.join(str(g) for g in selected_test_sample_rag[3] if g),
+            thinks=' '.join(str(g) for g in selected_test_sample_rag[4] if g),
+            docs=' '.join(str(g) for g in selected_test_sample_rag[5][:args.n_docs_prompt] if g),
+            generations=' '.join(str(g) for g in selected_test_sample_rag[6] if g),
         )
-    print(f"Test sample:  {dataset['test'][0]}")
+    # print(f"Test sample:  {dataset['test'][0]}")
     print(f'Test Prompt:\n{selected_test_sample_rag_str}')
-    print('---\n')
+    print('------\n')
     
     # === Functions =============
     def preprocess_function(example, idx=None, max_length=5000):
@@ -322,18 +513,20 @@ def training(args):
                 query=example["query"],
                 answer=positive_sample_tuple[0],
                 conf_score=pos_conf,
-                rag_method=positive_sample_tuple[2],
-                search_queries=' '.join(str(g) for g in positive_sample_tuple[4] if g),
-                generations=' '.join(str(g) for g in positive_sample_tuple[5] if g),
+                search_queries=' '.join(str(g) for g in positive_sample_tuple[3] if g),
+                thinks=' '.join(str(g) for g in positive_sample_tuple[4] if g),
+                docs=' '.join(str(g) for g in positive_sample_tuple[5][:args.n_docs_prompt] if g),
+                generations=' '.join(str(g) for g in positive_sample_tuple[6] if g),
             )
             neg_sample = prompt_template.format(
                 sep_token=tokenizer.sep_token,
                 query=example["query"],
                 answer=negative_sample_tuple[0],
                 conf_score=neg_conf,
-                rag_method=negative_sample_tuple[2],
-                search_queries=' '.join(str(g) for g in negative_sample_tuple[4] if g),
-                generations=' '.join(str(g) for g in negative_sample_tuple[5] if g),
+                search_queries=' '.join(str(g) for g in negative_sample_tuple[3] if g),
+                thinks=' '.join(str(g) for g in negative_sample_tuple[4] if g),
+                docs=' '.join(str(g) for g in negative_sample_tuple[5][:args.n_docs_prompt] if g),
+                generations=' '.join(str(g) for g in negative_sample_tuple[6] if g),
             )
             pos_encoded = tokenizer(pos_sample, max_length=max_length, padding=False, truncation=True)
             neg_encoded = tokenizer(neg_sample, max_length=max_length, padding=False, truncation=True)
@@ -348,31 +541,29 @@ def training(args):
             
         # -------- EVAL MODE: multi-candidate per query --------
         else:
-            cand_ids, cand_masks, cand_methods, cand_answers, cand_is_correct = [], [], [], [], []
-            for k in RAG_METHODS:
-                if k in example and example[k]:
-                    example_k_tuple = ast.literal_eval(example[k])
-                    sample = prompt_template.format(
-                        sep_token=tokenizer.sep_token,
-                        query=example["query"],
-                        answer=example_k_tuple[0],
-                        conf_score=example_k_tuple[2],
-                        rag_method=k,
-                        search_queries=' '.join(str(g) for g in example_k_tuple[4] if g),
-                        generations=' '.join(str(g) for g in example_k_tuple[3] if g),
-                    )
-                    sample_encoded = tokenizer(sample, max_length=max_length, padding=False, truncation=True)
-                    cand_ids.append(sample_encoded["input_ids"])
-                    cand_masks.append(sample_encoded["attention_mask"])
-                    cand_is_correct.append(int(example_k_tuple[1]))
-                    
+            cand_ids, cand_masks, cand_is_correct = [], [], []
+            clusters_list = ast.literal_eval(example['clusters'])
+            for cluster in clusters_list:
+                sample = prompt_template.format(
+                    sep_token=tokenizer.sep_token,
+                    query=example["query"],
+                    answer=cluster[0],
+                    conf_score=cluster[1],
+                    search_queries=' '.join(str(g) for g in cluster[3] if g),
+                    thinks=' '.join(str(g) for g in cluster[4] if g),
+                    docs=' '.join(str(g) for g in cluster[5][:args.n_docs_prompt] if g),
+                    generations=' '.join(str(g) for g in cluster[6] if g),
+                )
+                sample_encoded = tokenizer(sample, max_length=max_length, padding=False, truncation=True)
+                cand_ids.append(sample_encoded["input_ids"])
+                cand_masks.append(sample_encoded["attention_mask"])
+                cand_is_correct.append(int(cluster[2]))
+            
             return {
                 "mode": "eval",
                 "group_id": int(idx),
                 "cand_input_ids": cand_ids,
                 "cand_attention_mask": cand_masks,
-                "cand_methods": cand_methods,
-                "cand_answers": cand_answers,      
                 "cand_is_correct": cand_is_correct
             }
     
@@ -532,17 +723,17 @@ def training(args):
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
         gradient_accumulation_steps=4,
-        learning_rate=1e-5,
+        learning_rate=2e-5,
         weight_decay=0.0,
-        num_train_epochs=5,
+        num_train_epochs=10,
         greater_is_better=True,
         load_best_model_at_end=True,
         lr_scheduler_type="linear",
         warmup_ratio=0.05,
         eval_strategy="epoch",
         save_strategy="epoch",
-        # eval_steps=200,
-        logging_steps=150,
+        eval_steps=2,
+        logging_steps=50,
         remove_unused_columns=False,
         save_total_limit=2, 
         metric_for_best_model="acc@1",
@@ -568,10 +759,12 @@ def inference(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
+    parser.add_argument('--semantic_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--model_name_or_path', type=str, default='answerdotai/ModernBERT-base')
     parser.add_argument('--saved_model_name_or_path', type=str, default='models/rag_selector/checkpoint-800')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--cache_dir', type=str, default='./cache/')
+    parser.add_argument("--data_cache_dir", type=str, default="./data/rag_selection")
     parser.add_argument("--max_input_tokens", type=int, default=512)
     parser.add_argument('--max_new_tokens', type=int, default=128)
 
@@ -579,10 +772,14 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
-    parser.add_argument('--prompt_format', type=str, default='x_p_o_c', choices=['o_c', 'x_o_c', 'p_o_c', 'x_p_o_c', 'x_g_o_c', 'x_p_o'])
+    parser.add_argument('--prompt_format', type=str, default='x_o_c_g_dc', choices=[
+        'x_o', 'x_o_sq', 'x_o_th', 'x_o_dc', 'x_o_g', 'x_o_g_sq', 'x_o_g_dc', 'x_o_sq_dc', 'x_o_sq_th_dc',
+        'x_o_c', 'x_o_c_sq', 'x_o_c_th', 'x_o_c_dc', 'x_o_c_g', 'x_o_c_g_sq', 'x_o_c_g_dc', 'x_o_c_sq_dc', 'x_o_c_sq_th_dc',
+    ])
+    parser.add_argument('--n_docs_prompt', type=int, default=2)
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[

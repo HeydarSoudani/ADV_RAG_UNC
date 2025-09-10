@@ -11,58 +11,55 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
-from transformers import (
-    Trainer,
-    TrainingArguments,
-    AutoModel,
-    AutoTokenizer
-)
+from transformers import Trainer, TrainingArguments, AutoModel, AutoTokenizer
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 from utils.general_utils import set_seed
-from applications.rag_selector.confidence_in_input.pairwise_run import get_prompt_template, data_creation
+from applications.rag_selector.confidence_in_input.pairwise_run import get_prompt_template, build_or_load_dataset, data_creation
 
 
 def training(args):
     # === Load dataset ==========
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
     prompt_template = get_prompt_template(args.prompt_format)
-    RAG_METHODS = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']
-    dataset = data_creation(args)
+    # dataset = data_creation(args)
+    dataset = build_or_load_dataset(args)
     
     # === Load model ============
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
     
     # === Printing Samples ======
-    print('---')
+    print('------')
     selected_train_sample = dataset['train'][0]
     selected_train_sample_pos_tuple = ast.literal_eval(selected_train_sample['positive_sample'])
     selected_train_sample_pos_str = prompt_template.format(
-            sep_token=tokenizer.sep_token,
+            sep_token=getattr(tokenizer, "pad_token", " "),
             query=selected_train_sample["query"],
             answer=selected_train_sample_pos_tuple[0],
             conf_score=selected_train_sample_pos_tuple[1],
-            rag_method=selected_train_sample_pos_tuple[2],
-            search_queries=' '.join(str(g) for g in selected_train_sample_pos_tuple[4] if g),
-            generations=' '.join(str(g) for g in selected_train_sample_pos_tuple[5] if g),
+            search_queries=' '.join(str(g) for g in selected_train_sample_pos_tuple[3] if g),
+            thinks=' '.join(str(g) for g in selected_train_sample_pos_tuple[4] if g),
+            docs=' '.join(str(g) for g in selected_train_sample_pos_tuple[5][:args.n_docs_prompt] if g),
+            generations=' '.join(str(g) for g in selected_train_sample_pos_tuple[6] if g),
         )
-    print(f"Train sample: {selected_train_sample}")
+    # print(f"Train sample: {selected_train_sample}")
     print(f'Train Prompt:\n{selected_train_sample_pos_str}')
-    
-    print('\n---')
+    print('\n---\n')
     selected_test_sample = dataset['test'][0]
-    selected_test_sample_rag_tuple = ast.literal_eval(selected_test_sample[RAG_METHODS[0]])
+    selected_test_sample_rag = ast.literal_eval(selected_test_sample['clusters'])[0]
     selected_test_sample_rag_str = prompt_template.format(
-            sep_token=tokenizer.sep_token,
+            sep_token = getattr(tokenizer, "pad_token", " "),
             query=selected_test_sample["query"],
-            answer=selected_test_sample_rag_tuple[0],
-            conf_score=selected_test_sample_rag_tuple[2],
-            rag_method=RAG_METHODS[0],
-            search_queries=' '.join(str(g) for g in selected_test_sample_rag_tuple[4] if g),
-            generations=' '.join(str(g) for g in selected_test_sample_rag_tuple[3] if g),
+            answer=selected_test_sample_rag[0],
+            conf_score=selected_test_sample_rag[1],
+            search_queries=' '.join(str(g) for g in selected_test_sample_rag[3] if g),
+            thinks=' '.join(str(g) for g in selected_test_sample_rag[4] if g),
+            docs=' '.join(str(g) for g in selected_test_sample_rag[5][:args.n_docs_prompt] if g),
+            generations=' '.join(str(g) for g in selected_test_sample_rag[6] if g),
         )
-    print(f"Test sample:  {dataset['test'][0]}")
+    # print(f"Test sample:  {dataset['test'][0]}")
     print(f'Test Prompt:\n{selected_test_sample_rag_str}')
-    print('---\n')
+    print('------\n')
 
     # === Functions =============
     def preprocess_function(example, idx=None, max_length=5000):
@@ -78,18 +75,20 @@ def training(args):
                 query=example["query"],
                 answer=positive_sample_tuple[0],
                 conf_score=pos_conf,
-                rag_method=positive_sample_tuple[2],
-                search_queries=' '.join(str(g) for g in positive_sample_tuple[4] if g),
-                generations=' '.join(str(g) for g in positive_sample_tuple[5] if g),
+                search_queries=' '.join(str(g) for g in positive_sample_tuple[3] if g),
+                thinks=' '.join(str(g) for g in positive_sample_tuple[4] if g),
+                docs=' '.join(str(g) for g in positive_sample_tuple[5][:args.n_docs_prompt] if g),
+                generations=' '.join(str(g) for g in positive_sample_tuple[6] if g),
             )
             neg_sample = prompt_template.format(
                 sep_token=tokenizer.sep_token,
                 query=example["query"],
                 answer=negative_sample_tuple[0],
                 conf_score=neg_conf,
-                rag_method=negative_sample_tuple[2],
-                search_queries=' '.join(str(g) for g in negative_sample_tuple[4] if g),
-                generations=' '.join(str(g) for g in negative_sample_tuple[5] if g),
+                search_queries=' '.join(str(g) for g in negative_sample_tuple[3] if g),
+                thinks=' '.join(str(g) for g in negative_sample_tuple[4] if g),
+                docs=' '.join(str(g) for g in negative_sample_tuple[5][:args.n_docs_prompt] if g),
+                generations=' '.join(str(g) for g in negative_sample_tuple[6] if g),
             )
             pos_encoded = tokenizer(pos_sample, max_length=max_length, padding=False, truncation=True)
             neg_encoded = tokenizer(neg_sample, max_length=max_length, padding=False, truncation=True)
@@ -106,32 +105,30 @@ def training(args):
             
         # -------- EVAL MODE: multi-candidate per query --------
         else:
-            cand_ids, cand_masks, cand_methods, cand_answers, cand_is_correct, cand_conf = [], [], [], [], [], []
-            for k in RAG_METHODS:
-                if k in example and example[k]:
-                    example_k_tuple = ast.literal_eval(example[k])
-                    sample = prompt_template.format(
-                        sep_token=tokenizer.sep_token,
-                        query=example["query"],
-                        answer=example_k_tuple[0],
-                        conf_score=example_k_tuple[2],
-                        rag_method=k,
-                        search_queries=' '.join(str(g) for g in example_k_tuple[4] if g),
-                        generations=' '.join(str(g) for g in example_k_tuple[3] if g),
-                    )
-                    sample_encoded = tokenizer(sample, max_length=max_length, padding=False, truncation=True)
-                    cand_ids.append(sample_encoded["input_ids"])
-                    cand_masks.append(sample_encoded["attention_mask"])
-                    cand_is_correct.append(int(example_k_tuple[1]))
-                    cand_conf.append(float(example_k_tuple[2]))
-                    
+            cand_ids, cand_masks, cand_is_correct, cand_conf = [], [], [], []
+            clusters_list = ast.literal_eval(example['clusters'])
+            for cluster in clusters_list:
+                sample = prompt_template.format(
+                    sep_token=tokenizer.sep_token,
+                    query=example["query"],
+                    answer=cluster[0],
+                    conf_score=cluster[1],
+                    search_queries=' '.join(str(g) for g in cluster[3] if g),
+                    thinks=' '.join(str(g) for g in cluster[4] if g),
+                    docs=' '.join(str(g) for g in cluster[5][:args.n_docs_prompt] if g),
+                    generations=' '.join(str(g) for g in cluster[6] if g),
+                )
+                sample_encoded = tokenizer(sample, max_length=max_length, padding=False, truncation=True)
+                cand_ids.append(sample_encoded["input_ids"])
+                cand_masks.append(sample_encoded["attention_mask"])
+                cand_is_correct.append(int(cluster[2]))    
+                cand_conf.append(float(cluster[1]))    
+            
             return {
                 "mode": "eval",
                 "group_id": int(idx),
                 "cand_input_ids": cand_ids,
                 "cand_attention_mask": cand_masks,
-                "cand_methods": cand_methods,
-                "cand_answers": cand_answers,
                 "cand_is_correct": cand_is_correct,
                 "cand_confidence": cand_conf
             }
@@ -417,17 +414,17 @@ def training(args):
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
         gradient_accumulation_steps=4,
-        learning_rate=1e-5,
+        learning_rate=2e-5,
         weight_decay=0.0,
-        num_train_epochs=5,
+        num_train_epochs=10,
         greater_is_better=True,
         load_best_model_at_end=True,
         lr_scheduler_type="linear",
         warmup_ratio=0.05,
         eval_strategy="epoch",
         save_strategy="epoch",
-        # eval_steps=200,
-        logging_steps=150,
+        eval_steps=2,
+        logging_steps=100,
         remove_unused_columns=False,
         save_total_limit=2, 
         metric_for_best_model="acc@1",
@@ -454,10 +451,13 @@ def inference(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
+    parser.add_argument('--semantic_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--model_name_or_path', type=str, default='answerdotai/ModernBERT-base')
+    # parser.add_argument('--model_name_or_path', type=str, default='google/embeddinggemma-300m')
     parser.add_argument('--saved_model_name_or_path', type=str, default='models/rag_selector/checkpoint-800')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--cache_dir', type=str, default='./cache/')
+    parser.add_argument("--data_cache_dir", type=str, default="./data/rag_selection")
     parser.add_argument("--max_input_tokens", type=int, default=512)
     parser.add_argument('--max_new_tokens', type=int, default=128)
 
@@ -465,10 +465,14 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
-    parser.add_argument('--prompt_format', type=str, default='x_o_p_g', choices=['x_o', 'x_o_p_g', 'o_c', 'x_o_c', 'p_o_c', 'x_p_o_c', 'x_g_o_c', 'x_p_o'])
+    parser.add_argument('--prompt_format', type=str, default='x_o_g_sq', choices=[
+        'x_o', 'x_o_sq', 'x_o_th', 'x_o_dc', 'x_o_g', 'x_o_g_sq', 'x_o_sq_dc', 'x_o_sq_th_dc',
+        'x_o_c', 'x_o_c_sq', 'x_o_c_th', 'x_o_c_dc', 'x_o_c_g', 'x_o_c_g_sq', 'x_o_c_sq_dc', 'x_o_c_sq_th_dc',
+    ])
+    parser.add_argument('--n_docs_prompt', type=int, default=2)
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[

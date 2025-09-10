@@ -122,6 +122,7 @@ ckpts
 data/processed_files/
 data/row_files/
 data/search_r1_files/
+data/rag_selection/
 script_logging/
 run_output/
 test/
