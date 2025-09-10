@@ -1017,11 +1017,11 @@ def training(args):
         eval_strategy="epoch",
         save_strategy="epoch",
         eval_steps=2,
-        logging_steps=50,
+        logging_steps=100,
         remove_unused_columns=False,
         save_total_limit=2, 
         metric_for_best_model="acc@1",
-        report_to=[],  # disable W&B etc. unless you want it
+        report_to=[],
         seed=args.seed
     )
     
@@ -1402,8 +1402,9 @@ def inference(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='google/embeddinggemma-300m', choices=[
-        'answerdotai/ModernBERT-large', 'BAAI/bge-large-en-v1.5', 'google/embeddinggemma-300m'
+    parser.add_argument('--model_name_or_path', type=str, default='answerdotai/ModernBERT-large', choices=[
+        'answerdotai/ModernBERT-large', 'BAAI/bge-large-en-v1.5', 'google/embeddinggemma-300m',
+        'Alibaba-NLP/gte-Qwen2-7B-instruct', 'Alibaba-NLP/gte-Qwen2-1.5B-instruct' # https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct
     ])
     parser.add_argument('--semantic_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--saved_model_name_or_path', type=str, default='models/rag_selection/pairwise_input/ModernBERT-large/checkpoint-1768') # 

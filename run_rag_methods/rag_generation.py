@@ -51,19 +51,40 @@ def rag_generation(args):
             print("CUDA is not available. No GPUs detected.")
         print('\n')
     
-    
     # === Dataset ===============================
     dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', args.dataset)
     if args.subsec == 'train' and 'train' in dataset:
         print(f'Using the {args.dataset} train dataset...')
         test_dataset_ = dataset['train']
-    elif 'test' in dataset:
+    elif args.subsec == 'test' and 'test' in dataset:
         print(f'Using the {args.dataset} test dataset...')
         test_dataset_ = dataset['test']
-    elif 'dev' in dataset:
+    elif args.subsec == 'dev' and 'dev' in dataset:
         print(f'Using the {args.dataset} dev dataset...')
         test_dataset_ = dataset['dev']
+    elif args.dataset == 'popqa' and args.subsec == 'train':
+        print(f'Using the {args.dataset} test dataset for [train]...')
+        test_dataset_ = dataset['test']
+    else:
+        raise ValueError(f"There is no {args.subsec} sebsec for {args.dataset} !!!")
     
+    # === For PopQA-train ========================
+    if args.dataset == 'popqa' and args.subsec == 'train':
+        generated_test_qids = []
+        model_ = args.model_name_or_path.split('/')[-1]
+        test_inference_results_file = f"run_output/{args.run}/{model_}/{args.dataset}_test/{args.rag_method}_{args.retriever_name}/inference_results.jsonl"
+        if os.path.exists(test_inference_results_file):
+            with open(test_inference_results_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    data = json.loads(line)
+                    if 'qid' in data:
+                        generated_test_qids.append(data['qid'])
+        generated_test_qids = set(generated_test_qids)
+        train_candidates = test_dataset_.filter(lambda x: x['id'] not in generated_test_qids)
+        print(f"Available for training after excluding test qids: {len(train_candidates)} samples")
+        test_dataset_ = train_candidates
+    
+    # === Subsampling the dataset ================
     if args.fraction_of_data_to_use < 1.0:
         shuffled_dataset = test_dataset_.shuffle(seed=args.seed)
         num_samples = int(args.fraction_of_data_to_use * len(shuffled_dataset))
@@ -98,7 +119,7 @@ def rag_generation(args):
 
 
     # === Select RAG Method =====================
-    generation_model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16).to(device) # attn_implementation="eager" # Disable this for searchR1
+    generation_model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, dtype=torch.bfloat16).to(device) # attn_implementation="eager" # Disable this for searchR1
     generation_tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
     
     if args.rag_method == 'direct_inference':
@@ -278,7 +299,7 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
@@ -306,7 +327,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='direct_inference', choices=[
+    parser.add_argument('--rag_method', type=str, default='search_o1', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
@@ -351,10 +372,10 @@ if __name__ == "__main__":
 
     ### === Run Steps ============================
     set_seed(args.seed)
-    # rag_generation(args)
+    rag_generation(args)
     # merge_result_files(args)
     # get_num_retrieval(args)
-    evaluate(args)
+    # evaluate(args)
     # subsample_generation(args)
         
     # python run_rag_methods/rag_generation.py

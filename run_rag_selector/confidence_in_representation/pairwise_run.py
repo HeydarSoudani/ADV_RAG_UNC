@@ -15,14 +15,13 @@ from transformers import Trainer, TrainingArguments, AutoModel, AutoTokenizer
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 from utils.general_utils import set_seed
-from applications.rag_selector.confidence_in_input.pairwise_run import get_prompt_template, build_or_load_dataset, data_creation
+from applications.rag_selector.confidence_in_input.pairwise_run import get_prompt_template, build_or_load_dataset
 
 
 def training(args):
     # === Load dataset ==========
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
     prompt_template = get_prompt_template(args.prompt_format)
-    # dataset = data_creation(args)
     dataset = build_or_load_dataset(args)
     
     # === Load model ============
@@ -82,13 +81,13 @@ def training(args):
             )
             neg_sample = prompt_template.format(
                 sep_token=tokenizer.sep_token,
-                query=example["query"],
-                answer=negative_sample_tuple[0],
+                query=negative_sample_tuple[0],
+                answer=negative_sample_tuple[1],
                 conf_score=neg_conf,
-                search_queries=' '.join(str(g) for g in negative_sample_tuple[3] if g),
-                thinks=' '.join(str(g) for g in negative_sample_tuple[4] if g),
-                docs=' '.join(str(g) for g in negative_sample_tuple[5][:args.n_docs_prompt] if g),
-                generations=' '.join(str(g) for g in negative_sample_tuple[6] if g),
+                search_queries=' '.join(str(g) for g in negative_sample_tuple[4] if g),
+                thinks=' '.join(str(g) for g in negative_sample_tuple[5] if g),
+                docs=' '.join(str(g) for g in negative_sample_tuple[6][:args.n_docs_prompt] if g),
+                generations=' '.join(str(g) for g in negative_sample_tuple[7] if g),
             )
             pos_encoded = tokenizer(pos_sample, max_length=max_length, padding=False, truncation=True)
             neg_encoded = tokenizer(neg_sample, max_length=max_length, padding=False, truncation=True)
@@ -426,7 +425,7 @@ def training(args):
         remove_unused_columns=False,
         save_total_limit=2, 
         metric_for_best_model="acc@1",
-        report_to=[],  # disable W&B etc. unless you want it
+        report_to=[],
         seed=args.seed
     )
     
@@ -449,7 +448,7 @@ def inference(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='google/embeddinggemma-300m', choices=[
+    parser.add_argument('--model_name_or_path', type=str, default='answerdotai/ModernBERT-large', choices=[
         'answerdotai/ModernBERT-large', 'BAAI/bge-large-en-v1.5', 'google/embeddinggemma-300m'
     ])
     parser.add_argument('--semantic_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
@@ -471,7 +470,7 @@ if __name__ == "__main__":
         'x_o', 'x_o_sq', 'x_o_th', 'x_o_dc', 'x_o_g', 'x_o_g_sq', 'x_o_g_dc', 'x_o_sq_dc', 'x_o_sq_th_dc',
         'x_o_c', 'x_o_c_sq', 'x_o_c_th', 'x_o_c_dc', 'x_o_c_g', 'x_o_c_g_sq', 'x_o_c_g_dc', 'x_o_c_sq_dc', 'x_o_c_sq_th_dc',
     ])
-    parser.add_argument('--n_docs_prompt', type=int, default=2)
+    parser.add_argument('--n_docs_prompt', type=int, default=3)
     
     # Retriever
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
