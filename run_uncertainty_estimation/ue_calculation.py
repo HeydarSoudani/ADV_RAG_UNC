@@ -18,13 +18,13 @@ from run_rag_methods.src.rag_methods import *
 from run_uncertainty_estimation.consistency_methods import *
 from run_rag_methods.src.correctness import em_score, subem_score, f1_score
 from run_uncertainty_estimation.src.uncertainty_estimator import UncertaintyEstimator
-from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
+from run_mcts.run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 from run_uncertainty_estimation.ue_methods import *
 from run_rag_methods.src.retrievers_local import load_docs
 
 
 def ue_generation(args):
-    are_traces_generated = True # when yo generated the paths and want to add UE results
+    are_traces_generated = False # when yo generated the paths and want to add UE results
     # === MultiGPU setup =========================
     accelerator = Accelerator()
     device = accelerator.device
@@ -84,9 +84,9 @@ def ue_generation(args):
                         generated_traces_obj[data['qid']] = data['masked_traces']
                     
     # === Read Models ============================
-    generation_model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16).to(device) # attn_implementation="eager" # Disable this for searchR1
+    generation_model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, dtype=torch.bfloat16).to(device) # attn_implementation="eager" # Disable this for searchR1
     generation_tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
-    secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, torch_dtype=torch.bfloat16).to(device)
+    secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, dtype=torch.bfloat16).to(device)
     secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
     
     # -
@@ -431,14 +431,14 @@ def correctness_evaluation_mv(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
     # parser.add_argument('--model_name_or_path', type=str, default="agentrl/ReSearch-Qwen-7B-Instruct")
-    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+    parser.add_argument('--dataset', type=str, default='musique', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
@@ -500,7 +500,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_3 (rag_methods_500)')
+    parser.add_argument('--run', type=str, default='run_1 (rag_methods_2k)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -527,16 +527,16 @@ if __name__ == "__main__":
             args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces.jsonl"
         
     # === Prompt files =============
-    args.query_decomposition_prompt_file = "run_mcts_two_actions/prompts/query_decomposition_prompt_template.txt"
-    args.semantic_equivalence_prompt_file = "run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
+    args.query_decomposition_prompt_file = "run_mcts/run_mcts_two_actions/prompts/query_decomposition_prompt_template.txt"
+    args.semantic_equivalence_prompt_file = "run_mcts/run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
     
     # === Run Steps ================
     set_seed(args.seed)
-    # ue_generation(args)
+    ue_generation(args)
     # merge_result_files(args)
     # evaluation_correlation(args)
     # correctness_evaluation_mv(args)
-    evaluation_correlation_combined(args)
+    # evaluation_correlation_combined(args)
     
     # python run_uncertainty_estimation/ue_calculation.py
     # accelerate launch --multi_gpu run_uncertainty_estimation/ue_calculation.py

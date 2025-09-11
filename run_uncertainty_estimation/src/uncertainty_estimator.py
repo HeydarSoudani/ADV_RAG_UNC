@@ -6,7 +6,7 @@ from transformers import DebertaForSequenceClassification, DebertaTokenizer
 
 from utils.general_utils import find_token_indices
 from run_uncertainty_estimation.ue_methods import *
-from run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
+from run_mcts.run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
 
 def check_lengths(qid, tokens_list, tokens_text_list, logits_list, logprobs_list):
     for i, (tokens, tokens_text, logits, logprobs) in enumerate(

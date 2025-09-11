@@ -296,7 +296,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+    parser.add_argument('--dataset', type=str, default='musique', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
@@ -372,10 +372,10 @@ if __name__ == "__main__":
 
     ### === Run Steps ============================
     set_seed(args.seed)
-    rag_generation(args)
-    # merge_result_files(args)
+    # rag_generation(args)
+    merge_result_files(args)
     # get_num_retrieval(args)
-    # evaluate(args)
+    evaluate(args)
     # subsample_generation(args)
         
     # python run_rag_methods/rag_generation.py
