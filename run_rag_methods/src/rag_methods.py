@@ -277,8 +277,8 @@ class CoTInference(BasicRAG):
         return think, pred_answer
 
 class CoTSingleRAG(BasicRAG):
-    def __init__(self, args, device):
-        super().__init__(args, device)
+    def __init__(self, generation_model, generation_tokenizer, device, args):
+        super().__init__(generation_model, generation_tokenizer, device, args)
         self.cot_examples_text = '\n\n'.join([f'Q: {exp["Q"]}\nA: {exp["A"]}' for exp in self.COT_EXAMPLES])
         self.system_prompt = SYSTEM_PROMPT_COT
     

@@ -95,7 +95,7 @@ def ue_generation(args):
     elif args.rag_method == 'cot_inference':
         rag_model = CoTInference(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == "cot_single_retrieval":
-        rag_model = CoTSingleRAG(args, device)
+        rag_model = CoTSingleRAG(generation_model, generation_tokenizer, device, args)
     elif args.rag_method == "fix_sentence_retrieval":
         rag_model = FixSentenceRAG(args, device)
     elif args.rag_method == "fix_length_retrieval":
@@ -431,9 +431,9 @@ def correctness_evaluation_mv(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
     # parser.add_argument('--model_name_or_path', type=str, default="agentrl/ReSearch-Qwen-7B-Instruct")
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
@@ -470,7 +470,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
+    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
@@ -532,8 +532,8 @@ if __name__ == "__main__":
     
     # === Run Steps ================
     set_seed(args.seed)
-    ue_generation(args)
-    # merge_result_files(args)
+    # ue_generation(args)
+    merge_result_files(args)
     # evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     # evaluation_correlation_combined(args)

@@ -128,5 +128,6 @@ archive/
 models/
 cache/
 analysis/
+run_rag_selector/datasets/
 
 

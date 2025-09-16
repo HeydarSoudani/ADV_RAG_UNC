@@ -77,7 +77,8 @@ if __name__ == "__main__":
     
     # === Files ===================================
     model_ = args.model_name_or_path.split('/')[-1]
-    if args.rag_method == 'no_retrieval':
+    # if args.rag_method == 'no_retrieval':
+    if args.rag_method in ['direct_inference', 'cot_inference']:
         args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}"
     else:
         args.output_dir = f"run_output/{args.run}/{model_}/{args.dataset}_{args.subsec}/{args.rag_method}_{args.retriever_name}"

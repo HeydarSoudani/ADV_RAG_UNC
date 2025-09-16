@@ -145,6 +145,11 @@ class SearchQueryParaphraser:
             else:
                 print(f"Failed to generate extra queries on iteration {iteration + 1}")
             iteration += 1
+        
+        if len(paraphrased_queries) < repeat:
+            missing = repeat - len(paraphrased_queries)
+            paraphrased_queries.extend([original_sq] * missing)
+        
         if len(paraphrased_queries) != repeat:
             print(f"Warning: Only generated {len(paraphrased_queries)} queries out of {repeat} after {iteration} iterations.")
         
