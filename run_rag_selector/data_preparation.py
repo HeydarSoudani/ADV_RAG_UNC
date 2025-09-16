@@ -241,7 +241,7 @@ def create_perefrence_pairs(
     add_cross_queries: bool = False,
     cross_samples: int = 1000,
     near_ratio: float = 0.8, # For B
-    min_gap: float = 0.7,
+    min_gap: float = 0.8,
     seed: int = 42,
 ):
     rng = random.Random(seed)

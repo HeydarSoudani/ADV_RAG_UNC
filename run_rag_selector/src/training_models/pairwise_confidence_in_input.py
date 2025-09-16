@@ -214,15 +214,8 @@ def compute_metrics(eval_pred):
 
     acc_count, total = 0, 0
     for g in np.unique(group_ids):
-        idx = np.nonzero(group_ids == g)[0]
-        if idx.size == 0:
-            total += 1
-            continue
-        
         total += 1
-        if not np.any(is_correct[idx] == 1):
-            continue # skip groups with no gold (or count as 0 if you prefer)
-        
+        idx = np.nonzero(group_ids == g)[0]
         top_i = idx[np.argmax(preds[idx])]
         acc_count += int(is_correct[top_i] == 1)
         

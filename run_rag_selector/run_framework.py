@@ -25,6 +25,9 @@ def main(args):
         else:
             wo_training_selector(args, dataset)
 
+def stat_testing(args):
+    pass
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -56,8 +59,13 @@ if __name__ == "__main__":
     parser.add_argument('--get_ideal', action='store_true')
     parser.add_argument('--with_training', action='store_false')
     parser.add_argument('--with_clustering', action='store_false')
-    parser.add_argument('--confidence_score_injection', type=str, default='in_representation', choices=['in_input', 'in_representation'])
+    parser.add_argument('--confidence_score_injection', type=str, default='in_input', choices=['in_input', 'in_representation'])
     parser.add_argument('--training_method', type=str, default='pairwise', choices=['pairwise', 'listwise'])
+    # 
+    parser.add_argument('--num_train_epochs', type=int, default=10)
+    parser.add_argument('--learning_rate', type=float, default="2e-5")
+    parser.add_argument('--per_device_train_batch_size', type=int, default=4)
+    parser.add_argument('--per_device_eval_batch_size', type=int, default=4)
     # 
     parser.add_argument('--run_train', type=str, default='run_1 (rag_methods_2k)')
     parser.add_argument('--run_test', type=str, default='run_2 (rag_methods_1k)')
@@ -81,11 +89,19 @@ if __name__ == "__main__":
     
     model_ = args.selector_model_name_or_path.split('/')[-1]
     args.saved_model_name_or_path = f"run_rag_selector/models/{args.dataset}/{args.training_method}_confidence_{args.confidence_score_injection}_{args.prompt_format}/{model_}"
-    args.save_results_path = f"run_output/{args.run_test}/rag_selector/{args.dataset}_{args.subsec}/{args.training_method}_confidence_{args.confidence_score_injection}_{args.prompt_format}_results.jsonl"
-    os.makedirs(f"run_output/{args.run_test}/rag_selector/{args.dataset}_{args.subsec}", exist_ok=True)
+    
+    clustering_text = 'clustering' if args.with_clustering  else 'wo_clustering'
+    results_dir = f"run_output/{args.run_test}/rag_selector/{args.dataset}_{args.subsec}_{args.consistency_method}"
+    os.makedirs(results_dir, exist_ok=True)
+    args.save_results_path = f"{results_dir}/{args.training_method}_confidence_{args.confidence_score_injection}_{clustering_text}_{args.prompt_format}_results.jsonl"
     
     set_seed(args.seed)
     main(args)
+    
+    # ---------------------------------
+    
+    stat_testing(args)
+    
     
     # python run_rag_selector/run_framework.py
     # accelerate launch --multi_gpu run_rag_selector/run_framework.py
