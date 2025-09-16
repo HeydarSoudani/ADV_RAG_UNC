@@ -3,6 +3,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import json
 import torch
 import argparse
 
@@ -12,11 +13,26 @@ from run_rag_selector.inference import inference
 from run_rag_selector.data_preparation import data_preparation
 from run_rag_selector.src.ideal_selector import get_ideal_selector
 from run_rag_selector.src.wo_training_selector import wo_training_selector
+from run_rag_selector.src.significant_tests import t_test_binary, wilcoxon_rank_sum_binary
 
 def main(args):
+    print("\n== RAG Selector ...")
+    print(f"""
+        Selector Model:   {args.selector_model_name_or_path}
+        Dataset:          {args.dataset} / {args.subsec} ({args.prompt_format})
+        Consistency Meth: {args.consistency_method}
+        Get ideal:        {args.get_ideal}
+        With training:    {args.with_training}
+        With clustering:  {args.with_clustering}
+        Conf Score Inj:   {args.confidence_score_injection}
+        Training method:  {args.training_method}
+        Seed:             {args.seed}
+        Run train:        {args.run_train}
+        Run test:         {args.run_test}
+    """.replace('        ', ''))
+    
     if args.get_ideal:
         get_ideal_selector(args)
-    
     else:
         dataset = data_preparation(args)    
         if args.with_training:
@@ -26,12 +42,47 @@ def main(args):
             wo_training_selector(args, dataset)
 
 def stat_testing(args):
-    pass
+    baseline_rag_methods = [
+        ('Qwen2.5-7B-Instruct', 'self_ask'),
+        ('Qwen2.5-7B-Instruct', 'react'),
+        ('Qwen2.5-7B-Instruct', 'search_o1'),
+        ('ReSearch-Qwen-7B-Instruct', 'research'),
+        ('SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo', 'search_r1')
+    ]
+    baseline_rag_method = baseline_rag_methods[4]
+    baseline_file_path = f"run_output/{args.run_test}/{baseline_rag_method[0]}/{args.dataset}_{args.subsec}/{baseline_rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"
 
+    # Read baseline
+    baseline_qids, baseline_correctness = [], []
+    with open(baseline_file_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                data = json.loads(line)
+                baseline_qids.append(data["qid"])
+                baseline_correctness.append(data["em"])
+
+    # Read selector into a dictionary for lookup
+    selector_dict = {}
+    with open(args.save_results_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                data = json.loads(line)
+                selector_dict[data["qid"]] = data["label"]
+
+    # Match selector values to baseline order
+    selector_correctness = []
+    for qid in baseline_qids:
+        if qid not in selector_dict:
+            sys.exit(f"Error: qid {qid} from baseline not found in selector results.")
+        selector_correctness.append(selector_dict[qid])
+
+
+    t_test_binary(baseline_correctness, selector_correctness)
+    wilcoxon_rank_sum_binary(baseline_correctness, selector_correctness)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--selector_model_name_or_path', type=str, default='answerdotai/ModernBERT-large', choices=[
+    parser.add_argument('--selector_model_name_or_path', type=str, default='google/embeddinggemma-300m', choices=[
         'answerdotai/ModernBERT-large', 'BAAI/bge-large-en-v1.5', 'google/embeddinggemma-300m',
         'Alibaba-NLP/gte-Qwen2-7B-instruct', 'Alibaba-NLP/gte-Qwen2-1.5B-instruct' # https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct
     ])
@@ -44,7 +95,7 @@ if __name__ == "__main__":
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--prompt_format', type=str, default='x_o_c_sq_dc', choices=[
+    parser.add_argument('--prompt_format', type=str, default='x_o_c_g_dc', choices=[
         'x_o', 'x_o_sq', 'x_o_th', 'x_o_dc', 'x_o_g', 'x_o_g_sq', 'x_o_g_dc', 'x_o_sq_dc', 'x_o_sq_th_dc',
         'x_o_c', 'x_o_c_sq', 'x_o_c_th', 'x_o_c_dc', 'x_o_c_g', 'x_o_c_g_sq', 'x_o_c_g_dc', 'x_o_c_sq_dc', 'x_o_c_sq_th_dc',
     ])
@@ -59,13 +110,13 @@ if __name__ == "__main__":
     parser.add_argument('--get_ideal', action='store_true')
     parser.add_argument('--with_training', action='store_false')
     parser.add_argument('--with_clustering', action='store_false')
-    parser.add_argument('--confidence_score_injection', type=str, default='in_input', choices=['in_input', 'in_representation'])
+    parser.add_argument('--confidence_score_injection', type=str, default='in_representation', choices=['in_input', 'in_representation'])
     parser.add_argument('--training_method', type=str, default='pairwise', choices=['pairwise', 'listwise'])
     # 
-    parser.add_argument('--num_train_epochs', type=int, default=10)
+    parser.add_argument('--num_train_epochs', type=int, default=8)
     parser.add_argument('--learning_rate', type=float, default="2e-5")
-    parser.add_argument('--per_device_train_batch_size', type=int, default=4)
-    parser.add_argument('--per_device_eval_batch_size', type=int, default=4)
+    parser.add_argument('--per_device_train_batch_size', type=int, default=8)
+    parser.add_argument('--per_device_eval_batch_size', type=int, default=8)
     # 
     parser.add_argument('--run_train', type=str, default='run_1 (rag_methods_2k)')
     parser.add_argument('--run_test', type=str, default='run_2 (rag_methods_1k)')
@@ -97,10 +148,7 @@ if __name__ == "__main__":
     
     set_seed(args.seed)
     main(args)
-    
-    # ---------------------------------
-    
-    stat_testing(args)
+    # stat_testing(args)
     
     
     # python run_rag_selector/run_framework.py

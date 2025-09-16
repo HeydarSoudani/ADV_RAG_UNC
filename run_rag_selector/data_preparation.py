@@ -239,8 +239,8 @@ def clustered_samples(args, df):
 def create_perefrence_pairs(
     clustered_df: pd.DataFrame,
     add_cross_queries: bool = False,
-    cross_samples: int = 1000,
-    near_ratio: float = 0.8, # For B
+    cross_samples: int = 2400,
+    near_ratio: float = 0.75, # For B
     min_gap: float = 0.8,
     seed: int = 42,
 ):
