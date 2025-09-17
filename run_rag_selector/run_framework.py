@@ -3,7 +3,6 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-import gc
 import json
 import torch
 import argparse
@@ -12,40 +11,53 @@ from utils.general_utils import set_seed
 from run_rag_selector.training import training
 from run_rag_selector.inference import inference
 from run_rag_selector.data_preparation import data_preparation
-from run_rag_selector.src.ideal_selector import get_ideal_selector
-from run_rag_selector.src.wo_training_selector import wo_training_selector
+from run_rag_selector.selector_methods.random_selector import get_random_selector
+from run_rag_selector.selector_methods.ideal_selector import get_ideal_selector
+from run_rag_selector.selector_methods.llm_blender import get_llm_blender
+from run_rag_selector.selector_methods.prompt_based_selector import get_prompt_based_selector
+from run_rag_selector.selector_methods.confidence_based_wo_training_selector import wo_training_selector
 from run_rag_selector.src.significant_tests import t_test_binary, wilcoxon_rank_sum_binary
+
 
 def main(args):
     print("\n== RAG Selector ...")
     print(f"""
-        Selector Model:   {args.selector_model_name_or_path}
-        Dataset:          {args.dataset} / {args.subsec} ({args.prompt_format})
-        Consistency Meth: {args.consistency_method}
-        Get ideal:        {args.get_ideal}
-        With training:    {args.with_training}
-        With clustering:  {args.with_clustering}
-        Conf Score Inj:   {args.confidence_score_injection}
-        Training method:  {args.training_method}
-        Is Encoder Frozen {args.is_encoder_frozen}
-        Seed:             {args.seed}
-        Run train:        {args.run_train}
-        Run test:         {args.run_test}
+        Ensemble M.:    {args.ensemble_method}
+        Selector M.:    {args.selector_model_name_or_path}
+        Dataset & Pro.: {args.dataset} / {args.subsec} ({args.prompt_format})
+        Consis. Meth:   {args.consistency_method}
+        W. clustering:  {args.with_clustering}
+        Confidence Inj: {args.confidence_score_injection}
+        Training M.:    {args.training_method}
+        Enc. Frozen:    {args.is_encoder_frozen}
+        Random Seed:    {args.seed}
+        Run train:      {args.run_train}
+        Run test:       {args.run_test}
     """.replace('        ', ''))
     
-    if args.get_ideal:
+    if args.ensemble_method == 'random':
+        get_random_selector(args)
+    
+    elif args.ensemble_method == 'prompt':
+        dataset = data_preparation(args, only_test=True)
+        get_prompt_based_selector(args, dataset)
+    
+    elif args.ensemble_method == 'ideal':
         get_ideal_selector(args)
-    else:
+
+    elif args.ensemble_method == 'llm_blender':
+        dataset = data_preparation(args, only_test=True)
+        get_llm_blender(args, dataset)
+    
+    elif args.ensemble_method == 'confidence_based_wo_training':
+        dataset = data_preparation(args, only_test=True)
+        wo_training_selector(args, dataset)
+    
+    elif args.ensemble_method == 'confidence_based_w_training':
         dataset = data_preparation(args)
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-         
-        if args.with_training:
-            training(args, dataset)
-            inference(args, dataset)
-        else:
-            wo_training_selector(args, dataset)
+        training(args, dataset)
+        inference(args, dataset)
+    
 
 def stat_testing(args):
     baseline_rag_methods = [
@@ -88,16 +100,16 @@ def stat_testing(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--selector_model_name_or_path', type=str, default='Qwen/Qwen3-Embedding-0.6B', choices=[
+    parser.add_argument('--selector_model_name_or_path', type=str, default='answerdotai/ModernBERT-large', choices=[
         'answerdotai/ModernBERT-large', 'BAAI/bge-large-en-v1.5', 'google/embeddinggemma-300m',
         'Qwen/Qwen3-Embedding-0.6B', 'Qwen/Qwen3-Embedding-4B'
     ])
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--cache_dir', type=str, default='./cache/')
     parser.add_argument("--data_cache_dir", type=str, default="./run_rag_selector/datasets")
-    parser.add_argument("--max_input_tokens", type=int, default=512)
-    parser.add_argument('--max_new_tokens', type=int, default=512)
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument("--max_input_tokens", type=int, default=1024)
+    parser.add_argument('--max_new_tokens', type=int, default=1024)
+    parser.add_argument('--dataset', type=str, default='musique', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
@@ -113,14 +125,16 @@ if __name__ == "__main__":
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     # 
-    parser.add_argument('--get_ideal', action='store_true')
-    parser.add_argument('--with_training', action='store_false')
+    parser.add_argument('--ensemble_method', default='llm_blender', choices=[
+        'random', 'prompt', 'llm_blender', 'ideal', 
+        'confidence_based_wo_training', 'confidence_based_w_training'
+    ])
     parser.add_argument('--with_clustering', action='store_false')
-    parser.add_argument('--confidence_score_injection', type=str, default='in_representation', choices=['in_input', 'in_representation'])
+    parser.add_argument('--confidence_score_injection', type=str, default='in_input', choices=['in_input', 'in_representation'])
     parser.add_argument('--training_method', type=str, default='pairwise', choices=['pairwise', 'listwise'])
     # 
     parser.add_argument('--is_encoder_frozen', action='store_true')
-    parser.add_argument('--num_train_epochs', type=int, default=8)
+    parser.add_argument('--num_train_epochs', type=int, default=12)
     parser.add_argument('--learning_rate', type=float, default="2e-5")
     parser.add_argument('--per_device_train_batch_size', type=int, default=4)
     parser.add_argument('--per_device_eval_batch_size', type=int, default=4)
@@ -158,6 +172,9 @@ if __name__ == "__main__":
     results_dir = f"run_output/{args.run_test}/rag_selector/{args.dataset}_{args.subsec}_{args.consistency_method}"
     os.makedirs(results_dir, exist_ok=True)
     args.save_results_path = f"{results_dir}/{args.training_method}_confidence_{args.confidence_score_injection}_{clustering_text}_{args.prompt_format}_results.jsonl"
+    
+    args.data_cache_dir = f"{args.data_cache_dir}/{args.run_test}"
+    os.makedirs(args.data_cache_dir, exist_ok=True)
     
     set_seed(args.seed)
     main(args)

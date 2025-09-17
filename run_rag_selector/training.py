@@ -89,14 +89,11 @@ def training(args, dataset):
         
         # MultiGPU
         ddp_find_unused_parameters=False,    # faster if no unused params
-        # dataloader_num_workers=4,
         dataloader_num_workers=0,
         eval_accumulation_steps=1,
-        # predict_with_generate=False,
         bf16=True,                           # or fp16=True if no bf16
         torch_compile=False,                 # enable if you’ve profiled it
         dataloader_drop_last = False
-        
     )
     
     trainer = trainer_model.RewardTrainer(
@@ -109,4 +106,5 @@ def training(args, dataset):
         compute_metrics=trainer_model.compute_metrics,
     )
 
-    trainer.train()
+    # trainer.train()
+    trainer.train(resume_from_checkpoint=True)

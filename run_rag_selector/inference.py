@@ -120,7 +120,7 @@ def inference(args, dataset):
     tokenized_dataset = dataset.map(preproc_fn, with_indices=True)
     data_collator = trainer_model.DataCollator(tokenizer)
     
-    model = trainer_model.RewardRanker(args.selector_model_name_or_path)
+    model = trainer_model.RewardRanker(args, args.selector_model_name_or_path)
     weights_path = os.path.join(get_last_checkpoint(args.saved_model_name_or_path), "model.safetensors")
     state = load_file(weights_path)
     if isinstance(state, dict) and "state_dict" in state and isinstance(state["state_dict"], dict):
@@ -134,7 +134,7 @@ def inference(args, dataset):
         output_dir='./',
         do_train=False,
         do_eval=True,
-        per_device_eval_batch_size=5,
+        per_device_eval_batch_size=args.per_device_eval_batch_size,
         remove_unused_columns=False,      # keep all features used by your custom collator/model
         report_to=[],                     # disable W&B etc.
         seed=args.seed

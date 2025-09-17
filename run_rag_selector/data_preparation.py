@@ -3,6 +3,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import gc
 import json
 import torch
 import bisect
@@ -27,7 +28,7 @@ def pack_cluster(s):
 
 def stack_rag_methods_to_candidates(df: pd.DataFrame) -> pd.DataFrame:
     # Identify the rag method columns (anything except qid/query)
-    method_cols = [c for c in df.columns if c not in ("qid", "query")]
+    method_cols = [c for c in df.columns if c not in ("qid", "query", "gt_answers")]
     
     def row_to_candidates(row):
         out = []
@@ -45,7 +46,7 @@ def stack_rag_methods_to_candidates(df: pd.DataFrame) -> pd.DataFrame:
                 continue
         return out
 
-    new_df = df[["qid", "query"]].copy()
+    new_df = df[["qid", "query", "gt_answers"]].copy()
     new_df["candidates"] = df.apply(row_to_candidates, axis=1)
     return new_df
 
@@ -68,11 +69,18 @@ def merge_rag_systems_data(args, subsec='train'):
     ]
     # === train set ====================
     dfs = []
-    for rag_method in rag_methods:
+    for i, rag_method in enumerate(rag_methods):
         file_path = f"run_output/{run}/{rag_method[0]}/{args.dataset}_{dataset_subsec}/{rag_method[1]}_{args.retriever_name}/{args.consistency_method}_results.jsonl"    
         with open(file_path, "r") as f:
             data = [json.loads(line) for line in f]
         df_temp = pd.DataFrame(data)[["qid", "query", "pred_answer", correctness_m, "final_answer_list", "ue_scores"]]
+        
+        df_temp["gt_answers"] = [
+            (item.get("gt_answers", item.get("answers", [])) if isinstance(item.get("gt_answers", item.get("answers", [])), list)
+            else [item.get("gt_answers", item.get("answers"))] if item.get("gt_answers", item.get("answers")) is not None
+            else [])
+            for item in data
+        ]
         
         if args.consistency_method == 'rag_consistency':
             confidences = df_temp["ue_scores"].apply(lambda x: x["majority_voting"]["confidence"])
@@ -113,12 +121,19 @@ def merge_rag_systems_data(args, subsec='train'):
                 df_temp["final_answer_list"]
             )
         ]
-        df = df_temp[["qid", "query", rag_method[1]]]
+        
+        if i == 0:
+            df = df_temp[["qid", "query", "gt_answers", rag_method[1]]]
+        else:
+            df = df_temp[["qid", "query", rag_method[1]]]
+        # df = df_temp[["qid", "query", rag_method[1]]]
+        
         dfs.append(df)
     
     merged_df = dfs[0]
     for df in dfs[1:]:
         merged_df = merged_df.merge(df, on=["qid", "query"], how="outer")
+    
     merged_df = merged_df.sort_values(by="qid", key=lambda x: x.str.extract(r"(\d+)").squeeze().astype(int)).reset_index(drop=True)
     merged_df = stack_rag_methods_to_candidates(merged_df)
     
@@ -225,13 +240,13 @@ def clustered_samples(args, df):
     cluster_based_rag_selector = ClusteringModel(model, tokenizer, args.device, args)
     new_rows = []
     for i, row in tqdm(df.iterrows()):
-        qid, query, org_candidates = row["qid"], row["query"], row["candidates"] 
+        qid, query, gt_answers, org_candidates = row["qid"], row["query"], row['gt_answers'], row["candidates"] 
         candidates = []
         for val in org_candidates:
             candidates.append((val[0], val[1], val[2], val[3], val[4], val[5], val[6]))  # (pred, conf, correctness, sq, thinks, docs, gens)
         
         clusters_summaries = cluster_based_rag_selector.inference(query, candidates)
-        new_rows.append({"qid": qid, "query": query, "candidates": clusters_summaries})
+        new_rows.append({"qid": qid, "query": query, "gt_answers": gt_answers, "candidates": clusters_summaries})
     
     new_df = pd.DataFrame(new_rows)
     return new_df
@@ -461,19 +476,7 @@ def create_perefrence_pairs(
     preference_ds = Dataset.from_pandas(preference_df_str)
     return preference_ds
 
-def data_creation(args):
-    # == Train setup ---------
-    train_df = merge_rag_systems_data(args, subsec='train')
-    train_df = drop_all_same_correctness(train_df) # Filtering: Remove sample with all 0 or all 1
-    train_df = clustered_samples(args, train_df)
-    train_preference_ds = create_perefrence_pairs(
-        train_df,
-        add_cross_queries=args.add_cross_queries,
-        cross_samples=args.cross_samples,
-        near_ratio=args.near_ratio,
-        min_gap=args.min_gap,
-        seed=args.seed
-    )
+def data_creation(args, only_test):
     
     # == Test setup ----------
     test_df = merge_rag_systems_data(args, subsec=args.subsec)
@@ -482,28 +485,48 @@ def data_creation(args):
     test_df_str = test_df.astype(str)
     test_ds = Dataset.from_pandas(test_df_str)
     
-    dataset_dict = DatasetDict({"train": train_preference_ds, 'test': test_ds})
-    return dataset_dict
+    if only_test:
+        dataset_dict = DatasetDict({'test': test_ds})
+        return dataset_dict
+    else:
+        # == Train setup ---------
+        train_df = merge_rag_systems_data(args, subsec='train')
+        train_df = drop_all_same_correctness(train_df) # Filtering: Remove sample with all 0 or all 1
+        train_df = clustered_samples(args, train_df)
+        train_preference_ds = create_perefrence_pairs(
+            train_df,
+            add_cross_queries=args.add_cross_queries,
+            cross_samples=args.cross_samples,
+            near_ratio=args.near_ratio,
+            min_gap=args.min_gap,
+            seed=args.seed
+        )
+        dataset_dict = DatasetDict({'train': train_preference_ds, 'test': test_ds})
+        return dataset_dict
 
 
 ### === Main ========================== 
-def data_preparation(args):
-    ### build_or_load_dataset
+def data_preparation(args, only_test=False):
+    
     os.makedirs(args.data_cache_dir, exist_ok=True)
     clustering_text = 'clustering' if args.with_clustering  else 'wo_clustering'
-    cache_dir = f"{args.data_cache_dir}/{args.dataset}/{args.training_method}_{clustering_text}"
+    str_ = 'only_test' if only_test else args.training_method
+    cache_dir = f"{args.data_cache_dir}/{args.dataset}/{str_}_{clustering_text}"
 
     if os.path.exists(cache_dir):
         ds = load_from_disk(str(cache_dir))
-        # (Optional) quick sanity check that splits exist
         if isinstance(ds, DatasetDict) and "train" in ds and "test" in ds:
             print(f"[cache] Loaded dataset from {cache_dir}")
             return ds
 
-    # No cache → create and save
-    ds = data_creation(args)
+    ds = data_creation(args, only_test)
     ds.save_to_disk(str(cache_dir))
     print(f"[cache] Saved dataset to {cache_dir}")
+    
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     return ds
 
 def add_new_correctness(args):
