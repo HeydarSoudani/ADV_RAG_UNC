@@ -239,9 +239,9 @@ def clustered_samples(args, df):
 def create_perefrence_pairs(
     clustered_df: pd.DataFrame,
     add_cross_queries: bool = False,
-    cross_samples: int = 2400,
-    near_ratio: float = 0.75, # For B
-    min_gap: float = 0.8,
+    cross_samples: int = 1600,
+    near_ratio: float = 0.8, # For B
+    min_gap: float = 0.6,
     seed: int = 42,
 ):
     rng = random.Random(seed)
@@ -252,14 +252,13 @@ def create_perefrence_pairs(
     intra_A = intra_B = intra_C = 0
     
     for _, row in clustered_df.iterrows():
-        qid, query, clusters = row["qid"], row["query"], row["candidates"]
-        if not isinstance(clusters, (list, tuple)) or len(clusters) < 2:
+        qid, query, candidates = row["qid"], row["query"], row["candidates"]
+        if not isinstance(candidates, (list, tuple)) or len(candidates) < 2:
             continue
         
-        # unpack clusters into uniform dicts
         samples = []
-        for cluster in clusters:
-            prediction, sum_conf, correctness, sq, thinks, docs, gens = cluster
+        for candidate in candidates:
+            prediction, sum_conf, correctness, sq, thinks, docs, gens = candidate
             s = {
                 "query": query,
                 "prediction": prediction,
@@ -386,11 +385,9 @@ def create_perefrence_pairs(
             pos_item = global_pos_pool[pos_idx]
             neg_item = global_neg_pool[neg_idx]
             synthetic_qid = f"{pos_item['qid']}-{neg_item['qid']}"
-            # merged_query = f"{pos_item['query']} || {neg_item['query']}"
             records.append({
                 "qid": synthetic_qid,
                 "pid": next_pid,
-                # "query": merged_query,
                 "positive_sample": pack_cluster(pos_item["sample"]),
                 "negative_sample": pack_cluster(neg_item["sample"]),
             })
@@ -408,11 +405,9 @@ def create_perefrence_pairs(
             pos_item = global_pos_pool[pos_idx]
             neg_item = global_neg_pool[neg_idx]
             synthetic_qid = f"{pos_item['qid']}-{neg_item['qid']}"
-            # merged_query = f"{pos_item['query']} || {neg_item['query']}"
             records.append({
                 "qid": synthetic_qid,
                 "pid": next_pid,
-                # "query": merged_query,
                 "positive_sample": pack_cluster(pos_item["sample"]),
                 "negative_sample": pack_cluster(neg_item["sample"]),
             })
@@ -471,7 +466,14 @@ def data_creation(args):
     train_df = merge_rag_systems_data(args, subsec='train')
     train_df = drop_all_same_correctness(train_df) # Filtering: Remove sample with all 0 or all 1
     train_df = clustered_samples(args, train_df)
-    train_preference_ds = create_perefrence_pairs(train_df, add_cross_queries=True)
+    train_preference_ds = create_perefrence_pairs(
+        train_df,
+        add_cross_queries=args.add_cross_queries,
+        cross_samples=args.cross_samples,
+        near_ratio=args.near_ratio,
+        min_gap=args.min_gap,
+        seed=args.seed
+    )
     
     # == Test setup ----------
     test_df = merge_rag_systems_data(args, subsec=args.subsec)
@@ -486,8 +488,6 @@ def data_creation(args):
 
 ### === Main ========================== 
 def data_preparation(args):
-    # pairwise-listwise   | clustring 
-    
     ### build_or_load_dataset
     os.makedirs(args.data_cache_dir, exist_ok=True)
     clustering_text = 'clustering' if args.with_clustering  else 'wo_clustering'
@@ -577,24 +577,24 @@ def get_prompt_template(prompt_format):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--selector_model_name_or_path', type=str, default='answerdotai/ModernBERT-large', choices=[
+    parser.add_argument('--selector_model_name_or_path', type=str, default='Qwen/Qwen3-Embedding-0.6B', choices=[
         'answerdotai/ModernBERT-large', 'BAAI/bge-large-en-v1.5', 'google/embeddinggemma-300m',
-        'Alibaba-NLP/gte-Qwen2-7B-instruct', 'Alibaba-NLP/gte-Qwen2-1.5B-instruct' # https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct
+        'Qwen/Qwen3-Embedding-0.6B', 'Qwen/Qwen3-Embedding-4B'
     ])
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--cache_dir', type=str, default='./cache/')
     parser.add_argument("--data_cache_dir", type=str, default="./run_rag_selector/datasets")
     parser.add_argument("--max_input_tokens", type=int, default=512)
-    parser.add_argument('--max_new_tokens', type=int, default=128)
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--max_new_tokens', type=int, default=512)
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--prompt_format', type=str, default='x_o_c_g_dc', choices=[
         'x_o', 'x_o_sq', 'x_o_th', 'x_o_dc', 'x_o_g', 'x_o_g_sq', 'x_o_g_dc', 'x_o_sq_dc', 'x_o_sq_th_dc',
         'x_o_c', 'x_o_c_sq', 'x_o_c_th', 'x_o_c_dc', 'x_o_c_g', 'x_o_c_g_sq', 'x_o_c_g_dc', 'x_o_c_sq_dc', 'x_o_c_sq_th_dc',
     ])
-    parser.add_argument('--n_docs_prompt', type=int, default=3)
+    parser.add_argument('--n_docs_prompt', type=int, default=2)
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge', 'reasonir'
     ])
@@ -602,14 +602,26 @@ if __name__ == "__main__":
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     # 
-    parser.add_argument('--get_ideal', action='store_false')
-    parser.add_argument('--with_training', action='store_true')
-    parser.add_argument('--with_clustering', action='store_true')
-    parser.add_argument('--confidence_score_injection', type=str, default='in_input', choices=['in_input', 'in_representation'])
+    parser.add_argument('--get_ideal', action='store_true')
+    parser.add_argument('--with_training', action='store_false')
+    parser.add_argument('--with_clustering', action='store_false')
+    parser.add_argument('--confidence_score_injection', type=str, default='in_representation', choices=['in_input', 'in_representation'])
     parser.add_argument('--training_method', type=str, default='pairwise', choices=['pairwise', 'listwise'])
     # 
+    parser.add_argument('--is_encoder_frozen', action='store_true')
+    parser.add_argument('--num_train_epochs', type=int, default=8)
+    parser.add_argument('--learning_rate', type=float, default="2e-5")
+    parser.add_argument('--per_device_train_batch_size', type=int, default=4)
+    parser.add_argument('--per_device_eval_batch_size', type=int, default=4)
+    # 
+    # Dataset Creation
+    parser.add_argument('--add_cross_queries', action='store_false')
+    parser.add_argument('--cross_samples', type=int, default=2000)
+    parser.add_argument('--near_ratio', type=float, default=0.8, help="For condition B")
+    parser.add_argument('--min_gap', type=float, default=0.5, help="")
+    # 
     parser.add_argument('--run_train', type=str, default='run_1 (rag_methods_2k)')
-    parser.add_argument('--run_test', type=str, default='run_2 (rag_methods_1k)')
+    parser.add_argument('--run_test', type=str, default='run_3 (rag_methods_500)')
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)

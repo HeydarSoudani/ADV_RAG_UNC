@@ -3,6 +3,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import gc
 import json
 import torch
 import argparse
@@ -26,6 +27,7 @@ def main(args):
         With clustering:  {args.with_clustering}
         Conf Score Inj:   {args.confidence_score_injection}
         Training method:  {args.training_method}
+        Is Encoder Frozen {args.is_encoder_frozen}
         Seed:             {args.seed}
         Run train:        {args.run_train}
         Run test:         {args.run_test}
@@ -34,7 +36,11 @@ def main(args):
     if args.get_ideal:
         get_ideal_selector(args)
     else:
-        dataset = data_preparation(args)    
+        dataset = data_preparation(args)
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+         
         if args.with_training:
             training(args, dataset)
             inference(args, dataset)
@@ -82,15 +88,15 @@ def stat_testing(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--selector_model_name_or_path', type=str, default='google/embeddinggemma-300m', choices=[
+    parser.add_argument('--selector_model_name_or_path', type=str, default='Qwen/Qwen3-Embedding-0.6B', choices=[
         'answerdotai/ModernBERT-large', 'BAAI/bge-large-en-v1.5', 'google/embeddinggemma-300m',
-        'Alibaba-NLP/gte-Qwen2-7B-instruct', 'Alibaba-NLP/gte-Qwen2-1.5B-instruct' # https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct
+        'Qwen/Qwen3-Embedding-0.6B', 'Qwen/Qwen3-Embedding-4B'
     ])
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--cache_dir', type=str, default='./cache/')
     parser.add_argument("--data_cache_dir", type=str, default="./run_rag_selector/datasets")
     parser.add_argument("--max_input_tokens", type=int, default=512)
-    parser.add_argument('--max_new_tokens', type=int, default=128)
+    parser.add_argument('--max_new_tokens', type=int, default=512)
     parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
@@ -99,7 +105,7 @@ if __name__ == "__main__":
         'x_o', 'x_o_sq', 'x_o_th', 'x_o_dc', 'x_o_g', 'x_o_g_sq', 'x_o_g_dc', 'x_o_sq_dc', 'x_o_sq_th_dc',
         'x_o_c', 'x_o_c_sq', 'x_o_c_th', 'x_o_c_dc', 'x_o_c_g', 'x_o_c_g_sq', 'x_o_c_g_dc', 'x_o_c_sq_dc', 'x_o_c_sq_th_dc',
     ])
-    parser.add_argument('--n_docs_prompt', type=int, default=3)
+    parser.add_argument('--n_docs_prompt', type=int, default=2)
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge', 'reasonir'
     ])
@@ -113,13 +119,20 @@ if __name__ == "__main__":
     parser.add_argument('--confidence_score_injection', type=str, default='in_representation', choices=['in_input', 'in_representation'])
     parser.add_argument('--training_method', type=str, default='pairwise', choices=['pairwise', 'listwise'])
     # 
+    parser.add_argument('--is_encoder_frozen', action='store_true')
     parser.add_argument('--num_train_epochs', type=int, default=8)
     parser.add_argument('--learning_rate', type=float, default="2e-5")
-    parser.add_argument('--per_device_train_batch_size', type=int, default=8)
-    parser.add_argument('--per_device_eval_batch_size', type=int, default=8)
+    parser.add_argument('--per_device_train_batch_size', type=int, default=4)
+    parser.add_argument('--per_device_eval_batch_size', type=int, default=4)
+    # 
+    # Dataset Creation
+    parser.add_argument('--add_cross_queries', action='store_false')
+    parser.add_argument('--cross_samples', type=int, default=2000)
+    parser.add_argument('--near_ratio', type=float, default=0.8, help="For condition B")
+    parser.add_argument('--min_gap', type=float, default=0.5, help="")
     # 
     parser.add_argument('--run_train', type=str, default='run_1 (rag_methods_2k)')
-    parser.add_argument('--run_test', type=str, default='run_2 (rag_methods_1k)')
+    parser.add_argument('--run_test', type=str, default='run_3 (rag_methods_500)')
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)

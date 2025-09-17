@@ -61,7 +61,7 @@ def training(args, dataset):
     )
     tokenized_dataset = dataset.map(preproc_fn, with_indices=True)
     data_collator = trainer_model.DataCollator(tokenizer)
-    model = trainer_model.RewardRanker(args.selector_model_name_or_path)
+    model = trainer_model.RewardRanker(args, args.selector_model_name_or_path)
     
     training_args = TrainingArguments(
         output_dir=args.saved_model_name_or_path,
@@ -85,7 +85,18 @@ def training(args, dataset):
         save_total_limit=2, 
         metric_for_best_model="acc@1",
         report_to=[],
-        seed=args.seed
+        seed=args.seed,
+        
+        # MultiGPU
+        ddp_find_unused_parameters=False,    # faster if no unused params
+        # dataloader_num_workers=4,
+        dataloader_num_workers=0,
+        eval_accumulation_steps=1,
+        # predict_with_generate=False,
+        bf16=True,                           # or fp16=True if no bf16
+        torch_compile=False,                 # enable if you’ve profiled it
+        dataloader_drop_last = False
+        
     )
     
     trainer = trainer_model.RewardTrainer(
@@ -97,4 +108,5 @@ def training(args, dataset):
         data_collator=data_collator,
         compute_metrics=trainer_model.compute_metrics,
     )
+
     trainer.train()

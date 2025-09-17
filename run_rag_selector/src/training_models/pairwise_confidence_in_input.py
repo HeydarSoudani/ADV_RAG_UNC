@@ -24,7 +24,6 @@ __all__ = [
 def preprocess_function(
     example, idx, *,
     tokenizer, prompt_template, args,
-    max_length=5000
 ):
     # -------- TRAIN MODE: pairwise pos/neg --------
     if "positive_sample" in example and "negative_sample" in example:
@@ -34,7 +33,7 @@ def preprocess_function(
         neg_conf = negative_sample_tuple[2]
         
         pos_sample = prompt_template.format(
-            sep_token=tokenizer.sep_token,
+            sep_token=tokenizer.sep_token if tokenizer.sep_token  else '<|sep|>',
             query=positive_sample_tuple[0],
             answer=positive_sample_tuple[1],
             conf_score=pos_conf,
@@ -44,7 +43,7 @@ def preprocess_function(
             generations=' '.join(str(g) for g in positive_sample_tuple[7] if g),
         )
         neg_sample = prompt_template.format(
-            sep_token=tokenizer.sep_token,
+            sep_token=tokenizer.sep_token if tokenizer.sep_token  else '<|sep|>',
             query=negative_sample_tuple[0],
             answer=negative_sample_tuple[1],
             conf_score=neg_conf,
@@ -53,8 +52,8 @@ def preprocess_function(
             docs=' '.join(str(g) for g in negative_sample_tuple[6][:args.n_docs_prompt] if g),
             generations=' '.join(str(g) for g in negative_sample_tuple[7] if g),
         )
-        pos_encoded = tokenizer(pos_sample, max_length=max_length, padding=False, truncation=True)
-        neg_encoded = tokenizer(neg_sample, max_length=max_length, padding=False, truncation=True)
+        pos_encoded = tokenizer(pos_sample, max_length=args.max_new_tokens, padding=False, truncation=True)
+        neg_encoded = tokenizer(neg_sample, max_length=args.max_new_tokens, padding=False, truncation=True)
         
         return {
             "mode": "train",
@@ -70,7 +69,7 @@ def preprocess_function(
         clusters_list = ast.literal_eval(example['candidates'])
         for cluster in clusters_list:
             sample = prompt_template.format(
-                sep_token=tokenizer.sep_token,
+                sep_token=tokenizer.sep_token if tokenizer.sep_token  else '<|sep|>',
                 query=example['query'],
                 answer=cluster[0],
                 conf_score=cluster[1],
@@ -79,7 +78,7 @@ def preprocess_function(
                 docs=' '.join(str(g) for g in cluster[5][:args.n_docs_prompt] if g),
                 generations=' '.join(str(g) for g in cluster[6] if g),
             )
-            sample_encoded = tokenizer(sample, max_length=max_length, padding=False, truncation=True)
+            sample_encoded = tokenizer(sample, max_length=args.max_new_tokens, padding=False, truncation=True)
             cand_ids.append(sample_encoded["input_ids"])
             cand_masks.append(sample_encoded["attention_mask"])
             cand_is_correct.append(int(cluster[2]))
@@ -239,16 +238,23 @@ class RewardRanker(nn.Module):
     """
     def __init__(
         self,
+        args,
         model_name: str = "answerdotai/ModernBERT-base",
         head_hidden: int = 256,
         dropout: float = 0.1,
         use_mean_pool: bool = True,  # safer default
     ):
         super().__init__()
+        self.is_encoder_frozen = args.is_encoder_frozen
         self.encoder = AutoModel.from_pretrained(model_name)
+        if self.is_encoder_frozen:
+            for p in self.encoder.parameters():
+                p.requires_grad = False
+            self.encoder.eval()
+        
         self.use_mean_pool = use_mean_pool
         h = self.encoder.config.hidden_size
-
+        
         self.head = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(h, head_hidden),
@@ -267,7 +273,13 @@ class RewardRanker(nn.Module):
         if token_type_ids is not None:
             kwargs["token_type_ids"] = token_type_ids
         out = self.encoder(**kwargs)
-
+        
+        if self.is_encoder_frozen:
+            with torch.no_grad():
+                out = self.encoder(**kwargs)
+        else:
+            out = self.encoder(**kwargs)
+        
         if self.use_mean_pool:
             last_hidden = out.last_hidden_state  # [B, L, H]
             mask = attention_mask.unsqueeze(-1).float()  # [B, L, 1]
