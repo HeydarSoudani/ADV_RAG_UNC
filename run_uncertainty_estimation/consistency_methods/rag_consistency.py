@@ -39,6 +39,7 @@ class RagConsistency:
             self.retriever = DenseRetriever(args)
             
         # === Models ===============================
+        self.action_set = args.action_set
         self.rag_model = rag_model
         self.secondary_model = secondary_model
         self.secondary_tokenizer = secondary_tokenizer
@@ -51,8 +52,21 @@ class RagConsistency:
         
     
     def get_masked_traces(self, qid, question, prediction, trace):
-        actions = ['query_paraphrasing', 'adding_critical_thought', 'answer_validation'] #  'answer_validation', 'doc_shuffling'
-        # actions = ['adding_critical_thought']
+        
+        if self.action_set == 'qp':
+            actions = ['query_paraphrasing']
+        elif self.action_set == 'ct':
+            actions = ['adding_critical_thought']
+        elif self.action_set == 'av':
+            actions = ['answer_validation']
+        elif self.action_set == 'qp_ct':
+            actions = ['query_paraphrasing', 'adding_critical_thought']
+        elif self.action_set == 'qp_av':
+            actions = ['query_paraphrasing', 'answer_validation']
+        elif self.action_set == 'ct_av':
+            actions = ['adding_critical_thought', 'answer_validation']
+        elif self.action_set == 'qp_ct_av':
+            actions = ['query_paraphrasing', 'adding_critical_thought', 'answer_validation']
         
         # -- Read search-query indices
         masked_traces, answer_output_list = [], []    

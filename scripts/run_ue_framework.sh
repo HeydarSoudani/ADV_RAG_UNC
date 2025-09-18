@@ -3,8 +3,8 @@
 #SBATCH --ntasks=1
 #SBATCH --gpus=4
 #SBATCH --cpus-per-task=4
-#SBATCH --partition=gpu_a100
-#SBATCH --time=6:30:00
+#SBATCH --partition=gpu_h100
+#SBATCH --time=2:00:00
 #SBATCH --mem=80GB
 #SBATCH --output=script_logging/slurm_%A.out
 
@@ -13,21 +13,22 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 
 ### === Set variables ==========================
-# model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
+model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
 # model_name_or_path="agentrl/ReSearch-Qwen-7B-Instruct"
-model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
+# model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 secondary_model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="musique"
+dataset="hotpotqa"
 subsec="dev"
 fraction_of_data_to_use=2000.0
 retriever_name="rerank_l6"
 index_path="data/search_r1_files/bm25"
 retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
-rag_method="search_o1"
+rag_method="search_r1"
 query_formulation="direct"
 hallucination_threshold=0.08
 consistency_method="rag_consistency"
-run="run_2 (rag_methods_1k)"
+action_set="qp"
+run="run_3 (rag_methods_500)"
 n_generations=10
 
 
@@ -45,6 +46,7 @@ accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_uncertainty_estimation/run_f
     --query_formulation "$query_formulation" \
     --hallucination_threshold "$hallucination_threshold" \
     --consistency_method "$consistency_method" \
+    --action_set "$action_set" \
     --n_generations "$n_generations" \
     --run "$run"
 
@@ -62,6 +64,7 @@ accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_uncertainty_estimation/run_f
 
 ### consistency_method:
     # 'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
+    # 'qp', 'ct', 'av', 'qp_ct', 'qp_av', 'ct_av', 'qp_ct_av'
 
 ### retriever_model:
     # 'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'

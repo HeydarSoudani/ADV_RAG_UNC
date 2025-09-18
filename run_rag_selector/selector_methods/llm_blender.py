@@ -18,8 +18,12 @@ def get_llm_blender(args, dataset):
             qid, query, gt_answers = sample['qid'], sample['query'], ast.literal_eval(sample['gt_answers'])
             candidates_str = sample.get("candidates", None)
             candidates = ast.literal_eval(candidates_str)
-            # predictions = [f"{c[0]}" for c in candidates]
-            predictions = [f"{c[0]} with confidence {str(c[1])}" for c in candidates]
+            
+            if args.with_confidence:
+                predictions = [f"{c[0]} with confidence {str(c[1])}" for c in candidates]
+            else:
+                predictions = [f"{c[0]}" for c in candidates]
+            
             ranks = blender.rank([query], [predictions], return_scores=False, batch_size=1)[0]
             best_idx = np.where(ranks == 1)[0][0]
             

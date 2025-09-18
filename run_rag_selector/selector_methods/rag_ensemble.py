@@ -28,23 +28,27 @@ class RAGSelector:
         
         input_text += f"<question>{question}</question>\n"
         for i, c in enumerate(candidates):
-            input_text += f"<candidate>{c[0]}, with confidence {c[1]}</candidate>\n"    
+            if self.args.with_confidence:
+                input_text += f"<candidate>{c[0]}, with confidence {c[1]}</candidate>\n"    
+            else:
+                input_text += f"<candidate>{c[0]}</candidate>\n"    
         
         return input_text
 
     # def get_instruction(self, question, candidates):
     #     input_text = f"Here is a question and some external data from {len(candidates)} systems information:\n"
     #     for i, c in enumerate(candidates):
-    #         input_text += f"[{i+1}] {c[0]}, with confidence {c[1]}\n"
-        
+    #         if self.args.with_confidence:
+    #             input_text += f"System [{i+1}] {c[0]}, with confidence {c[1]}\n"
+    #         else:
+    #             input_text += f"System [{i+1}] {c[0]}\n"
     #     input_text += f"\nQuestion: {question}\n\n"
     #     input_text += "Your task is to answer the question based on the given information."
     #     input_text += "You should first output your reasoning process and then provide the final answer." 
     #     input_text += "The output format of reasoning process and final answer should be enclosed within <think> </think> and <answer> </answer> tags, respectively,"
     #     input_text += "i.e., <think> reasoning process here </think> <answer> a final answer here </answer>\n"
     #     input_text += "Only output your reasoning process in <think></think> and your answer in <answer></answer>, and do not output any other words."
-        
-    #     return input_text
+        # return input_text
 
     def generate(self,
         messages,
@@ -106,7 +110,7 @@ class RAGSelector:
         return think, prediction
 
 
-def get_prompt_based_selector(args, dataset):
+def get_rag_ensemble(args, dataset):
     generation_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, dtype=torch.bfloat16).to(args.device)
     generation_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
     rag_selector = RAGSelector(generation_model, generation_tokenizer, args.device, args)
@@ -121,7 +125,7 @@ def get_prompt_based_selector(args, dataset):
             candidates_str = sample.get("candidates", None)
             candidates = ast.literal_eval(candidates_str)
             candidates_ = [(c[0], c[1]) for c in candidates]
-            
+    
             think, prediction = rag_selector.inference(query, candidates_)
             
             if len(gt_answers) > 0:

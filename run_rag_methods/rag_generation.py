@@ -254,9 +254,9 @@ def subsample_generation(args):
                     qids.append(match.group(1))
         return qids
 
-    sample_size = 1000
+    sample_size = 500
     src_file = args.inference_results_file
-    run_ = f"run_2 (rag_methods_1k)"
+    run_ = f"run_3 (rag_methods_500)"
     
     # Subsampling qids
     all_qids = get_all_qids_from_jsonl(src_file)
@@ -328,7 +328,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='cot_single_retrieval', choices=[
+    parser.add_argument('--rag_method', type=str, default='dragin', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',

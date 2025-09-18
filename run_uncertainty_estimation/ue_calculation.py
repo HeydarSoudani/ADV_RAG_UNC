@@ -37,6 +37,7 @@ def ue_generation(args):
             Retriever:     {args.retriever_name} / ({args.retrieval_model_path})
             RAG Method:    {args.rag_method}
             Con. Method:   {args.consistency_method}
+            Action Set:    {args.action_set}
             Run:           {args.run}
             Seed:          {args.seed}
         """.replace('            ', ''))
@@ -150,27 +151,40 @@ def ue_generation(args):
     # === Main Loop ==============================
     accelerator.wait_for_everyone()
     with accelerator.split_between_processes(filtered_sorted_query_ids) as sorted_query_ids_shard:
-        consistency_results_file_ranked = (
-            f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl"
-            if args.rag_method in ['flare', 'dragin'] 
-            else f"{args.output_dir}/{args.consistency_method}_results_rank{accelerator.process_index}.jsonl"
-        )
+        
+        # --- Consistency file -----------
+        if args.rag_method in ['flare', 'dragin']:
+            if args.consistency_method == "rag_consistency":
+                consistency_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl"
+            else:
+                consistency_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl"
+        else:
+            if args.consistency_method == "rag_consistency":
+                consistency_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_results_rank{accelerator.process_index}.jsonl"
+            else:
+                consistency_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_results_rank{accelerator.process_index}.jsonl"
         cons_f = open(consistency_results_file_ranked, 'w', encoding='utf-8')
 
         trace_f = None
         write_traces = args.consistency_method != 'fa_consistency'
         if write_traces and not are_traces_generated:
-            masked_traces_results_file_ranked = (
-                f"{args.output_dir}/{args.consistency_method}_masked_traces_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl"
-                if args.rag_method in ['flare', 'dragin'] 
-                else f"{args.output_dir}/{args.consistency_method}_masked_traces_results_rank{accelerator.process_index}.jsonl"
-            )
+            if args.rag_method in ['flare', 'dragin']:
+                if args.consistency_method == "rag_consistency":
+                    masked_traces_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_masked_traces_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl"
+                else:
+                    masked_traces_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_masked_traces_results_th{args.hallucination_threshold}_rank{accelerator.process_index}.jsonl"
+            else:
+                if args.consistency_method == "rag_consistency":
+                    masked_traces_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_masked_traces_results_rank{accelerator.process_index}.jsonl"
+                else:
+                    masked_traces_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_masked_traces_results_rank{accelerator.process_index}.jsonl"
+                
             trace_f = open(masked_traces_results_file_ranked, 'w', encoding='utf-8')
-    
+
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                # if i == 3:
-                #     break
+                if i == 3:
+                    break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 prediction = prediction.strip() if prediction else prediction 
@@ -263,11 +277,23 @@ def ue_generation(args):
                 trace_f.close()
 
 def merge_result_files(args):
-    consistency_results_file_ranked = (
-        f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}_rank*.jsonl"
-        if args.rag_method in ['flare', 'dragin'] 
-        else f"{args.output_dir}/{args.consistency_method}_results_rank*.jsonl"
-    )
+    
+    if args.rag_method in ['flare', 'dragin']:
+        if args.consistency_method == "rag_consistency":
+            consistency_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_results_th{args.hallucination_threshold}_rank*.jsonl"
+        else:
+            consistency_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}_rank*.jsonl"
+    else:
+        if args.consistency_method == "rag_consistency":
+            consistency_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_results_rank*.jsonl"
+        else:
+            consistency_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_results_rank*.jsonl"
+    
+    # consistency_results_file_ranked = (
+    #     f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}_rank*.jsonl"
+    #     if args.rag_method in ['flare', 'dragin'] 
+    #     else f"{args.output_dir}/{args.consistency_method}_results_rank*.jsonl"
+    # )
     consistency_results_shard_files = sorted(glob.glob(consistency_results_file_ranked))
     with open(args.consistency_results_file, "a") as fout:
         for shard_file in consistency_results_shard_files:
@@ -281,11 +307,22 @@ def merge_result_files(args):
          
     write_traces = args.consistency_method != 'fa_consistency'   
     if write_traces:
-        masked_traces_results_file_ranked = (
-            f"{args.output_dir}/{args.consistency_method}_masked_traces_results_th{args.hallucination_threshold}_rank*.jsonl"
-            if args.rag_method in ['flare', 'dragin'] 
-            else f"{args.output_dir}/{args.consistency_method}_masked_traces_results_rank*.jsonl"
-        )
+        # masked_traces_results_file_ranked = (
+        #     f"{args.output_dir}/{args.consistency_method}_masked_traces_results_th{args.hallucination_threshold}_rank*.jsonl"
+        #     if args.rag_method in ['flare', 'dragin'] 
+        #     else f"{args.output_dir}/{args.consistency_method}_masked_traces_results_rank*.jsonl"
+        # )
+        if args.rag_method in ['flare', 'dragin']:
+            if args.consistency_method == "rag_consistency":
+                masked_traces_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_masked_traces_results_th{args.hallucination_threshold}_rank*.jsonl"
+            else:
+                masked_traces_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_masked_traces_results_th{args.hallucination_threshold}_rank*.jsonl"
+        else:
+            if args.consistency_method == "rag_consistency":
+                masked_traces_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_masked_traces_results_rank*.jsonl"
+            else:
+                masked_traces_results_file_ranked = f"{args.output_dir}/{args.consistency_method}_masked_traces_results_rank*.jsonl"
+        
         masked_traces_results_shard_files = sorted(glob.glob(masked_traces_results_file_ranked))
         with open(args.masked_traces_results_file, "a") as fout:
             for shard_file in masked_traces_results_shard_files:
@@ -438,10 +475,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='train', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -493,6 +530,9 @@ if __name__ == "__main__":
     parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
         'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
     ])
+    parser.add_argument("--action_set", type=str, default='qp', choices=[
+        'qp', 'ct', 'av', 'qp_ct', 'qp_av', 'ct_av', 'qp_ct_av'
+    ])
     parser.add_argument("--n_generations", type=int, default=10)
     parser.add_argument("--mask_left_boundary", type=float, default=0.1)
     parser.add_argument("--mask_right_boundary", type=float, default=0.4)
@@ -500,7 +540,7 @@ if __name__ == "__main__":
     
     # Others
     parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--run', type=str, default='run_1 (rag_methods_2k)')
+    parser.add_argument('--run', type=str, default='run_3 (rag_methods_500)')
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--retry", type=int, default=3)
     parser.add_argument('--use_counter', action='store_false')
@@ -517,14 +557,30 @@ if __name__ == "__main__":
     
     if args.rag_method in ['flare', 'dragin']:
         args.inference_results_file = f"{args.output_dir}/inference_results_th{args.hallucination_threshold}.jsonl"
-        args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}.jsonl"
+        
+        if args.consistency_method == "rag_consistency":
+            args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_results_th{args.hallucination_threshold}.jsonl"
+        else:
+            args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results_th{args.hallucination_threshold}.jsonl"
+        
         if args.consistency_method != "fa_consistency":
-            args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces_th{args.hallucination_threshold}.jsonl"
+            if args.consistency_method == "rag_consistency":
+                args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_masked_traces_th{args.hallucination_threshold}.jsonl"
+            else:
+                args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces_th{args.hallucination_threshold}.jsonl"
     else:
         args.inference_results_file = f"{args.output_dir}/inference_results.jsonl"
-        args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results.jsonl"
+        
+        if args.consistency_method == "rag_consistency":
+            args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_results.jsonl"
+        else:
+            args.consistency_results_file = f"{args.output_dir}/{args.consistency_method}_results.jsonl"
+        
         if args.consistency_method != "fa_consistency":
-            args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces.jsonl"
+            if args.consistency_method == "rag_consistency":
+                args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_{args.action_set}_masked_traces.jsonl"
+            else:
+                args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces.jsonl"
         
     # === Prompt files =============
     args.query_decomposition_prompt_file = "run_mcts/run_mcts_two_actions/prompts/query_decomposition_prompt_template.txt"
