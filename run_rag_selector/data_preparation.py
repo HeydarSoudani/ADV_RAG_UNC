@@ -515,9 +515,8 @@ def data_preparation(args, only_test=False):
 
     if os.path.exists(cache_dir):
         ds = load_from_disk(str(cache_dir))
-        if isinstance(ds, DatasetDict) and "train" in ds and "test" in ds:
-            print(f"[cache] Loaded dataset from {cache_dir}")
-            return ds
+        print(f"[cache] Loaded dataset from {cache_dir}")
+        return ds
 
     ds = data_creation(args, only_test)
     ds.save_to_disk(str(cache_dir))
@@ -600,15 +599,15 @@ def get_prompt_template(prompt_format):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--selector_model_name_or_path', type=str, default='Qwen/Qwen3-Embedding-0.6B', choices=[
+    parser.add_argument('--selector_model_name_or_path', type=str, default='answerdotai/ModernBERT-large', choices=[
         'answerdotai/ModernBERT-large', 'BAAI/bge-large-en-v1.5', 'google/embeddinggemma-300m',
         'Qwen/Qwen3-Embedding-0.6B', 'Qwen/Qwen3-Embedding-4B'
     ])
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--cache_dir', type=str, default='./cache/')
     parser.add_argument("--data_cache_dir", type=str, default="./run_rag_selector/datasets")
-    parser.add_argument("--max_input_tokens", type=int, default=512)
-    parser.add_argument('--max_new_tokens', type=int, default=512)
+    parser.add_argument("--max_input_tokens", type=int, default=1024)
+    parser.add_argument('--max_new_tokens', type=int, default=1024)
     parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
@@ -625,19 +624,21 @@ if __name__ == "__main__":
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     # 
-    parser.add_argument('--get_ideal', action='store_true')
-    parser.add_argument('--with_training', action='store_false')
+    parser.add_argument('--ensemble_method', default='prompt', choices=[
+        'random', 'prompt', 'llm_blender', 'ideal', 
+        'confidence_based_wo_training', 'confidence_based_w_training'
+    ])
     parser.add_argument('--with_clustering', action='store_false')
-    parser.add_argument('--confidence_score_injection', type=str, default='in_representation', choices=['in_input', 'in_representation'])
+    parser.add_argument('--confidence_score_injection', type=str, default='in_input', choices=['in_input', 'in_representation'])
     parser.add_argument('--training_method', type=str, default='pairwise', choices=['pairwise', 'listwise'])
     # 
     parser.add_argument('--is_encoder_frozen', action='store_true')
-    parser.add_argument('--num_train_epochs', type=int, default=8)
+    parser.add_argument('--num_train_epochs', type=int, default=12)
     parser.add_argument('--learning_rate', type=float, default="2e-5")
     parser.add_argument('--per_device_train_batch_size', type=int, default=4)
     parser.add_argument('--per_device_eval_batch_size', type=int, default=4)
     # 
-    # Dataset Creation
+    # Training Dataset Creation
     parser.add_argument('--add_cross_queries', action='store_false')
     parser.add_argument('--cross_samples', type=int, default=2000)
     parser.add_argument('--near_ratio', type=float, default=0.8, help="For condition B")
@@ -664,7 +665,7 @@ if __name__ == "__main__":
     args.semantic_equivalence_prompt_file = "run_mcts/run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
     
     set_seed(args.seed)
-    add_new_correctness(args)
+    # add_new_correctness(args)
     # main(args)
     
     

@@ -23,34 +23,30 @@ def main(args):
     print("\n== RAG Selector ...")
     print(f"""
         Ensemble M.:    {args.ensemble_method}
-        Selector M.:    {args.selector_model_name_or_path}
+        W. clustering:  {args.with_clustering}
         Dataset & Pro.: {args.dataset} / {args.subsec} ({args.prompt_format})
         Consis. Meth:   {args.consistency_method}
-        W. clustering:  {args.with_clustering}
+        -----
+        Selector M.:    {args.selector_model_name_or_path}
         Confidence Inj: {args.confidence_score_injection}
         Training M.:    {args.training_method}
         Enc. Frozen:    {args.is_encoder_frozen}
+        -----
         Random Seed:    {args.seed}
         Run train:      {args.run_train}
         Run test:       {args.run_test}
     """.replace('        ', ''))
     
+    dataset = data_preparation(args, only_test=True)
     if args.ensemble_method == 'random':
-        get_random_selector(args)
-    
+        get_random_selector(args, dataset)
     elif args.ensemble_method == 'prompt':
-        dataset = data_preparation(args, only_test=True)
         get_prompt_based_selector(args, dataset)
-    
     elif args.ensemble_method == 'ideal':
         get_ideal_selector(args)
-
     elif args.ensemble_method == 'llm_blender':
-        dataset = data_preparation(args, only_test=True)
         get_llm_blender(args, dataset)
-    
     elif args.ensemble_method == 'confidence_based_wo_training':
-        dataset = data_preparation(args, only_test=True)
         wo_training_selector(args, dataset)
     
     elif args.ensemble_method == 'confidence_based_w_training':
@@ -109,7 +105,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_cache_dir", type=str, default="./run_rag_selector/datasets")
     parser.add_argument("--max_input_tokens", type=int, default=1024)
     parser.add_argument('--max_new_tokens', type=int, default=1024)
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
@@ -125,11 +121,11 @@ if __name__ == "__main__":
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     # 
-    parser.add_argument('--ensemble_method', default='llm_blender', choices=[
+    parser.add_argument('--ensemble_method', default='prompt', choices=[
         'random', 'prompt', 'llm_blender', 'ideal', 
         'confidence_based_wo_training', 'confidence_based_w_training'
     ])
-    parser.add_argument('--with_clustering', action='store_false')
+    parser.add_argument('--with_clustering', action='store_true')
     parser.add_argument('--confidence_score_injection', type=str, default='in_input', choices=['in_input', 'in_representation'])
     parser.add_argument('--training_method', type=str, default='pairwise', choices=['pairwise', 'listwise'])
     # 
@@ -139,7 +135,7 @@ if __name__ == "__main__":
     parser.add_argument('--per_device_train_batch_size', type=int, default=4)
     parser.add_argument('--per_device_eval_batch_size', type=int, default=4)
     # 
-    # Dataset Creation
+    # Training Dataset Creation
     parser.add_argument('--add_cross_queries', action='store_false')
     parser.add_argument('--cross_samples', type=int, default=2000)
     parser.add_argument('--near_ratio', type=float, default=0.8, help="For condition B")
@@ -164,14 +160,17 @@ if __name__ == "__main__":
     # === Add variables
     args.rag_methods = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']
     args.semantic_equivalence_prompt_file = "run_mcts/run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
-    
-    model_ = args.selector_model_name_or_path.split('/')[-1]
-    args.saved_model_name_or_path = f"run_rag_selector/models/{args.dataset}/{args.training_method}_confidence_{args.confidence_score_injection}_{args.prompt_format}/{model_}"
-    
+     
     clustering_text = 'clustering' if args.with_clustering  else 'wo_clustering'
     results_dir = f"run_output/{args.run_test}/rag_selector/{args.dataset}_{args.subsec}_{args.consistency_method}"
     os.makedirs(results_dir, exist_ok=True)
-    args.save_results_path = f"{results_dir}/{args.training_method}_confidence_{args.confidence_score_injection}_{clustering_text}_{args.prompt_format}_results.jsonl"
+    
+    if args.ensemble_method == 'confidence_based_w_training':
+        model_ = args.selector_model_name_or_path.split('/')[-1]
+        args.saved_model_name_or_path = f"run_rag_selector/models/{args.dataset}/{args.training_method}_confidence_{args.confidence_score_injection}_{args.prompt_format}/{model_}"
+        args.save_results_path = f"{results_dir}/{args.training_method}_confidence_{args.confidence_score_injection}_{clustering_text}_{args.prompt_format}_results.jsonl"
+    else:
+        args.save_results_path = f"{results_dir}/{args.ensemble_method}_{clustering_text}_results.jsonl"
     
     args.data_cache_dir = f"{args.data_cache_dir}/{args.run_test}"
     os.makedirs(args.data_cache_dir, exist_ok=True)

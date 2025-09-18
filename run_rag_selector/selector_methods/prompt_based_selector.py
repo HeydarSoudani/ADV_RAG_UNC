@@ -17,36 +17,34 @@ class RAGSelector:
         self.device = device
         self.args = args
 
-    # def get_instruction(self, question, candidates):
-    #     input_text = ""
-    #     input_text += "You are an expert in the final answer selection task.\n"
-    #     input_text += "Your task is to identify and select the best answer to the question from a list of candidates, each with a given confidence score.\n"
-    #     input_text += "You must select the final answer from the candidates provided. Do not generate a new one.\n\n"            
-    #     input_text += "Your output must include:\n"
-    #     input_text += "- Exactly one reasoning step explaining your choice, wrapped in a single pair of <think> and </think> tags.\n"
-    #     input_text += "- The selected final answer, wrapped in a single pair of <prediction> and </prediction> tags.\n\n"
-        
-    #     input_text += f"<question>{question}</question>\n"
-    #     input_text += "<candidates>\n"
-    #     for i, c in enumerate(candidates):
-    #         input_text += f"[{i+1}] {c[0]}, with confidence {c[1]}\n"    
-    #     input_text += "</candidates>\n"
-        
-    #     return input_text
-
     def get_instruction(self, question, candidates):
-        input_text = f"Here is a question and some external data from {len(candidates)} systems information:\n"
-        for i, c in enumerate(candidates):
-            input_text += f"[{i+1}] {c[0]}, with confidence {c[1]}\n"
+        input_text = ""
+        input_text += "You are an expert in the final answer selection task.\n"
+        input_text += "Your task is to identify and select the best answer to the question from a list of candidates, each with a given confidence score.\n"
+        input_text += "You must select the final answer from the candidates provided. Do not generate a new one.\n\n"            
+        input_text += "Your output must include:\n"
+        input_text += "- Exactly one reasoning step explaining your choice, wrapped in a single pair of <think> and </think> tags.\n"
+        input_text += "- The selected final answer, wrapped in a single pair of <answer> and </answer> tags.\n\n"
         
-        input_text += f"\nQuestion: {question}\n\n"
-        input_text += "Your task is to answer the question based on the given information."
-        input_text += "You should first output your reasoning process and then provide the final answer." 
-        input_text += "The output format of reasoning process and final answer should be enclosed within <think> </think> and <answer> </answer> tags, respectively,"
-        input_text += "i.e., <think> reasoning process here </think> <answer> a final answer here </answer>\n"
-        input_text += "Only output your reasoning process in <think></think> and your answer in <answer></answer>, and do not output any other words."
+        input_text += f"<question>{question}</question>\n"
+        for i, c in enumerate(candidates):
+            input_text += f"<candidate>{c[0]}, with confidence {c[1]}</candidate>\n"    
         
         return input_text
+
+    # def get_instruction(self, question, candidates):
+    #     input_text = f"Here is a question and some external data from {len(candidates)} systems information:\n"
+    #     for i, c in enumerate(candidates):
+    #         input_text += f"[{i+1}] {c[0]}, with confidence {c[1]}\n"
+        
+    #     input_text += f"\nQuestion: {question}\n\n"
+    #     input_text += "Your task is to answer the question based on the given information."
+    #     input_text += "You should first output your reasoning process and then provide the final answer." 
+    #     input_text += "The output format of reasoning process and final answer should be enclosed within <think> </think> and <answer> </answer> tags, respectively,"
+    #     input_text += "i.e., <think> reasoning process here </think> <answer> a final answer here </answer>\n"
+    #     input_text += "Only output your reasoning process in <think></think> and your answer in <answer></answer>, and do not output any other words."
+        
+    #     return input_text
 
     def generate(self,
         messages,
@@ -115,21 +113,32 @@ def get_prompt_based_selector(args, dataset):
     ds = dataset['test']
     
     em_evaluation = []
-    for idx, sample in enumerate(tqdm(ds)):
-        if idx == 10:
-            break
-        qid, query, gt_answers = sample['qid'], sample['query'], sample['gt_answers']
-        candidates_str = sample.get("candidates", None)
-        candidates = ast.literal_eval(candidates_str)
-        candidates_ = [(c[0], c[1]) for c in candidates]
+    with open(args.save_results_path, "w") as fout:
+        for idx, sample in enumerate(tqdm(ds)):
+            # if idx == 5:
+            #     break
+            qid, query, gt_answers = sample['qid'], sample['query'], ast.literal_eval(sample['gt_answers'])
+            candidates_str = sample.get("candidates", None)
+            candidates = ast.literal_eval(candidates_str)
+            candidates_ = [(c[0], c[1]) for c in candidates]
+            
+            think, prediction = rag_selector.inference(query, candidates_)
+            
+            if len(gt_answers) > 0:
+                correctness_em = em_score(prediction, gt_answers)
+            else:
+                correctness_em = 0
+            
+            item = {
+                'qid': qid, 'query': query, 'gt_answers': gt_answers,
+                'prediction': prediction, 'think': think,
+                'em': correctness_em,
+                'candidates': candidates_
+            }
+            fout.write(json.dumps(item) + "\n")
+            
+            em_evaluation.append(correctness_em)
         
-        think, prediction = rag_selector.inference(query, candidates_)
-        
-        if len(gt_answers) > 0:
-            correctness_em = em_score(prediction, gt_answers)
-        else:
-            correctness_em = 0
-        em_evaluation.append(correctness_em)
     
-    print(f"prompt accuracy: {np.mean(em_evaluation)*100}")
+    print(f"Prompt accuracy: {np.mean(em_evaluation)*100}")
     
