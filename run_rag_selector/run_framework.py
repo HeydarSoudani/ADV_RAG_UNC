@@ -94,7 +94,6 @@ def stat_testing(args):
             sys.exit(f"Error: qid {qid} from baseline not found in selector results.")
         selector_correctness.append(selector_dict[qid])
 
-
     t_test_binary(baseline_correctness, selector_correctness)
     wilcoxon_rank_sum_binary(baseline_correctness, selector_correctness)
 

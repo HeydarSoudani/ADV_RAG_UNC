@@ -183,8 +183,8 @@ def ue_generation(args):
 
         try:
             for i, qid in enumerate(tqdm(sorted_query_ids_shard, desc=f"[Rank {accelerator.process_index}]")):
-                if i == 3:
-                    break
+                # if i == 3:
+                #     break
                 sample = rag_generations[qid]
                 user_query, prediction, trace = sample['query'], sample['pred_answer'], sample['path']
                 prediction = prediction.strip() if prediction else prediction 
@@ -359,7 +359,7 @@ def evaluation_correlation(args):
     # secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, torch_dtype=torch.bfloat16).to(device)
     # secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
     # se_model = SemanticEquivalenceGenerator(args, device, secondary_model, secondary_tokenizer)
-    # ---
+    # # ---
     # question = data['query']
     # # generated_texts = data['final_answer_list'][0:5]
     # generated_texts = random.sample(data['final_answer_list'], 5)
@@ -392,93 +392,21 @@ def evaluation_correlation(args):
         for ue_metric, conf_list in uncertainty_obj.items():
             print(f"{ue_metric}: {get_auroc(correctness_list, conf_list)}")
 
-eps = 1e-12
-landa_1 = 0.7
-landa_2 = 0.3
-def evaluation_correlation_combined(args):
-    second_consistency = 'fa_consistency'
-    if args.rag_method in ['flare', 'dragin']:
-        second_consistency_results_file = f"{args.output_dir}/{second_consistency}_results_th{args.hallucination_threshold}.jsonl"
-    else:
-        second_consistency_results_file = f"{args.output_dir}/{second_consistency}_results.jsonl"
-        
-    second_uncertainty_obj = {}    
-    with open(second_consistency_results_file, 'r') as infile:
-        for line in infile:
-            data = json.loads(line)
-            conf = data['ue_scores']['majority_voting']['confidence']
-            second_uncertainty_obj[data['qid']] = conf
-    
-    correctness_list, conf_list = [], []
-    with open(args.consistency_results_file, 'r') as infile:
-        for line in infile:
-            data = json.loads(line)
-            correctness = data['em']
-            correctness_list.append(correctness)
-            conf = data['ue_scores']['majority_voting']['confidence']
-            agg_conf = landa_1 * conf + landa_2 * second_uncertainty_obj[data['qid']]
-            # agg_conf = 1.0 / ((1.0 / (conf+eps)) + (0.0 / (second_uncertainty_obj[data['qid']]+eps)))
-            conf_list.append(agg_conf)
-    
-    print(f"AUROC: {get_auroc(correctness_list, conf_list)}")
-
-def correctness_evaluation_mv(args):
-    em_mv_full_evaluation, em_mv_sub_evaluation = [], []
-    em_org_full_evaluation, em_org_sub_evaluation = [], []
-    conf_list = []
-    with open(args.consistency_results_file, 'r') as infile:
-        for line in infile:
-            data = json.loads(line)
-            gt_answers = data['gt_answers']
-            
-            pred_answer_mc = data['ue_scores']['majority_voting']['most_confident_answer'][0]
-            if pred_answer_mc:
-                correctness_em = em_score(pred_answer_mc, gt_answers)
-                correctness_em_sub = subem_score(pred_answer_mc, gt_answers)
-            else:
-                correctness_em, correctness_em_sub = 0, 0
-            em_mv_full_evaluation.append(correctness_em)
-            em_mv_sub_evaluation.append(correctness_em_sub)
-            
-            conf_mc = data['ue_scores']['majority_voting']['most_confident_answer'][1]
-            conf_list.append(conf_mc)
-            
-            
-            pred_answer_org = data['pred_answer']
-            if pred_answer_org:
-                correctness_em = em_score(pred_answer_org, gt_answers)
-                correctness_em_sub = subem_score(pred_answer_org, gt_answers)
-            else:
-                correctness_em, correctness_em_sub = 0, 0
-            em_org_full_evaluation.append(correctness_em)
-            em_org_sub_evaluation.append(correctness_em_sub)
-            
-    
-    # === Print results ========================
-    print(f"\nEvaluation Result (MC) {args.consistency_method}:")
-    print(f"EM (full): {np.mean(em_mv_full_evaluation)*100}")
-    print(f"EM (sub): {np.mean(em_mv_sub_evaluation)*100}")
-    print(f"AUROC: {get_auroc(em_mv_full_evaluation, conf_list)}")
-    
-    
-    print(f"\nEvaluation Result (Org):")
-    print(f"EM (full): {np.mean(em_org_full_evaluation)*100}")
-    print(f"EM (sub): {np.mean(em_org_sub_evaluation)*100}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
     # parser.add_argument('--model_name_or_path', type=str, default="agentrl/ReSearch-Qwen-7B-Instruct")
-    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -507,7 +435,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
+    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
@@ -530,7 +458,7 @@ if __name__ == "__main__":
     parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
         'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
     ])
-    parser.add_argument("--action_set", type=str, default='qp', choices=[
+    parser.add_argument("--action_set", type=str, default='av', choices=[
         'qp', 'ct', 'av', 'qp_ct', 'qp_av', 'ct_av', 'qp_ct_av'
     ])
     parser.add_argument("--n_generations", type=int, default=10)
@@ -590,9 +518,105 @@ if __name__ == "__main__":
     set_seed(args.seed)
     # ue_generation(args)
     merge_result_files(args)
-    # evaluation_correlation(args)
+    evaluation_correlation(args)
     # correctness_evaluation_mv(args)
     # evaluation_correlation_combined(args)
     
     # python run_uncertainty_estimation/ue_calculation.py
     # accelerate launch --multi_gpu run_uncertainty_estimation/ue_calculation.py
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# eps = 1e-12
+# landa_1 = 0.7
+# landa_2 = 0.3
+# def evaluation_correlation_combined(args):
+#     second_consistency = 'fa_consistency'
+#     if args.rag_method in ['flare', 'dragin']:
+#         second_consistency_results_file = f"{args.output_dir}/{second_consistency}_results_th{args.hallucination_threshold}.jsonl"
+#     else:
+#         second_consistency_results_file = f"{args.output_dir}/{second_consistency}_results.jsonl"
+        
+#     second_uncertainty_obj = {}    
+#     with open(second_consistency_results_file, 'r') as infile:
+#         for line in infile:
+#             data = json.loads(line)
+#             conf = data['ue_scores']['majority_voting']['confidence']
+#             second_uncertainty_obj[data['qid']] = conf
+    
+#     correctness_list, conf_list = [], []
+#     with open(args.consistency_results_file, 'r') as infile:
+#         for line in infile:
+#             data = json.loads(line)
+#             correctness = data['em']
+#             correctness_list.append(correctness)
+#             conf = data['ue_scores']['majority_voting']['confidence']
+#             agg_conf = landa_1 * conf + landa_2 * second_uncertainty_obj[data['qid']]
+#             # agg_conf = 1.0 / ((1.0 / (conf+eps)) + (0.0 / (second_uncertainty_obj[data['qid']]+eps)))
+#             conf_list.append(agg_conf)
+    
+#     print(f"AUROC: {get_auroc(correctness_list, conf_list)}")
+
+# def correctness_evaluation_mv(args):
+#     em_mv_full_evaluation, em_mv_sub_evaluation = [], []
+#     em_org_full_evaluation, em_org_sub_evaluation = [], []
+#     conf_list = []
+#     with open(args.consistency_results_file, 'r') as infile:
+#         for line in infile:
+#             data = json.loads(line)
+#             gt_answers = data['gt_answers']
+            
+#             pred_answer_mc = data['ue_scores']['majority_voting']['most_confident_answer'][0]
+#             if pred_answer_mc:
+#                 correctness_em = em_score(pred_answer_mc, gt_answers)
+#                 correctness_em_sub = subem_score(pred_answer_mc, gt_answers)
+#             else:
+#                 correctness_em, correctness_em_sub = 0, 0
+#             em_mv_full_evaluation.append(correctness_em)
+#             em_mv_sub_evaluation.append(correctness_em_sub)
+            
+#             conf_mc = data['ue_scores']['majority_voting']['most_confident_answer'][1]
+#             conf_list.append(conf_mc)
+            
+            
+#             pred_answer_org = data['pred_answer']
+#             if pred_answer_org:
+#                 correctness_em = em_score(pred_answer_org, gt_answers)
+#                 correctness_em_sub = subem_score(pred_answer_org, gt_answers)
+#             else:
+#                 correctness_em, correctness_em_sub = 0, 0
+#             em_org_full_evaluation.append(correctness_em)
+#             em_org_sub_evaluation.append(correctness_em_sub)
+            
+#     # === Print results ========================
+#     print(f"\nEvaluation Result (MC) {args.consistency_method}:")
+#     print(f"EM (full): {np.mean(em_mv_full_evaluation)*100}")
+#     print(f"EM (sub): {np.mean(em_mv_sub_evaluation)*100}")
+#     print(f"AUROC: {get_auroc(em_mv_full_evaluation, conf_list)}")
+    
+#     print(f"\nEvaluation Result (Org):")
+#     print(f"EM (full): {np.mean(em_org_full_evaluation)*100}")
+#     print(f"EM (sub): {np.mean(em_org_sub_evaluation)*100}")
