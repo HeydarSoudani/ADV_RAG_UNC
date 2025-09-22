@@ -511,7 +511,7 @@ def data_preparation(args, only_test=False):
     os.makedirs(args.data_cache_dir, exist_ok=True)
     clustering_text = 'clustering' if args.with_clustering  else 'wo_clustering'
     str_ = 'only_test' if only_test else args.training_method
-    cache_dir = f"{args.data_cache_dir}/{args.dataset}/{str_}_{clustering_text}"
+    cache_dir = f"{args.data_cache_dir}/{args.dataset}_{args.consistency_method}/{str_}_{clustering_text}"
 
     if os.path.exists(cache_dir):
         ds = load_from_disk(str(cache_dir))

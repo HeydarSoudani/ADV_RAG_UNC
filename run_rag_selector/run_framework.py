@@ -115,7 +115,7 @@ if __name__ == "__main__":
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge', 'reasonir'
     ])
-    parser.add_argument('--consistency_method', type=str, default='rag_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='reasoning_consistency', choices=[
         'self_consistency', 'reasoning_consistency', 'rag_consistency'
     ])
     # 
@@ -171,7 +171,7 @@ if __name__ == "__main__":
     
     if args.ensemble_method == 'confidence_based_w_training':
         model_ = args.selector_model_name_or_path.split('/')[-1]
-        args.saved_model_name_or_path = f"run_rag_selector/models/{args.dataset}/{args.training_method}_confidence_{args.confidence_score_injection}_{args.prompt_format}/{model_}"
+        args.saved_model_name_or_path = f"run_rag_selector/models/{args.dataset}_{args.consistency_method}/{args.training_method}_confidence_{args.confidence_score_injection}_{args.prompt_format}/{model_}"
         args.save_results_path = f"{results_dir}/{args.training_method}_confidence_{args.confidence_score_injection}_{clustering_text}_{confidence_text}_{args.prompt_format}_results.jsonl"
     else:
         args.save_results_path = f"{results_dir}/{args.ensemble_method}_{clustering_text}_{confidence_text}_results.jsonl"
@@ -180,8 +180,8 @@ if __name__ == "__main__":
     os.makedirs(args.data_cache_dir, exist_ok=True)
     
     set_seed(args.seed)
-    # main(args)
-    stat_testing(args)
+    main(args)
+    # stat_testing(args)
     
     
     # python run_rag_selector/run_framework.py

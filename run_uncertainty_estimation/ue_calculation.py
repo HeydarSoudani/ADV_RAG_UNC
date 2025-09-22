@@ -19,7 +19,7 @@ from run_uncertainty_estimation.consistency_methods import *
 from run_rag_methods.src.correctness import em_score, subem_score, f1_score
 from run_uncertainty_estimation.src.uncertainty_estimator import UncertaintyEstimator
 from run_mcts.run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
-from run_uncertainty_estimation.ue_methods import *
+from run_uncertainty_estimation.ue_methods import MajorityVoting
 from run_rag_methods.src.retrievers_local import load_docs
 
 
@@ -354,31 +354,16 @@ def evaluation_correlation(args):
         Run:           {args.run}
         Seed:          {args.seed}
     """.replace('            ', ''))
-    # accelerator = Accelerator()
-    # device = accelerator.device
-    # secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, torch_dtype=torch.bfloat16).to(device)
-    # secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
-    # se_model = SemanticEquivalenceGenerator(args, device, secondary_model, secondary_tokenizer)
-    # # ---
-    # question = data['query']
-    # # generated_texts = data['final_answer_list'][0:5]
-    # generated_texts = random.sample(data['final_answer_list'], 5)
-    # len_generated_texts = len(generated_texts)
-    # prediction = data['pred_answer'].strip()
-    # num_consistent = sum( se_model.check_answers_equiv(question, prediction, ans) for ans in generated_texts)
-    # conf = num_consistent / len_generated_texts
-    # uncertainty_obj['mv'].append(conf)
     
     correctness_list, uncertainty_obj = [], {}
     with open(args.consistency_results_file, 'r') as infile:
         for line in infile:
             data = json.loads(line)
             correctness = data['em']
+            ue_scores = data['ue_scores']
             correctness_list.append(correctness)
             
-            ue_scores = data['ue_scores']
             for ue_metric, ue_value in ue_scores.items():
-                # conf_score = ue_value['confidence']
                 if args.consistency_method == 'rag_consistency':
                     conf_score = ue_value['confidence']
                 else:
@@ -392,13 +377,54 @@ def evaluation_correlation(args):
         for ue_metric, conf_list in uncertainty_obj.items():
             print(f"{ue_metric}: {get_auroc(correctness_list, conf_list)}")
 
+def evaluation_correlation_num_generations(args):
+    print("\n== Correlation Evaluation ...")
+    print(f"""
+        Model name:    {args.model_name_or_path}
+        Secondary M.:  {args.secondary_model_name_or_path}
+        Dataset:       {args.dataset} / {args.subsec} ({args.fraction_of_data_to_use})
+        Retriever:     {args.retriever_name} / ({args.retrieval_model_path})
+        RAG Method:    {args.rag_method}
+        Con. Method:   {args.consistency_method}
+        Run:           {args.run}
+        Seed:          {args.seed}
+    """.replace('            ', ''))
+    accelerator = Accelerator()
+    device = accelerator.device
+    secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, dtype=torch.bfloat16).to(device)
+    secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
+    se_model = SemanticEquivalenceGenerator(args, device, secondary_model, secondary_tokenizer)
+    mv_model =  MajorityVoting(se_model)
+    
+    num_generations = 1
+    correctness_list, confidece_list = [], []
+    with open(args.consistency_results_file, 'r') as infile:
+        for idx, line in enumerate(tqdm(infile)):
+            # if idx == 5:
+            #     break
+            data = json.loads(line)
+            question, prediction, correctness = data['query'], data['pred_answer'].strip(), data['em']
+            generated_texts = random.sample(data['final_answer_list'], min(len(data['final_answer_list']), num_generations))
+            sampled_gen_dict = {'question': question, 'generated_texts': generated_texts}
+            
+            ue_value = mv_model(sampled_gen_dict, prediction, '')
+            if args.consistency_method == 'rag_consistency':
+                conf_score = ue_value['confidence']
+            else:
+                conf_score = ue_value['most_confident_answer'][1]
+            
+            correctness_list.append(correctness)
+            confidece_list.append(conf_score)
+            
+    print(f"With n={num_generations}: {get_auroc(correctness_list, confidece_list)}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
     # parser.add_argument('--model_name_or_path', type=str, default="agentrl/ReSearch-Qwen-7B-Instruct")
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
@@ -435,7 +461,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
+    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
@@ -519,8 +545,7 @@ if __name__ == "__main__":
     # ue_generation(args)
     merge_result_files(args)
     evaluation_correlation(args)
-    # correctness_evaluation_mv(args)
-    # evaluation_correlation_combined(args)
+    # evaluation_correlation_num_generations(args)
     
     # python run_uncertainty_estimation/ue_calculation.py
     # accelerate launch --multi_gpu run_uncertainty_estimation/ue_calculation.py

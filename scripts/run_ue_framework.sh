@@ -4,7 +4,7 @@
 #SBATCH --gpus=4
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
-#SBATCH --time=2:30:00
+#SBATCH --time=2:00:00
 #SBATCH --mem=80GB
 #SBATCH --output=script_logging/slurm_%A.out
 
@@ -23,7 +23,7 @@ fraction_of_data_to_use=2000.0
 retriever_name="rerank_l6"
 index_path="data/search_r1_files/bm25"
 retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
-rag_method="self_ask"
+rag_method="react"
 query_formulation="direct"
 hallucination_threshold=0.08
 consistency_method="rag_consistency"
