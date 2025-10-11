@@ -194,6 +194,50 @@ def rag_generation(args):
         print("\nEvaluation Result:")
         print(f"EM: {np.mean(em_evaluation_gathered)*100}")
 
+def run_rag_one_query(args):
+    accelerator = Accelerator()
+    device = accelerator.device
+    
+    # === Select RAG Method =====================
+    generation_model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, dtype=torch.bfloat16).to(device) # attn_implementation="eager" # Disable this for searchR1
+    generation_tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
+    
+    if args.rag_method == 'direct_inference':
+        rag_model = DirectInference(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'cot_inference':
+        rag_model = CoTInference(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == "cot_single_retrieval":
+        rag_model = CoTSingleRAG(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == "fix_sentence_retrieval":
+        rag_model = FixSentenceRAG(args, device)
+    elif args.rag_method == "fix_length_retrieval":
+        rag_model = FixLengthRAG(args, device)
+    elif args.rag_method == 'ircot':
+        rag_model = IRCOT_RAG(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'flare':
+        rag_model = FLARE_RAG_V1(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'dragin':
+        rag_model = DRAGIN_RAG(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'self_ask':
+        rag_model = SelfAsk_RAG(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'react':
+        rag_model = ReAct_RAG(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'search_o1':
+        rag_model = SearchO1_RAG(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'research':
+        rag_model = ReSearch_RAG(generation_model, generation_tokenizer, device, args)
+    elif args.rag_method == 'search_r1':
+        rag_model = SearchR1_RAG(generation_model, generation_tokenizer, device, args)
+    else:
+        raise NotImplementedError
+    
+    question = "What team was Horace Grant's twin brother traded to after the 1992-93 Washington Bullets season?"
+    pred_answer, path = rag_model.inference(question)
+    
+    print(f"User query: {question}")
+    print(f"Reasoning Path: {path}")
+    print(f"Prediction: {pred_answer}")
+
 def merge_result_files(args):
     if args.rag_method in ['flare', 'dragin']:
         results_shard_files = f"{args.output_dir}/inference_results_th{args.hallucination_threshold}_rank*.jsonl"
@@ -291,13 +335,13 @@ def subsample_generation(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    # parser.add_argument('--model_name_or_path', type=str, default="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo")
+    parser.add_argument('--model_name_or_path', type=str, default="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo")
     # parser.add_argument('--model_name_or_path', type=str, default="agentrl/ReSearch-Qwen-7B-Instruct")
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=128)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='musique', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
@@ -328,7 +372,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='dragin', choices=[
+    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
@@ -374,9 +418,10 @@ if __name__ == "__main__":
     ### === Run Steps ============================
     set_seed(args.seed)
     # rag_generation(args)
+    run_rag_one_query(args)
     # merge_result_files(args)
     # get_num_retrieval(args)
-    evaluate(args)
+    # evaluate(args)
     # subsample_generation(args)
         
     # python run_rag_methods/rag_generation.py

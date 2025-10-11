@@ -13,6 +13,7 @@ from tqdm import tqdm
 from math import sqrt, erf
 from accelerate import Accelerator
 from sklearn.metrics import roc_auc_score
+from MLstatkit import Delong_test
 
 from utils.general_utils import set_seed, passages2string
 from run_rag_methods.src.rag_methods import *
@@ -597,6 +598,7 @@ def get_stat_testing_delong(args):
     # === Main
     scores1, scores2, labels = align_by_qid(file1, file2, rag_extractor, others_extractor)
 
+    # --- V1: handy implementation
     result = delong_2sample_auc_test(scores1, labels, scores2, labels)
     print(f"AUC1: {result['auc1']:.6f}")
     print(f"AUC2: {result['auc2']:.6f}")
@@ -607,6 +609,14 @@ def get_stat_testing_delong(args):
 
     alpha = 0.05
     if result["p_value"] < alpha:
+        print(f"Result: Significant at alpha={alpha}")
+    else:
+        print(f"Result: Not significant at alpha={alpha}")
+
+    # --- V2: with library
+    z, p_value = Delong_test(labels, scores1, scores2, return_ci=False, return_auc=False, verbose=0)
+    print(f"z = {z:.6f}, p = {p_value:.3e}")
+    if p_value < alpha:
         print(f"Result: Significant at alpha={alpha}")
     else:
         print(f"Result: Not significant at alpha={alpha}")
@@ -625,8 +635,8 @@ def get_stat_testing_bootstrapping(args, n_bootstrap=10000):
     
     def others_extractor(obj):
         qid = obj["qid"]
-        score = obj["ue_scores"]["majority_voting"]['most_confident_answer'][1]
-        # score = obj["ue_scores"]["p_true"]["confidence"]
+        # score = obj["ue_scores"]["majority_voting"]['most_confident_answer'][1]
+        score = obj["ue_scores"]["p_true"]["confidence"]
         label = obj["em"]
         return qid, score, label
     
@@ -714,21 +724,20 @@ def get_stat_testing_bootstrapping(args, n_bootstrap=10000):
     }
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
     # parser.add_argument('--model_name_or_path', type=str, default="agentrl/ReSearch-Qwen-7B-Instruct")
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=1024)
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
         'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     
@@ -757,7 +766,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
+    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
@@ -843,7 +852,7 @@ if __name__ == "__main__":
     # evaluation_correlation(args)
     # evaluation_correlation_num_generations(args)
     get_stat_testing_delong(args)
-    get_stat_testing_bootstrapping(args)
+    # get_stat_testing_bootstrapping(args)
     
     # python run_uncertainty_estimation/ue_calculation.py
     # accelerate launch --multi_gpu run_uncertainty_estimation/ue_calculation.py
