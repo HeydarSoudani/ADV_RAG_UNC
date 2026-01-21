@@ -5,7 +5,7 @@ from typing import Union
 from transformers import PreTrainedModel, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from .ue_method import UEMethod
-from run_mcts.src.scoring_methods import ScoringMethod, LengthNormalizedScoring
+from run_rag_methods.src.scoring_methods import ScoringMethod, LengthNormalizedScoring
 
 
 class Entropy(UEMethod):

@@ -303,10 +303,10 @@ if __name__ == "__main__":
     parser.add_argument('--use_api', action='store_true', help='Use LLM API for generation')
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
         'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
-    parser.add_argument('--subsec', type=str, default='dev', choices=['train', 'dev', 'test', 'validation'])
+    parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
     parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
@@ -334,7 +334,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG setup
-    parser.add_argument('--rag_method', type=str, default='search_o1', choices=[
+    parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
@@ -379,11 +379,11 @@ if __name__ == "__main__":
 
     ### === Run Steps ============================
     set_seed(args.seed)
-    # rag_generation(args)
-    merge_result_files(args)
+    rag_generation(args)
+    # merge_result_files(args)
     # get_num_retrieval(args)
-    evaluate(args)
-    subsample_generation(args)
+    # evaluate(args)
+    # subsample_generation(args)
         
     # python run_rag_methods/rag_generation.py
     # accelerate launch --multi_gpu run_rag_methods/rag_generation.py

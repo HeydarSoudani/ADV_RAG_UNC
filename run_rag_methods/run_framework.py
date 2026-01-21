@@ -12,16 +12,16 @@ from run_rag_methods.rag_generation import rag_generation
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='openai/gpt-4o-mini')
+    parser.add_argument('--model_name_or_path', type=str, default='google/gemma-2-9b-it')
+    parser.add_argument('--max_new_tokens', type=int, default=128)
     parser.add_argument('--use_api', action='store_true', help='Use LLM API for generation')
-    parser.add_argument('--max_new_tokens', type=int, default=128) # generate_max_length
     
     # Dataset
-    parser.add_argument('--dataset', type=str, default='bamboogle', choices=[
-        'nq', 'triviaqa', 'popqa', 'hotpotqa', '2wikimultihopqa', 'musique', 'bamboogle'
+    parser.add_argument('--dataset', type=str, default='popqa', choices=[
+        'nq', 'triviaqa', 'popqa', '2wikimultihopqa', 'hotpotqa', 'musique', 'bamboogle'
     ])
     parser.add_argument('--subsec', type=str, default='test', choices=['train', 'dev', 'test', 'validation'])
-    parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0)
+    parser.add_argument('--fraction_of_data_to_use', type=float, default=2000.0)
     parser.add_argument("--enable_fewshot_examples", action="store_true", help="")
     parser.add_argument('--fewshot', type=int, default=6)
     
@@ -50,22 +50,22 @@ if __name__ == "__main__":
     # RAG setup
     parser.add_argument('--rag_method', type=str, default='self_ask', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
-        'fix_length_retrieval', 'fix_sentence_retrieval', 
+        'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
-        'react', 'self_ask', 'search_o1',
+        'self_ask', 'react', 'search_o1',
         'research', 'search_r1'
     ])
     parser.add_argument('--generate_fix_length', type=int, default=25)
     parser.add_argument('--modifier_method', type=str, default='token', choices=['token', 'entity'])          # for FLARE
-    parser.add_argument('--query_formulation', type=str, default='real_words', choices=[                      # for FLARE & DRAGIN
+    parser.add_argument('--query_formulation', type=str, default='real_words', choices=[                          # for FLARE & DRAGIN
         'direct', 'forward_all',
         'real_words', 'current', 'current_wo_wrong', 'last_sentence', 'last_n_tokens',
     ])
     parser.add_argument('--sentence_solver', type=str, default='avg', choices=['avg', 'max', 'min'])          # for FLARE
-    parser.add_argument('--hallucination_threshold', type=float, default=1.8)                                 # for FLARE & DRAGIN
+    parser.add_argument('--hallucination_threshold', type=float, default=0.6)                                 # for FLARE & DRAGIN
     parser.add_argument('--retrieve_keep_top_k', type=int, default=25)                                        # for DRAGIN
     parser.add_argument('--check_real_words', action='store_false')                                           # for DRAGIN
-    parser.add_argument('--max_iter', type=int, default=5)                                                    # for IRCoT & FLARE
+    parser.add_argument('--max_iter', type=int, default=10)
     
     # Others
     parser.add_argument('--device', type=int, default=0)

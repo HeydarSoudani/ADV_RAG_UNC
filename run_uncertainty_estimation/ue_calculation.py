@@ -20,7 +20,7 @@ from run_rag_methods.src.rag_methods import *
 from run_uncertainty_estimation.consistency_methods import *
 from run_rag_methods.src.correctness import em_score, subem_score, f1_score
 from run_uncertainty_estimation.src.uncertainty_estimator import UncertaintyEstimator
-from run_mcts.run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
+from run_rag_methods.src.semantic_equivalence import SemanticEquivalenceGenerator
 from run_uncertainty_estimation.ue_methods import MajorityVoting
 from run_rag_methods.src.retrievers_local import load_docs
 
@@ -856,8 +856,8 @@ if __name__ == "__main__":
                 args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces.jsonl"
         
     # === Prompt files =============
-    args.query_decomposition_prompt_file = "run_mcts/run_mcts_two_actions/prompts/query_decomposition_prompt_template.txt"
-    args.semantic_equivalence_prompt_file = "run_mcts/run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
+    args.query_decomposition_prompt_file = "run_rag_methods/prompts/query_decomposition_prompt_template.txt"
+    args.semantic_equivalence_prompt_file = "run_rag_methods/prompts/semantic_equivalence_prompt_template.txt"
     
     # === Run Steps ================
     set_seed(args.seed)

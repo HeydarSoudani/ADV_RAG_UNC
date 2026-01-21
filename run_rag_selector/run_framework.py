@@ -162,7 +162,7 @@ if __name__ == "__main__":
     
     # === Add variables
     args.rag_methods = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']
-    args.semantic_equivalence_prompt_file = "run_mcts/run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
+    args.semantic_equivalence_prompt_file = "run_rag_methods/prompts/semantic_equivalence_prompt_template.txt"
      
     clustering_text = 'w_clustering' if args.with_clustering  else 'wo_clustering'
     confidence_text = 'w_confidence' if args.with_clustering  else 'wo_confidence'

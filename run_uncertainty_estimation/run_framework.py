@@ -125,8 +125,8 @@ if __name__ == "__main__":
                 args.masked_traces_results_file = f"{args.output_dir}/{args.consistency_method}_masked_traces.jsonl"
     
     # === Prompt files =============
-    args.query_decomposition_prompt_file = "run_mcts/run_mcts_two_actions/prompts/query_decomposition_prompt_template.txt"
-    args.semantic_equivalence_prompt_file = "run_mcts/run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
+    args.query_decomposition_prompt_file = "run_rag_methods/prompts/query_decomposition_prompt_template.txt"
+    args.semantic_equivalence_prompt_file = "run_rag_methods/prompts/semantic_equivalence_prompt_template.txt"
     
     ### === Run Steps =============
     set_seed(args.seed)

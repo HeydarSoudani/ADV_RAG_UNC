@@ -1,0 +1,34 @@
+We are evaluating answers to the question: In what school district is Governor John R. Rogers High School, named after John Rankin Rogers, located?
+Here are two possible answers:
+Possible Answer 1: Puyallup School District of Washington
+Possible Answer 2: Puyallup School District
+For this question, is Possible Answer 1 semantically equivalent to Possible Answer 2? Respond with Yes or No.
+Response: Yes
+
+We are evaluating answers to the question: Which team featured in both the 2012 and 2011 Cops del Rey Finals?
+Here are two possible answers:
+Possible Answer 1: Barcelona
+Possible Answer 2: Spain
+For this question, is Possible Answer 1 semantically equivalent to Possible Answer 2? Respond with Yes or No.
+Response: No
+
+We are evaluating answers to the question: Which genus of flowering plant is found in an environment further south, Crocosmia or Cimicifuga?
+Here are two possible answers:
+Possible Answer 1: Crocosmia
+Possible Answer 2: Iridaceae
+For this question, is Possible Answer 1 semantically equivalent to Possible Answer 2? Respond with Yes or No.
+Response: No
+
+We are evaluating answers to the question: Is It Just Me? was a single by the English rock band from what Suffolk city?
+Here are two possible answers:
+Possible Answer 1: Lowestoft
+Possible Answer 2: Lowestoft, Suffolk
+For this question, is Possible Answer 1 semantically equivalent to Possible Answer 2? Respond with Yes or No.
+Response: Yes
+
+We are evaluating answers to the question: In what year did the man who shot the Chris Stockley, of The Dingoes, die?
+Here are two possible answers:
+Possible Answer 1: 1987
+Possible Answer 2: The year of 1987
+For this question, is Possible Answer 1 semantically equivalent to Possible Answer 2? Respond with Yes or No.
+Response: Yes

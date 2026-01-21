@@ -6,7 +6,7 @@ import random
 from collections import Counter
 
 from run_rag_methods.src.rag_methods import *
-from run_mcts.run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
+from run_rag_methods.src.semantic_equivalence import SemanticEquivalenceGenerator
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 
 from run_uncertainty_estimation.consistency_methods.models.trace_augmentor import (

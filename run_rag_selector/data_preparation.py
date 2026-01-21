@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from datasets import Dataset, DatasetDict, load_from_disk
 
 from utils.general_utils import set_seed
-from run_mcts.run_mcts_two_actions.src.models.semantic_equivalence import SemanticEquivalenceGenerator
+from run_rag_methods.src.semantic_equivalence import SemanticEquivalenceGenerator
 
 
 ### === Helper =======================
@@ -662,7 +662,7 @@ if __name__ == "__main__":
     
     # === Add variables
     args.rag_methods = ['self_ask', 'react', 'search_o1', 'research', 'search_r1']
-    args.semantic_equivalence_prompt_file = "run_mcts/run_mcts_two_actions/prompts/semantic_equivalence_prompt_template.txt"
+    args.semantic_equivalence_prompt_file = "run_rag_methods/prompts/semantic_equivalence_prompt_template.txt"
     
     set_seed(args.seed)
     # add_new_correctness(args)

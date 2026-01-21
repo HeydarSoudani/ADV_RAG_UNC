@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus=4
+#SBATCH --gpus=3
 #SBATCH --cpus-per-task=4
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --time=3:00:00
-#SBATCH --mem=120GB
+#SBATCH --mem=90GB
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
