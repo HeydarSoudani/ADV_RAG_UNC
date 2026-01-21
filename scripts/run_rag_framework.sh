@@ -11,7 +11,7 @@
 module load 2024
 module load Python/3.12.3-GCCcore-13.3.0
 
-export OPENAI_API_KEY='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'
+export OPENAI_API_KEY=''
 
 ### === Set variables ==========================
 # model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
