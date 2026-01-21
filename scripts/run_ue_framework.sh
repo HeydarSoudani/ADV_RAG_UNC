@@ -4,33 +4,40 @@
 #SBATCH --gpus=4
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_a100
-#SBATCH --time=4:00:00
-#SBATCH --mem=80GB
+#SBATCH --time=3:00:00
+#SBATCH --mem=120GB
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
 module load Python/3.12.3-GCCcore-13.3.0
 
+export OPENAI_API_KEY='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'
 
 ### === Set variables ==========================
 # model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
 # model_name_or_path="agentrl/ReSearch-Qwen-7B-Instruct"
-model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
+model_name_or_path="google/gemma-2-9b-it"
 secondary_model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="musique"
+dataset="hotpotqa"
 subsec="dev"
-fraction_of_data_to_use=2000.0
+fraction_of_data_to_use=500.0
 retriever_name="rerank_l6"
-index_path="data/search_r1_files/bm25"
+index_path="data/bm25"
 retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
-rag_method="search_o1"
+rag_method="self_ask"
 query_formulation="direct"
 hallucination_threshold=0.08
-consistency_method="reasoning_consistency"
-action_set="av"
+consistency_method="rag_consistency"
+action_set="qp_ct_av"
 run="run_3 (rag_methods_500)"
 n_generations=10
+use_api=false  # Set to true for API-based models (e.g., OpenAI), false for local models (e.g., Gemma)
 
+# Build use_api flag
+use_api_flag=""
+if [ "$use_api" = true ]; then
+    use_api_flag="--use_api"
+fi
 
 # srun python
 accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_uncertainty_estimation/run_framework.py \
@@ -48,7 +55,8 @@ accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_uncertainty_estimation/run_f
     --consistency_method "$consistency_method" \
     --action_set "$action_set" \
     --n_generations "$n_generations" \
-    --run "$run"
+    --run "$run" \
+    $use_api_flag
 
 
 

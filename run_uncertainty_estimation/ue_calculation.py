@@ -26,7 +26,7 @@ from run_rag_methods.src.retrievers_local import load_docs
 
 
 def ue_generation(args):
-    are_traces_generated = False # when yo generated the paths and want to add UE results
+    are_traces_generated = False # when you generated the paths and want to add UE results
     # === MultiGPU setup =========================
     accelerator = Accelerator()
     device = accelerator.device
@@ -87,8 +87,14 @@ def ue_generation(args):
                         generated_traces_obj[data['qid']] = data['masked_traces']
                     
     # === Read Models ============================
-    generation_model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, dtype=torch.bfloat16).to(device) # attn_implementation="eager" # Disable this for searchR1
-    generation_tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
+    # Primary model: use API or load locally
+    if args.use_api:
+        generation_model = None
+        generation_tokenizer = None
+    else:
+        generation_model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name_or_path, dtype=torch.bfloat16).to(device) # attn_implementation="eager" # Disable this for searchR1
+        generation_tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_name_or_path)
+    # Secondary model: always load locally
     secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, dtype=torch.bfloat16).to(device)
     secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
     
@@ -254,6 +260,7 @@ def ue_generation(args):
                     "ue_scores": ue_scores
                 }
                 cons_f.write(json.dumps(cons_item) + "\n")
+                cons_f.flush()
                 
                 if trace_f and not are_traces_generated:
                     new_masked_traces = [
@@ -272,6 +279,7 @@ def ue_generation(args):
                         "masked_traces": new_masked_traces
                     }
                     trace_f.write(json.dumps(trace_item) + '\n')
+                    trace_f.flush()
 
         finally:
             cons_f.close()
@@ -369,6 +377,7 @@ def evaluation_correlation(args):
                 if args.consistency_method == 'rag_consistency':
                     conf_score = ue_value['confidence']
                 else:
+                    # conf_score = ue_value['confidence']
                     conf_score = ue_value['most_confident_answer'][1] if ue_metric == "majority_voting" else ue_value['confidence']
                 
                 if ue_metric in uncertainty_obj.keys():
@@ -393,12 +402,13 @@ def evaluation_correlation_num_generations(args):
     """.replace('            ', ''))
     accelerator = Accelerator()
     device = accelerator.device
+    # Secondary model: always load locally
     secondary_model = transformers.AutoModelForCausalLM.from_pretrained(args.secondary_model_name_or_path, dtype=torch.bfloat16).to(device)
     secondary_tokenizer = transformers.AutoTokenizer.from_pretrained(args.secondary_model_name_or_path)
     se_model = SemanticEquivalenceGenerator(args, device, secondary_model, secondary_tokenizer)
     mv_model =  MajorityVoting(se_model)
     
-    num_generations = 2
+    num_generations = 1
     correctness_list, confidece_list = [], []
     with open(args.consistency_results_file, 'r') as infile:
         for idx, line in enumerate(tqdm(infile)):
@@ -413,7 +423,9 @@ def evaluation_correlation_num_generations(args):
             ue_value = mv_model(sampled_gen_dict, prediction, '')
             if args.consistency_method == 'rag_consistency':
                 conf_score = ue_value['confidence']
+                # conf_score = ue_value['most_confident_answer'][1]
             else:
+                # conf_score = ue_value['confidence']
                 conf_score = ue_value['most_confident_answer'][1]
             
             correctness_list.append(correctness)
@@ -727,11 +739,13 @@ def get_stat_testing_bootstrapping(args, n_bootstrap=10000):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
+    # parser.add_argument('--model_name_or_path', type=str, default='PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo')
     # parser.add_argument('--model_name_or_path', type=str, default="agentrl/ReSearch-Qwen-7B-Instruct")
     # parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='openai/gpt-4o-mini')
     parser.add_argument('--secondary_model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--max_new_tokens', type=int, default=1024)
+    parser.add_argument('--use_api', action='store_true', help='Use LLM API for generation')
     
     # Dataset
     parser.add_argument('--dataset', type=str, default='hotpotqa', choices=[
@@ -745,11 +759,11 @@ if __name__ == "__main__":
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge', 'reasonir'
     ])
-    parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
-    parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
-        'data/search_r1_files/bm25',                # For BM25 & Rerank
-        'data/search_r1_files/e5_Flat.index',       # For E5
-        'data/search_r1_files/reasonir_Flat.index', # For ReasonIR
+    parser.add_argument('--corpus_path', type=str, default='data/wiki-18.jsonl')
+    parser.add_argument('--index_path', type=str, default='data/bm25', choices=[
+        'data/bm25',                # For BM25 & Rerank
+        'data/e5_Flat.index',       # For E5
+        'data/reasonir_Flat.index', # For ReasonIR
     ])
     parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
         "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank
@@ -766,7 +780,7 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_b", type=float, default=0.4)
     
     # RAG methods (input)
-    parser.add_argument('--rag_method', type=str, default='search_r1', choices=[
+    parser.add_argument('--rag_method', type=str, default='react', choices=[
         'direct_inference', 'cot_inference', 'cot_single_retrieval',
         'fix_length_retrieval', 'fix_sentence_retrieval',
         'ircot', 'flare', 'dragin',
@@ -786,7 +800,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_iter', type=int, default=5)
     
     # Consistency Generation Methods (answer list)
-    parser.add_argument('--consistency_method', type=str, default='reasoning_consistency', choices=[
+    parser.add_argument('--consistency_method', type=str, default='self_consistency', choices=[
         'fa_consistency', 'rrr_consistency', 'reasoning_consistency', 'self_consistency', 'rag_consistency'
     ])
     parser.add_argument("--action_set", type=str, default='qp_ct_av', choices=[
@@ -848,13 +862,13 @@ if __name__ == "__main__":
     # === Run Steps ================
     set_seed(args.seed)
     # ue_generation(args)
-    # merge_result_files(args)
-    # evaluation_correlation(args)
+    merge_result_files(args)
+    evaluation_correlation(args)
     # evaluation_correlation_num_generations(args)
-    get_stat_testing_delong(args)
+    # get_stat_testing_delong(args)
     # get_stat_testing_bootstrapping(args)
     
-    # python run_uncertainty_estimation/ue_calculation.py
+    # python run_uncertainty_estimation/ue_calculation.py --use_api
     # accelerate launch --multi_gpu run_uncertainty_estimation/ue_calculation.py
 
 

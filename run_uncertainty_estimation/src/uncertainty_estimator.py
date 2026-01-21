@@ -26,23 +26,23 @@ class UncertaintyEstimator:
         tokenizer_for_entailment = DebertaTokenizer.from_pretrained("microsoft/deberta-large-mnli")
         self.generated_output_template = generated_output_template
         self.se_model = SemanticEquivalenceGenerator(args, device, self.model, self.tokenizer)
-        
+
         if args.consistency_method == 'self_consistency':
             self.ue_methods_ = {
-                "predictive_entropy": PredictiveEntropy(),
-                "semantic_entropy": SemanticEntropy(model_for_entailment, tokenizer_for_entailment),
-                'mars': MARS(),
-                'lars': LARS(
-                    ue_type="semantic_entropy",
-                    model_for_entailment=model_for_entailment,
-                    tokenizer_for_entailment=tokenizer_for_entailment,
-                    entailment_model_device=entailment_model_device
-                ),
-                "sar": SAR(self.tokenizer),
-                "num_ss": NumSemanticSet(model_for_entailment, tokenizer_for_entailment),
-                "sum_eigen": SumEigenUncertainty(model_for_entailment, tokenizer_for_entailment),
-                "eccentricity": EccentricityUncertainty(model_for_entailment, tokenizer_for_entailment),
-                "matrix_degree": MatrixDegreeUncertainty(model_for_entailment, tokenizer_for_entailment),
+                # "predictive_entropy": PredictiveEntropy(),
+                # "semantic_entropy": SemanticEntropy(model_for_entailment, tokenizer_for_entailment),
+                # 'mars': MARS(),
+                # 'lars': LARS(
+                #     ue_type="semantic_entropy",
+                #     model_for_entailment=model_for_entailment,
+                #     tokenizer_for_entailment=tokenizer_for_entailment,
+                #     entailment_model_device=entailment_model_device
+                # ),
+                # "sar": SAR(self.tokenizer),
+                # "num_ss": NumSemanticSet(model_for_entailment, tokenizer_for_entailment),
+                # "sum_eigen": SumEigenUncertainty(model_for_entailment, tokenizer_for_entailment),
+                # "eccentricity": EccentricityUncertainty(model_for_entailment, tokenizer_for_entailment),
+                # "matrix_degree": MatrixDegreeUncertainty(model_for_entailment, tokenizer_for_entailment),
                 "p_true": PTrue(self.model, self.tokenizer),
                 "majority_voting": MajorityVoting(self.se_model),
             }

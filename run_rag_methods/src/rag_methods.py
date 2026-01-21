@@ -12,7 +12,7 @@ from math import exp
 from bs4 import BeautifulSoup
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast, StoppingCriteriaList
 
-from run_rag_methods.src.generators import LLMGenerator, StopOnSequence
+from run_rag_methods.src.generators import LLMGenerator, LLMGenerator_api, StopOnSequence
 from run_rag_methods.src.retrievers_local import BM25Retriever, ContrieverRetriever, RerankRetriever, DenseRetriever
 from run_rag_methods.src.templetes import (
     SYSTEM_PROMPT_DIRECT, SYSTEM_PROMPT_COT, SYSTEM_PROMPT_IRCOT,
@@ -40,8 +40,12 @@ def get_answer(text):
 class BasicRAG:
     def __init__(self, generation_model, generation_tokenizer, device, args):
         self.args = args
-        self.generator = LLMGenerator(generation_model, generation_tokenizer, device, args)
-        
+        if args.use_api:
+            print("Using LLM API for generation...")
+            self.generator = LLMGenerator_api(args.model_name_or_path, generation_tokenizer)
+        else:
+            self.generator = LLMGenerator(generation_model, generation_tokenizer, device, args)
+
         # === Retrievers ============================= 
         if args.retriever_name == 'bm25':
             self.retriever = BM25Retriever(args)  
@@ -133,6 +137,18 @@ class BasicRAG:
         self.user_prompt_with_context = "{examples}\n\n{documents}\nQ: {question}\nA:"
         self.user_prompt_wo_context = "{examples}\n\nQ: {question}\nA:"
         self.user_prompt_self_ask = "{documents}Quesiton: {question}\nAre follow up questions needed here: Yes.\n"
+
+    def is_generation_finished(self, output):
+        """Check if generation finished naturally (hit EOS token).
+        For API: output is finish_reason string ('stop' means finished)
+        For local: output is tensor, check if last token is EOS
+        """
+        if self.args.use_api:
+            # API returns finish_reason: "stop" means natural end, "length" means max_tokens
+            return output == "stop"
+        else:
+            # Local model returns tensor, check last token against EOS tokens
+            return output[-1].item() in self.generator.curr_eos
 
     def get_top_sentence(self, text):
         sentences = [sent.text.strip() for sent in nlp(text).sents]
@@ -430,7 +446,7 @@ class IRCOT_RAG(BasicRAG):
 
             if "the answer is:" in output_text:
                 break
-            if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.args.max_iter):
+            if (self.is_generation_finished(output)) or (idx+1 == self.args.max_iter):
                 break  # Don't perform another retrieval or prompt construction
             
             think = output_text
@@ -581,7 +597,7 @@ class IRCOT_RAG(BasicRAG):
             
             if "the answer is:" in output_text:
                 break
-            if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.args.max_iter):
+            if (self.is_generation_finished(output)) or (idx+1 == self.args.max_iter):
                 break  # Don't perform another retrieval or prompt construction
             
             think = output_text
@@ -1431,6 +1447,13 @@ class SelfAsk_RAG(BasicRAG):
         super().__init__(generation_model, generation_tokenizer, device, args)
         self.single_hop = False
         self.system_prompt = SELF_ASK_PROMPT_MULTI_HOP
+        # Add short answer reminder to enforce concise answers
+        self.short_answer_reminder = (
+            "IMPORTANT: Your final answer after 'So the final answer is:' must be ONLY the short answer "
+            "(e.g., a name, place, date, or number). Do NOT include explanations or full sentences in the final answer. "
+            "You must strictly follow the Follow up-Intermediate answer reasoning flow as shown in the examples.\n\n"
+        )
+        self.system_prompt = self.system_prompt + self.short_answer_reminder
         self.FOLLOW_UP_PATTERN = r"Follow up:.*\n"
         self.answer_template = '{answer}'
     
@@ -1445,9 +1468,17 @@ class SelfAsk_RAG(BasicRAG):
         return format_reference
     
     def extract_follow_up(self, text: str) -> str:
+        # First, try to match the complete pattern with both Follow up and Intermediate answer
         match = re.search(r'Follow up:\s*(.*?)\nIntermediate answer:', text, re.DOTALL)
         if match:
             return match.group(1).strip()
+
+        # Fallback: if Follow up exists but Intermediate answer is missing (API models may stop differently),
+        # extract everything after "Follow up:" up to end of line
+        match = re.search(r'Follow up:\s*(.*?)(?:\n|$)', text)
+        if match:
+            return match.group(1).strip()
+
         return ""
         
     def extract_intermediate(self, text: str) -> str:
@@ -1492,7 +1523,7 @@ class SelfAsk_RAG(BasicRAG):
             if ("So the final answer is:" in output_text):
                 text += output_text
                 break
-            if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.args.max_iter):
+            if (self.is_generation_finished(output)) or (idx+1 == self.args.max_iter):
                 break # Don't perform another retrieval or prompt construction
         
             intermediate_ans = self.extract_intermediate(output_text)
@@ -1645,7 +1676,7 @@ class SelfAsk_RAG(BasicRAG):
             if ("So the final answer is:" in output_text):
                 text += output_text
                 break
-            if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.args.max_iter):
+            if (self.is_generation_finished(output)) or (idx+1 == self.args.max_iter):
                 break # Don't perform another retrieval or prompt construction
         
             intermediate_ans = self.extract_intermediate(output_text)
@@ -1698,6 +1729,13 @@ class ReAct_RAG(BasicRAG):
     def __init__(self, generation_model, generation_tokenizer, device, args):
         super().__init__(generation_model, generation_tokenizer, device, args)
         self.instruction = REACT_INSTRUCTION
+        # Add short answer reminder to enforce concise answers
+        self.short_answer_reminder = (
+            "IMPORTANT: Your final answer inside Finish[] must be ONLY the short answer "
+            "(e.g., a name, place, date, or number). Do NOT include explanations or full sentences in the Finish action. "
+            "You must strictly follow the Thought-Action-Observation reasoning flow as shown in the examples.\n\n"
+        )
+        self.instruction = self.instruction + self.short_answer_reminder
         self.answer_template = '{answer}'
         self.pattern_action = r"^(\w+)\[(.+?)\]$"
         self.current_step_template = 'Thought {iter_num}: {think}\nAction {iter_num}: {action_text}\nObservation {iter_num}: {observation}\n'
@@ -1840,6 +1878,8 @@ class ReAct_RAG(BasicRAG):
             self.examples_text += "\n"
     
     def generate_stopping_criteria(self, sequences):
+        if self.args.use_api:
+            return sequences  # API expects plain string lists
         return StoppingCriteriaList([StopOnSequence(sequences, self.generator.tokenizer)])
 
     @staticmethod
@@ -1974,10 +2014,12 @@ class ReAct_RAG(BasicRAG):
         self.lookup_cnt = None  # current lookup index
         
         search_query = question
-        instruct_exps = self.instruction + self.examples_text 
+        instruct_exps = self.instruction + self.examples_text
         input_prompt = instruct_exps + f"Question: {search_query}\n"
-        
+
         path = []
+        action_type = None
+        pred_answer = ''
         for iter_num in range(1, self.args.max_iter+1):
             messages = [
                 {"role": "system", "content": ''},
@@ -1986,6 +2028,7 @@ class ReAct_RAG(BasicRAG):
             _, thought_action = self.generator.generate(
                 messages,
                 self.generate_stopping_criteria([f"\n\nObservation {iter_num}:", f"\nObservation {iter_num}:", f"Observation {iter_num}:", f"Observation {iter_num}: ", f"\nObservation {iter_num}: "]),
+                # [f"\n\nObservation {iter_num}:", f"\nObservation {iter_num}:", f"Observation {iter_num}:", f"Observation {iter_num}: ", f"\nObservation {iter_num}: "],
                 temperature=generation_temp
             )
             try:
@@ -2000,6 +2043,7 @@ class ReAct_RAG(BasicRAG):
                 _, action = self.generator.generate(
                     messages,
                     self.generate_stopping_criteria(["]\n", "]\n\n", " ]\n", " ]\n\n"]),
+                    # ["]\n", "]\n\n", " ]\n", " ]\n\n"],
                     temperature=generation_temp
                 )
             
@@ -2219,6 +2263,8 @@ class ReAct_RAG(BasicRAG):
             )
         
         path = []
+        action_type = None
+        pred_answer = None
         for iter_num in range(len(generated_trace)+1, len(generated_trace)+self.args.max_iter+2):
             messages = [
                 {"role": "system", "content": ''},
@@ -2297,31 +2343,78 @@ class SearchO1_RAG(BasicRAG):
             self.instruction = get_singleqa_search_o1_instruction(self.MAX_SEARCH_LIMIT)
         elif args.dataset in ['popqa', 'hotpotqa', 'musique', '2wikimultihopqa', 'bamboogle']:
             self.instruction = get_multiqa_search_o1_instruction(self.MAX_SEARCH_LIMIT)
-        # 
+        # Add short answer reminder to enforce concise answers
+        self.short_answer_reminder = (
+            "IMPORTANT: Your final answer inside \\boxed{} must be ONLY the short answer "
+            "(e.g., a name, place, date, or number). Do NOT include explanations or full sentences in the box. "
+            "You must strictly follow the think-search-answer reasoning flow as shown in the instruction.\n\n"
+        )
+        self.instruction = self.instruction + self.short_answer_reminder
+        #
         self.answer_template = '\\boxed{answer}'
         self.current_step_template = '\n{think}\n<|begin_search_query|>{search_query}<|end_search_query|>\n<|begin_search_result|>{search_result}<|end_search_result|>\n'
 
     def get_reasoning_think(self, text: str) -> str:
+        if not text:
+            return None
         pattern = re.compile(rf"(.*?){re.escape(self.BEGIN_SEARCH_QUERY)}", re.DOTALL)
         matches = pattern.findall(text)
         return matches[0] if matches else None
 
     def get_search_query(self, text: str) -> str:
+        if not text:
+            return None
+        # First, try to match the complete pattern with both begin and end tags
         pattern = re.compile(rf"{re.escape(self.BEGIN_SEARCH_QUERY)}(.*?){re.escape(self.END_SEARCH_QUERY)}", re.DOTALL)
         matches = pattern.findall(text)
-        return matches[0] if matches else None
-    
+        if matches:
+            return matches[0].strip()
+
+        # Fallback: if begin tag exists but end tag is missing (common with API models),
+        # extract everything after the begin tag
+        if self.BEGIN_SEARCH_QUERY in text:
+            query = text.split(self.BEGIN_SEARCH_QUERY)[-1].strip()
+            # Clean up any trailing newlines or incomplete text
+            query = query.split('\n')[0].strip()
+            return query if query else None
+
+        return None
+
     def get_search_results(self, text: str) -> str:
+        if not text:
+            return None
         match = re.search(r"\*\*Final Information\*\*\s*(.*)", text, re.DOTALL)
         return match.group(1).replace("\n", " ").strip() if match else None
     
     def get_last_think(self, text: str) -> str:
+        if not text:
+            return None
         match = re.search(r"^(.*?)\\boxed\{.*?\}", text, re.DOTALL)
         return match.group(1).strip() if match else None
 
     def get_boxed_answer(self, text: str) -> str:
+        if not text:
+            return None
+        # Try standard \boxed{} format first
         match = re.search(r"\\boxed\{(.*?)\}", text)
-        return match.group(1).strip() if match else None
+        if match:
+            return match.group(1).strip()
+
+        # Fallback: try alternative answer formats that some models (e.g., Gemma) might use
+        alt_patterns = [
+            r"(?:The\s+)?[Ff]inal\s+[Aa]nswer[:\s]+[\"']?([^\"'\n\.]+)[\"']?",
+            r"(?:The\s+)?[Aa]nswer(?:\s+is)?[:\s]+[\"']?([^\"'\n\.]+)[\"']?",
+            r"\*\*[Aa]nswer\*\*[:\s]+([^\n\.]+)",
+        ]
+        for pattern in alt_patterns:
+            alt_match = re.search(pattern, text)
+            if alt_match:
+                answer = alt_match.group(1).strip()
+                answer = re.sub(r'\*+', '', answer).strip()  # Remove asterisks
+                if answer:
+                    return answer
+
+        return None
 
     def reason_in_documents(self, path, search_query, docs_text):
         prev_reasoning = ' '.join([step['think'] for step in path])
@@ -2334,7 +2427,7 @@ class SearchO1_RAG(BasicRAG):
     def inference(self, question, generation_temp=0.7):
         input_prompt = self.instruction + get_task_instruction_openqa(question)
         messages = [{"role": "user", "content": input_prompt}]
-        
+
         path = []
         for idx in range(self.MAX_SEARCH_LIMIT):
             # -- One step generation
@@ -2343,10 +2436,23 @@ class SearchO1_RAG(BasicRAG):
                 self.generator.searcho1_stopping_criteria,
                 temperature=generation_temp
             )
-            
-            if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.MAX_SEARCH_LIMIT):
-                break # Don't perform another retrieval or prompt construction
-            
+
+            # Handle None or empty output_text
+            if not output_text:
+                output_text = ""
+
+            # Check if model generated a final answer (contains \boxed{})
+            # For search-o1, we should continue the loop if a search query was generated
+            has_final_answer = self.get_boxed_answer(output_text) is not None
+            has_search_query = self.BEGIN_SEARCH_QUERY in output_text
+
+            if has_final_answer or (idx+1 == self.MAX_SEARCH_LIMIT):
+                break # Model provided final answer or reached max iterations
+
+            if not has_search_query:
+                # No search query and no final answer - model may have finished naturally
+                break
+
             # -- Extract info
             tmp_think = self.get_reasoning_think(output_text).replace("\n", ' ').replace("\n\n", ' ') if self.get_reasoning_think(output_text) else ''
             tmp_query = self.get_search_query(output_text)
@@ -2358,7 +2464,7 @@ class SearchO1_RAG(BasicRAG):
 
             # -- Save in the path
             path.append({'think': tmp_think, 'search_query': tmp_query, 'docs': search_docs})
-            
+
             # -- Reason-in-docs
             if self.with_reason_in_documents:
                 rid_output_text = self.reason_in_documents(path, tmp_query, docs_text)
@@ -2366,7 +2472,7 @@ class SearchO1_RAG(BasicRAG):
                 search_result_txt = rid_output_text
             else:
                 search_result_txt = docs_text
-            
+
             # -- Create new input prompt
             current_step_text = self.current_step_template.format(
                 think=tmp_think,
@@ -2435,15 +2541,23 @@ class SearchO1_RAG(BasicRAG):
                 search_result=step['reason_in_docs']
             )
         messages = [{"role": "user", "content": input_prompt}]
-        
+
         path = []
         for idx in range(self.MAX_SEARCH_LIMIT):
             # -- One step generation
             output, output_text = self.generator.generate(messages, self.generator.searcho1_stopping_criteria)
-            
-            if (output[-1].item() in self.generator.curr_eos) or (idx+1 == self.MAX_SEARCH_LIMIT):
-                break # Don't perform another retrieval or prompt construction
-            
+
+            # Check if model generated a final answer (contains \boxed{})
+            has_final_answer = self.get_boxed_answer(output_text) is not None
+            has_search_query = self.BEGIN_SEARCH_QUERY in output_text
+
+            if has_final_answer or (idx+1 == self.MAX_SEARCH_LIMIT):
+                break # Model provided final answer or reached max iterations
+
+            if not has_search_query:
+                # No search query and no final answer - model may have finished naturally
+                break
+
             # -- Extract info
             if output_text:
                 tmp_think = self.get_reasoning_think(output_text).replace("\n", ' ').replace("\n\n", ' ') if self.get_reasoning_think(output_text) else ''
@@ -2454,11 +2568,11 @@ class SearchO1_RAG(BasicRAG):
                 else:
                     search_docs, docs_text = [], ''
             else:
-                tmp_think, search_docs, docs_text = '', [], ''
+                tmp_think, tmp_query, search_docs, docs_text = '', None, [], ''
 
             # -- Save in the path
             path.append({'think': tmp_think, 'search_query': tmp_query, 'docs': search_docs})
-            
+
             # -- Reason-in-docs
             if self.with_reason_in_documents:
                 prev_reasoning = ' '.join([step['think'] for step in path])
@@ -2470,7 +2584,7 @@ class SearchO1_RAG(BasicRAG):
                 search_result_txt = rid_output_text_
             else:
                 search_result_txt = docs_text
-            
+
             # -- Create new input prompt
             current_step_text = self.current_step_template.format(
                 think=tmp_think,
@@ -2483,7 +2597,7 @@ class SearchO1_RAG(BasicRAG):
         last_think = self.get_last_think(output_text) if self.get_last_think(output_text) else output_text
         pred_answer = self.get_boxed_answer(output_text)
         path.append({'think': last_think, 'answer': pred_answer})
-        
+
         return pred_answer, path
 
 class ReSearch_RAG(BasicRAG):
@@ -2547,7 +2661,7 @@ In the last part of the answer, the final exact answer is enclosed within \\boxe
                 temperature=generation_temp
             )
 
-            if output_[-1].item() in self.generator.curr_eos:
+            if self.is_generation_finished(output_):
                 break
 
             tmp_query = self.get_query(output_text)
@@ -2656,7 +2770,7 @@ In the last part of the answer, the final exact answer is enclosed within \\boxe
         path = []
         while True:
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
-            if output_[-1].item() in self.generator.curr_eos:
+            if self.is_generation_finished(output_):
                 break
 
             tmp_query = self.get_query(output_text)
@@ -2752,7 +2866,7 @@ If you find no further external knowledge needed, you can directly provide the a
                 temperature=generation_temp
             )
     
-            if output_[-1].item() in self.generator.curr_eos:
+            if self.is_generation_finished(output_):
                 break
         
             tmp_query = self.get_query(output_text)
@@ -2841,7 +2955,7 @@ If you find no further external knowledge needed, you can directly provide the a
         path = []
         while True:
             output_, output_text = self.generator.generate(messages, self.generator.searchr1_stopping_criteria)
-            if output_[-1].item() in self.generator.curr_eos:
+            if self.is_generation_finished(output_):
                 break
 
             tmp_query = self.get_query(output_text)
@@ -3181,7 +3295,7 @@ If you find no further external knowledge needed, you can directly provide the a
 #         path.append({'think': output_text})
 #         break
 #     iter_num += 1
-#     if (output[-1].item() in self.generator.curr_eos) or (iter_num == self.args.max_iter):
+#     if (self.is_generation_finished(output)) or (iter_num == self.args.max_iter):
 #         break  # Don't perform another retrieval or prompt construction
     
 #     search_query = output_text

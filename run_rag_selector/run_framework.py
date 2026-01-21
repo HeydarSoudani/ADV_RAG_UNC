@@ -8,7 +8,7 @@ import torch
 import argparse
 
 from utils.general_utils import set_seed
-from run_rag_selector.training import training
+from archive.rag_selector_things.training import training
 from run_rag_selector.inference import inference
 from run_rag_selector.data_preparation import data_preparation
 from run_rag_selector.selector_methods.random_selector import get_random_selector

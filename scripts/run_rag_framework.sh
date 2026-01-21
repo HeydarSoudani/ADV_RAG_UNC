@@ -1,31 +1,39 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus=1
+#SBATCH --gpus=4
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=gpu_h100
-#SBATCH --time=1:20:00
-#SBATCH --mem=20GB
+#SBATCH --time=2:00:00
+#SBATCH --mem=120GB
 #SBATCH --output=script_logging/slurm_%A.out
 
 module load 2024
 module load Python/3.12.3-GCCcore-13.3.0
 
+export OPENAI_API_KEY='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'
 
 ### === Set variables ==========================
 # model_name_or_path="PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo"
 # model_name_or_path="agentrl/ReSearch-Qwen-7B-Instruct"
-model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
-dataset="musique"
-subsec="dev"
+model_name_or_path="google/gemma-2-9b-it"
+dataset="popqa"
+subsec="test"
 fraction_of_data_to_use=2000.0
 retriever_name="rerank_l6"
-index_path="data/search_r1_files/bm25"
+index_path="data/bm25"
 retrieval_model_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
-rag_method="cot_single_retrieval"
+rag_method="search_o1"
 query_formulation="real_words"
 hallucination_threshold=0.6
 run="run_1 (rag_methods_2k)"
+use_api=false  # Set to true for API-based models (e.g., OpenAI), false for local models (e.g., Gemma)
+
+# Build use_api flag
+use_api_flag=""
+if [ "$use_api" = true ]; then
+    use_api_flag="--use_api"
+fi
 
 # srun python
 accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_rag_methods/run_framework.py \
@@ -39,7 +47,8 @@ accelerate launch --multi_gpu $HOME/ADV_RAG_UNC/run_rag_methods/run_framework.py
     --rag_method "$rag_method" \
     --query_formulation "$query_formulation" \
     --hallucination_threshold "$hallucination_threshold" \
-    --run "$run"
+    --run "$run" \
+    $use_api_flag
 
 
 

@@ -1,17 +1,14 @@
 import os
 import sys
+import time
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import torch
 import numpy as np
 import transformers
+from openai import OpenAI
 from scipy.special import softmax
 
-# from run_searchr1.inference import _passages2string
-# from utils.adaptive_utils import fix_tokenizer_chat
-# from run_rag_methods.src.templetes import SYSTEM_PROMPT_LONGFORM, SYSTEM_PROMPT_SHORTFORM, SYSTEM_PROMPT_REGENERATE
 
-
-# Define the custom stopping criterion
 class StopOnSequence(transformers.StoppingCriteria):
     def __init__(self, target_sequences, tokenizer):
         # Encode the string so we have the exact token-IDs pattern
@@ -33,15 +30,124 @@ class StopOnSequence(transformers.StoppingCriteria):
 
         return False
 
+class LLMGenerator_api:
+    def __init__(self, generation_model, generation_tokenizer):
+        self.generator_model = generation_model
+        self.client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=os.getenv("OPENAI_API_KEY"))
+        self.tokenizer = generation_tokenizer
+
+        # Check if model is from Gemma family (doesn't support system role)
+        self.is_gemma = 'gemma' in generation_model.lower()
+
+        # IRCoT
+        self.ircot_stopping_criteria = [".", "\n"]
+        # FLARE
+        self.flare_stopping_criteria = list("!@#$%^&*()\n\n)(*&^%$#@!")
+        # SelfAsk - simplified for API (max 4 stop sequences)
+        self.selfask_stopping_criteria = ["Intermediate answer:", "\nIntermediate answer:"]
+        # SearchR1
+        self.searchr1_stopping_criteria = ["</search>"]
+        self.searchr1_answer_stopping_criteria = ["</answer>"]
+        # SearchO1
+        self.searcho1_stopping_criteria = ["<|end_search_query|>"]
+        self.searcho1_answer_stopping_criteria = ["<|end_search_result|>"]
+
+    def _process_messages(self, messages):
+        """Process messages for models that don't support system role (e.g., Gemma).
+        Merges system message content into the first user message."""
+        if not self.is_gemma:
+            return messages
+
+        processed = []
+        system_content = ""
+
+        for msg in messages:
+            if msg["role"] == "system":
+                if msg["content"]:
+                    system_content += msg["content"] + "\n"
+            else:
+                if msg["role"] == "user" and system_content:
+                    # Merge system content into the first user message
+                    processed.append({
+                        "role": "user",
+                        "content": system_content + msg["content"]
+                    })
+                    system_content = ""
+                else:
+                    processed.append(msg)
+
+        return processed
+
+    def generate(self,
+        messages,
+        stopping_criteria=None,
+        max_new_tokens=1024,
+        do_sample=True,
+        temperature=0.7
+    ):
+        processed_messages = self._process_messages(messages)
+
+        # OpenAI API limits stop sequences to 4. Truncate if necessary and deduplicate.
+        stop_sequences = None
+        if stopping_criteria:
+            # Deduplicate by stripping whitespace variants and taking unique core sequences
+            unique_stops = []
+            seen = set()
+            for seq in stopping_criteria:
+                core = seq.strip()
+                if core and core not in seen:
+                    seen.add(core)
+                    unique_stops.append(core)
+            stop_sequences = unique_stops[:4] if len(unique_stops) > 4 else unique_stops
+
+        max_retries = 3
+        retry_delay = 2  # seconds
+        for attempt in range(max_retries):
+            try:
+                completion = self.client.chat.completions.create(
+                    model=self.generator_model,
+                    messages=processed_messages,
+                    temperature=temperature,
+                    stop=stop_sequences,
+                    max_tokens=max_new_tokens
+                )
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"API call failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    raise
+
+        # Handle empty or None choices (can happen with API errors or content filtering)
+        if completion.choices is None or len(completion.choices) == 0:
+            print(f"Warning: API returned empty choices. Completion object: {completion}")
+            return "error", ""
+
+        output_text = completion.choices[0].message.content
+        # Handle None content (can happen with some models)
+        if output_text is None:
+            output_text = ""
+        # For API: return finish_reason to check if generation ended naturally ("stop") or hit stop sequence
+        # finish_reason: "stop" = natural end or stop sequence, "length" = max_tokens reached
+        finish_reason = completion.choices[0].finish_reason
+
+        return finish_reason, output_text
+
 class LLMGenerator:
     def __init__(self, generation_model, generation_tokenizer, device, args):
         self.generator = generation_model
         self.tokenizer = generation_tokenizer
         self.device = device
         self.args = args
-        
+
         self.eos_token_ids = self.generator.config.eos_token_id
-        
+
+        # Check if model is from Gemma family (doesn't support system role)
+        model_name_lower = args.model_name_or_path.lower()
+        self.is_gemma = 'gemma' in model_name_lower
+
         # For 'fix_length_retrieval', 'fix_sentence_retrieval', 'flare', 'dragin'
         if args.model_name_or_path in ["Qwen/Qwen2.5-7B-Instruct", "meta-llama/Llama-3.1-8B-Instruct"]:
             self.space_token = "Ġ"
@@ -49,33 +155,59 @@ class LLMGenerator:
             self.space_token = "▁"
         else:
             self.space_token = self.tokenizer.tokenize(' ')[0]
-        
+
         self.curr_eos = [151645, 151643] # for Qwen2.5 series models
-    
+
         # IRCoT
         ircot_target_sequences = [".", " .", ".\n", " .\n", ".\n\n", " .\n\n", "\n", " \n", "\n\n", " \n\n"]
         self.ircot_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(ircot_target_sequences, self.tokenizer)])
-        
+
         # FLARE
         flare_target_sequences = list("!@#$%^&*()\n\n)(*&^%$#@!")
         self.flare_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(flare_target_sequences, self.tokenizer)])
-        
+
         # SelfAsk
         selfask_sequences = ["Context:", "#", "Intermediate answer:" , "Intermediate answer: ", "\nIntermediate answer:"]
         self.selfask_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(selfask_sequences, self.tokenizer)])
-        
+
         # SearchR1
         searchr1_sequences = ["</search>", " </search>", "</search>\n", " </search>\n", "</search>\n\n", " </search>\n\n"]
         searchr1_answer_sequences = ["</answer>", " </answer>", "</answer>\n", " </answer>\n", "</answer>\n\n", " </answer>\n\n"]
         self.searchr1_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(searchr1_sequences, self.tokenizer)])
         self.searchr1_answer_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(searchr1_answer_sequences, self.tokenizer)])
-        
+
         # SearchO1
         searcho1_sequences = ["<|end_search_query|>", " <|end_search_query|>", "<|end_search_query|>\n", " <|end_search_query|>\n", "<|end_search_query|>\n\n", " <|end_search_query|>\n\n"]
         searcho1_res_sequences = ["<|end_search_result|>", " <|end_search_result|>", "<|end_search_result|>\n", " <|end_search_result|>\n", "<|end_search_result|>\n\n", " <|end_search_result|>\n\n"]
         self.searcho1_stopping_criteria = transformers.StoppingCriteriaList([StopOnSequence(searcho1_sequences, self.tokenizer)])
-        
+
         # for 'react'
+
+    def _process_messages(self, messages):
+        """Process messages for models that don't support system role (e.g., Gemma).
+        Merges system message content into the first user message."""
+        if not self.is_gemma:
+            return messages
+
+        processed = []
+        system_content = ""
+
+        for msg in messages:
+            if msg["role"] == "system":
+                if msg["content"]:
+                    system_content += msg["content"] + "\n"
+            else:
+                if msg["role"] == "user" and system_content:
+                    # Merge system content into the first user message
+                    processed.append({
+                        "role": "user",
+                        "content": system_content + msg["content"]
+                    })
+                    system_content = ""
+                else:
+                    processed.append(msg)
+
+        return processed
     
     def generate(self,
         messages,
@@ -84,13 +216,17 @@ class LLMGenerator:
         do_sample=True,
         temperature=0.7,
     ):
+        processed_messages = self._process_messages(messages)
         if self.tokenizer.chat_template:
             input_prompt = self.tokenizer.apply_chat_template(
-                messages,
+                processed_messages,
                 add_generation_prompt=True,
                 tokenize=False
             )
-        
+        else:
+            # Fallback: concatenate message contents if no chat template
+            input_prompt = "\n".join(msg.get("content", "") for msg in processed_messages)
+
         input_ids = self.tokenizer.encode(input_prompt, return_tensors='pt').to(self.device)
         attention_mask = torch.ones_like(input_ids)
         outputs = self.generator.generate(
@@ -105,24 +241,33 @@ class LLMGenerator:
         output_ = outputs[0]
         generated_tokens = output_[input_ids.shape[1]:]
         output_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-        
+
+        # Debug: print generated tokens count and text for Gemma
+        # if self.is_gemma and len(generated_tokens) < 10:
+        #     print(f"[DEBUG Gemma] Generated {len(generated_tokens)} tokens")
+        #     print(f"[DEBUG Gemma] Raw output (with special tokens): {self.tokenizer.decode(generated_tokens, skip_special_tokens=False)}")
+        #     print(f"[DEBUG Gemma] Clean output: {output_text[:200] if output_text else 'EMPTY'}")
+
         return output_, output_text
     
-    # 
     def generate_batch(self,
         messages,
         num_return:int = 5,
         max_new_tokens = 1024,
         temperature:float = 1.0,
         do_sample:bool = True
-    ):    
+    ):
+        processed_messages = self._process_messages(messages)
         if self.tokenizer.chat_template:
             input_prompt = self.tokenizer.apply_chat_template(
-                messages,
+                processed_messages,
                 add_generation_prompt=True,
                 tokenize=False
             )
-        
+        else:
+            # Fallback: concatenate message contents if no chat template
+            input_prompt = "\n".join(msg.get("content", "") for msg in processed_messages)
+
         inputs = self.tokenizer(input_prompt, return_tensors='pt').to(self.generator.device)
         input_ids = inputs["input_ids"]
         batch_size = input_ids.shape[0]
@@ -158,9 +303,10 @@ class LLMGenerator:
         return_logprobs=True,
         return_text=True
     ):
+        processed_messages = self._process_messages(messages)
         if self.tokenizer.chat_template:
             input_prompt = self.tokenizer.apply_chat_template(
-                messages,
+                processed_messages,
                 add_generation_prompt=True,
                 tokenize=False
             )
@@ -233,8 +379,9 @@ class LLMGenerator:
         add_generation_prompt=True,
         continue_final_message=False
     ):
+        processed_messages = self._process_messages(messages)
         text = self.tokenizer.apply_chat_template(
-            messages,
+            processed_messages,
             tokenize = False,
             add_generation_prompt=True,
             # continue_final_message=continue_final_message
@@ -364,97 +511,4 @@ class LLMGenerator:
           
           
         return text, seqlist, attns, seqlogprobs, seqentropies
-    
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-# # === Add template
-# messages = [{'role': 'system', 'content': system_prompt}]
-# messages.append({'role': 'user', 'content': input_text})
-# tokenizer, messages = fix_tokenizer_chat(self.tokenizer, messages)
-# text = tokenizer.apply_chat_template(
-#     messages,
-#     tokenize = False,
-#     add_generation_prompt=add_generation_prompt,
-#     continue_final_message=continue_final_message
-# )
-   
-# def format_longform(self, question, fewshot_examplers, docs, add_case=True):
-#     if len(fewshot_examplers) > 0:
-#         prompt = "Here are several examples of how to answer similar questions:\n\n"
-#         for exp in fewshot_examplers:
-#             prompt += f"Question: {exp['question']}\n"
-#             prompt += f"Answer: {exp['cot']} So, the answer is {exp['answer']}.\n"
-#         prompt += "\n"
-    
-#     if len(docs) > 0:
-#         prompt += "Below are some relevant documents that may help answer the question:\n"
-#         prompt += _passages2string(docs) + '\n'
-    
-#     prompt += "Now, answer the following question EXACTLY in the format of the examples above.\n"
-#     prompt += "DO NOT add any introductory phrases, explanations, or extra text.\n\n"
-#     if add_case:
-#         prompt += f"Question: {question}\nAnswer:"
-    
-#     return prompt
-     
-        
-# # For IRCoT
-# def generate_v1(self, chat):
-#     if self.tokenizer.chat_template:
-#         input_prompt = self.tokenizer.apply_chat_template(
-#             chat,
-#             add_generation_prompt=True,
-#             tokenize=False
-#         )
-    
-#     input_ids = tokenizer.encode(input_prompt, return_tensors='pt').to(device)
-#     attention_mask = torch.ones_like(input_ids)
-#     outputs = model.generate(
-#         input_ids,
-#         attention_mask=attention_mask,
-#         max_new_tokens=args.max_new_token,
-#         stopping_criteria=stopping_criteria,
-#         pad_token_id=tokenizer.eos_token_id,
-#         do_sample=True,
-#         temperature=0.7
-#     )
-#     generated_tokens = outputs[0][input_ids.shape[1]:]
-#     output_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-    
-#     return outputs, output_text
 
-    # def format_shortform(self, question, fewshot_examplers, docs, add_case=True):
-    #     prompt = ""
-    #     if len(docs) > 0:
-    #         prompt += "Context:\n"
-    #         for i, doc in enumerate(docs):
-    #             prompt += f"[{i+1}] {doc}\n"
-    #         prompt += "\n"
-    #     if add_case:
-    #         prompt += f"Question: {question}\nAnswer:"
-        
-    #     return prompt
-    
-    

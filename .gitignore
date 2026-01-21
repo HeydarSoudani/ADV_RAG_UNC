@@ -130,5 +130,6 @@ cache/
 analysis/
 run_rag_selector/datasets/
 _figs/
+run_mcts/
 
 

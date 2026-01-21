@@ -12,7 +12,8 @@ from run_rag_methods.rag_generation import rag_generation
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Model
-    parser.add_argument('--model_name_or_path', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--model_name_or_path', type=str, default='openai/gpt-4o-mini')
+    parser.add_argument('--use_api', action='store_true', help='Use LLM API for generation')
     parser.add_argument('--max_new_tokens', type=int, default=128) # generate_max_length
     
     # Dataset
@@ -28,10 +29,10 @@ if __name__ == "__main__":
     parser.add_argument('--retriever_name', type=str, default='rerank_l6', choices=[
         'bm25', 'contriever', 'rerank_l6', 'rerank_l12', 'e5', 'bge'
     ])
-    parser.add_argument('--corpus_path', type=str, default='data/search_r1_files/wiki-18.jsonl')
-    parser.add_argument('--index_path', type=str, default='data/search_r1_files/bm25', choices=[
-        'data/search_r1_files/bm25',          # For BM25 & Rerank
-        'data/search_r1_files/e5_Flat.index', # For E5
+    parser.add_argument('--corpus_path', type=str, default='data/wiki-18.jsonl')
+    parser.add_argument('--index_path', type=str, default='data/bm25', choices=[
+        'data/bm25',          # For BM25 & Rerank
+        'data/e5_Flat.index', # For E5
     ])
     parser.add_argument("--retrieval_model_path", type=str, default="cross-encoder/ms-marco-MiniLM-L-6-v2", choices=[
         "cross-encoder/ms-marco-MiniLM-L-6-v2", "cross-encoder/ms-marco-MiniLM-L12-v2", # For Rerank

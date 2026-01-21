@@ -36,7 +36,8 @@ class PTrue:
             self.user_prompt = PTRUE_USER_PROMPT_WITH_CONTEXT
     
     def __call__(self, sampled_gen_dict, prediction, context:str):
-        ideas = sampled_gen_dict["generated_texts"]
+        ideas = sampled_gen_dict.get("generated_texts", []) or []
+        ideas = [str(idea) for idea in ideas if idea is not None]  # Filter out None values and ensure strings
         ideas = "\n".join(ideas)
         
         if self.with_context == False:
